@@ -1,0 +1,29 @@
+# Triage rules — the first matching rule wins. All conditions inside one `when` must match.
+# Actions: ignore (drop silently) | log (keep in the event log, no notification) | notify
+# Conditions: labels_any, from_contains, from_regex, subject_contains, subject_regex,
+#             has_list_unsubscribe
+# The file is reloaded automatically when it changes.
+
+default: notify
+
+rules:
+  - name: gmail-noise-categories
+    when:
+      labels_any: [CATEGORY_PROMOTIONS, CATEGORY_SOCIAL, CATEGORY_FORUMS, SPAM, TRASH]
+    action: ignore
+
+  # Example: always notify for specific senders (put before the catch-all log rules).
+  # - name: bank
+  #   when:
+  #     from_contains: ["@yourbank.com"]
+  #   action: notify
+
+  - name: newsletters
+    when:
+      has_list_unsubscribe: true
+    action: log
+
+  - name: updates-category
+    when:
+      labels_any: [CATEGORY_UPDATES]
+    action: log
