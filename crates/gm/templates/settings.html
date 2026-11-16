@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block body %}
+<header>
+  <h1><a href="/" style="color:inherit;text-decoration:none">{{ tr.get("app-title") }}</a> · {{ tr.get("settings-title") }}</h1>
+  <div><span class="muted">{{ email }}</span></div>
+</header>
+
+<section class="card" style="max-width:640px">
+  <h2>{{ tr.get("settings-language") }}</h2>
+  <p class="muted">{{ tr.get("settings-note") }}</p>
+  {% if saved %}<p class="ok">{{ tr.get("saved") }}</p>{% endif %}
+  {% if !error.is_empty() %}<p class="bad">{{ error }}</p>{% endif %}
+  <form method="post" action="/settings" style="display:block">
+    <p>
+      <label for="ui_language"><strong>{{ tr.get("ui-language") }}</strong></label><br>
+      <span class="muted">{{ tr.get("ui-language-help") }}</span><br>
+      <select id="ui_language" name="ui_language" class="input">
+        {% for (code, name) in ui_languages %}
+        <option value="{{ code }}"{% if code.as_str() == ui_language.as_str() %} selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </p>
+    <p>
+      <label for="summary_language"><strong>{{ tr.get("summary-language") }}</strong></label><br>
+      <span class="muted">{{ default_help }}</span><br>
+      <input id="summary_language" name="summary_language" list="languages" required
+             maxlength="40" value="{{ summary_language }}" class="input">
+    </p>
+    <p>
+      <label for="translation_language"><strong>{{ tr.get("translate-into") }}</strong></label><br>
+      <span class="muted">{{ tr.get("translate-into-help") }}</span><br>
+      <input id="translation_language" name="translation_language" list="languages"
+             maxlength="40" value="{{ translation_language }}" class="input">
+    </p>
+    <datalist id="languages">
+      {% for lang in languages %}<option value="{{ lang }}">{% endfor %}
+    </datalist>
+    <p>
+      <button class="btn primary">{{ tr.get("save") }}</button>
+      <a class="btn" href="/">{{ tr.get("back") }}</a>
+    </p>
+  </form>
+</section>
+{% endblock %}

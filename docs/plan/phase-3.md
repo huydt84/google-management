@@ -1,127 +1,173 @@
-# Phase 3 — Agent có tool, tự động hoá có kiểm soát, digest, memory
+# Phase 3: Act, with approval
 
-**Mục tiêu:** ra lệnh tự do được ("tìm mail hoá đơn tháng này rồi tổng tiền", "dời cuộc họp với An
-sang thứ Sáu và báo cho An"), giao việc lặp lại cho hệ thống tự làm, và nhận bản tổng hợp mỗi sáng.
-Tất cả vẫn giữ các bất biến an toàn.
+**Goal:** under a notification the owner taps **Translate**, **Analyze** or **Reply**, or replies to
+the message in plain words ("tell them Tuesday works"), and the system does it. Anything with an
+external effect (sending mail) waits for the owner's approval.
 
-Điều kiện bắt đầu: Phase 2 đã merge (cần LiteLLM, các nguồn và feedback). 3A là nền cho 3B. 3C, 3D và
-3E có thể chạy song song với 3A.
+**Not in Phase 3:** a free-form agent that picks its own tools, automations, the expense ledger
+(backlog), Calendar (Phase 4).
 
-Phase này có nhiều quyết định thiết kế hơn các phase trước. Session nhận việc nên viết một design note
-ngắn trong `docs/design/` (vài đoạn) và cho người dùng xem trước khi code phần lớn.
+Decisions: [decision log](../decisions.md) P6, P7, P8, L4, L7; [ADR-0003](../adr/0003-intent-router-before-agent.md),
+[ADR-0006](../adr/0006-telegram-as-mobile-channel.md).
 
-## 3A Agent loop với tool + quarantine
+## Pinned design
 
-**Sở hữu:** `src/gm/agent/` (mới: `loop.py`, `tools.py`, `policy.py`, `quarantine.py`), intent
-`agent` trong router của 1B.
+### Intent router + recipes, not an agent
 
-### Mô hình an toàn: privileged planner + quarantined reader
+An LLM that both reads untrusted mail and holds a send-mail tool is the largest prompt-injection
+surface there is, and the runtime has no tool calling anyway. So:
 
-- **Planner** (LLM có quyền gọi tool): chỉ thấy lời người dùng, preferences (3D), và **kết quả có cấu
-  trúc** của tool. Nó **không bao giờ thấy text thô** của mail, sự kiện hay file.
-- **Quarantined reader** (LLM không có tool): là người duy nhất đọc nội dung không tin cậy. Nó trả về
-  dữ liệu theo schema cố định (ví dụ `{sender, date, amounts:[…], summary}`), và text tự do của nó bị
-  giới hạn độ dài.
-- **Taint:** mọi giá trị đến từ quarantined reader được đánh dấu `tainted`. Policy chặn mọi hành động
-  bên ngoài mà **đích** (người nhận, attendee, quyền chia sẻ) là giá trị tainted, trừ khi giá trị đó
-  khớp với một nguồn tin cậy (header `From` của mail người dùng đang hỏi, danh bạ, lời người dùng).
-  Nội dung (thân thư) được phép tainted, vì người dùng sẽ duyệt preview.
+1. The **intent router** reads only the **owner's words** (never mail content) and returns
+   `{intent, args}` from a fixed list. Buttons already carry an intent: no model call.
+2. Each intent has a **recipe** in code. The model inside a recipe generates *content* only
+   (translation, analysis, reply body). Targets (recipient, thread) come from code.
+3. A recipe returns a text result, a question (`NeedsInput`), or a **ProposedAction**, which creates
+   an approval and sends a preview with Approve / Reject.
 
-### Tool calling không cần server hỗ trợ
+### Flow
 
-mlx-server-runtime không có `tools`. Agent dùng giao thức JSON qua text: mỗi bước model trả về đúng
-một object, hoặc `{"tool": "<name>", "args": {...}}`, hoặc `{"final": "<trả lời người dùng>"}`. Parse
-bền vững (như `parse_summary`). Sai format thì nhắc lại một lần rồi dừng. Giới hạn
-`GM_AGENT_MAX_STEPS=8` và một ngân sách token cho mỗi task.
+```
+Telegram update ──► 3A poller ──► user.instruction {event_id, text|intent, chat_message_id}
+                                     ▼
+                     3B: task → intent router → recipe (3C)
+                    ┌────────────────┴──────────────────┐
+                TextResult                         ProposedAction
+                    │                                   │ approval (payload + sha256)
+                    ▼                                   ▼
+         task.reply {task_id, text}       task.reply {preview, buttons a:<id>:y / a:<id>:n}
+                                                        │ owner taps Approve
+                                     approval.decision {approval_id, decision}
+                                                        ▼
+                               3B: lock, check hash → executor → audit_log → task.reply
+```
 
-Có thể thêm native tool calling vào `mlx-server-runtime` như một việc **ở repo đó**, làm trong session
-riêng. Khi đã có thì `LLMClient` dùng native tool calling nếu model hỗ trợ, còn giao thức JSON vẫn là
-fallback.
+### States
 
-### Tool registry
+- `tasks.status`: `pending → running → done | needs_input | awaiting_approval | failed`;
+  `awaiting_approval → executing → done | failed`; `awaiting_approval → rejected | expired`.
+- `approvals.status`: `pending → approved → executed | failed`; `pending → rejected | expired`;
+  expiry after `GM_APPROVAL_TTL_H` (24).
 
-Mỗi tool khai báo `name`, `description`, JSON schema của args, **mức rủi ro**, và scope cần dùng.
+### Schema (`0004_actions.sql`, created by 3B so 3A and 3C need no migrations)
 
-| Mức | Ví dụ | Chính sách |
-|-----|-------|------------|
-| `read` | `gmail.search` (metadata), `calendar.list`, `ledger.query` | Tự chạy |
-| `read_untrusted` | `gmail.read`, `drive.read_doc` | Chỉ chạy qua quarantined reader; trả dữ liệu có cấu trúc kèm taint |
-| `write_local` | `ledger.append`, `notes.add` (Sheets/Docs của app), `gmail.label` | Tự chạy nếu automation cho phép (3B); mặc định cần approval; luôn ghi audit và có hoàn tác |
-| `external` | `gmail.send_draft`, `calendar.create/update/respond`, `drive.share`, `tasks.create` | Luôn cần approval, kiểm tra taint của đích |
-| cấm | xoá mail/file vĩnh viễn, forward hàng loạt, đổi cài đặt tài khoản, mọi thứ liên quan đến tiền | Không có tool |
+```sql
+tasks(id bigserial pk, event_id bigint null references events, origin text, instruction text null,
+      intent text null, args jsonb default '{}', status text, result jsonb null, error text null,
+      created_at, updated_at)
+approvals(id bigserial pk, task_id bigint references tasks, action text, payload jsonb,
+          payload_hash text, preview text, status text, expires_at timestamptz,
+          decided_at timestamptz null, decided_via text null, created_at, updated_at)
+chat_messages(id bigserial pk, chat_id text, message_id bigint, event_id bigint null,
+              task_id bigint null, approval_id bigint null, direction text, created_at,
+              unique(chat_id, message_id))
+audit_log(id bigserial pk, ts timestamptz default now(), actor text, action text, target text,
+          task_id bigint null, details jsonb)
+kv_state(key text pk, value jsonb, updated_at)
+```
 
-Approval vẫn dùng bảng và executor của 1B. Agent có thể gom nhiều hành động vào một preview (duyệt
-một lần, thực thi theo thứ tự, dừng ở lỗi đầu tiên).
+`tasks`, `approvals` and `audit_log` are exempt from the 60-day event retention: **ask** the owner
+for their retention.
 
-Scope mới phát sinh (ví dụ `calendar.events`, `tasks`) phải qua bất biến 4; mỗi scope thêm vào cần
-người dùng đồng ý.
+## 3A Telegram client and poller
 
-**Test:** kịch bản injection (mail yêu cầu gửi dữ liệu ra ngoài → planner không thấy câu đó; nếu đích
-tainted thì policy chặn); vượt giới hạn bước; JSON hỏng; nhiều hành động trong một approval.
+**Owns:** `src/telegram/` (new: `client.rs`, `poller.rs`), moves `TelegramNotifier` there.
 
-## 3B Standing instructions / tự động hoá
+1. `TelegramClient`: `send(text, buttons, reply_to) -> message_id`, `edit_text`, `edit_buttons`,
+   `answer_callback`, `get_updates(offset, timeout)`. Plain text, split at 4096. Never log URLs.
+2. Notifications get buttons: `[Translate] [Analyze] [Reply]`, `data = i:<event_id>:<intent>`
+   (≤ 64 bytes). Record `chat_messages(direction=out)`.
+3. Poller (`getUpdates` long poll, offset in `kv_state`): **only** `chat.id == GM_TELEGRAM_CHAT_ID`;
+   other chats are ignored with a log line, never answered.
+   - Reply to a bot message → look up `chat_messages` → `user.instruction{text}`; the inbound
+     `chat_messages` row and the publish share one transaction (unique key dedupes re-polled updates).
+   - `i:` callback → `user.instruction{intent}`; `a:` callback → `approval.decision`, then remove the
+     buttons; `f:` callback → feedback (2C).
+   - Commands: `/help`, `/status`, `/pause`, `/resume` (flag in `kv_state`; `notify` respects it),
+     `/language [name]` (same validation as the Settings page).
+4. `task.reply` handler sends text and buttons as a reply to the original notification.
 
-**Sở hữu:** `src/gm/automations.py` (mới), `src/gm/templates/automations.html` (mới), migration
-thêm `automations`.
+Tests (wiremock Bot API): foreign chats ignored; duplicate updates deduplicated; offset survives a
+restart; callback parsing; pause/resume.
 
-1. Người dùng nói "mail hoá đơn EVN thì tự ghi sổ, không cần hỏi". Hệ thống đề xuất một automation:
-   điều kiện `match` (cùng schema `When`), recipe hoặc chuỗi tool, và `auto_approve`. Người dùng
-   **duyệt chính automation đó** một lần.
-2. Chỉ được `auto_approve` cho hành động trong allowlist: `write_local` có hoàn tác (ghi sổ, gắn nhãn,
-   dịch rồi gửi cho mình). **Không bao giờ** auto cho mức `external`.
-3. Mỗi lần chạy tự động đều gửi một dòng thông báo kèm nút `[Hoàn tác]` (xoá dòng sheet, gỡ nhãn).
-   Bảng `automation_runs` ghi lại để hoàn tác và để thống kê.
-4. Tự động tạm dừng automation khi hoàn tác nhiều lần liên tiếp (ví dụ 3), rồi hỏi lại người dùng.
-5. Trang `/automations` để xem, bật/tắt và xoá automation; có lịch sử chạy.
+## 3B Task runtime, router, approvals
 
-## 3C Digest hằng ngày & nhắc việc
+**Owns:** `src/tasks/` (new: `runtime.rs`, `router.rs`, `approvals.rs`, `registry.rs`),
+`migrations/0004_actions.sql`, `prompts/router.md`.
 
-**Sở hữu:** `src/gm/digest.py` (mới), `src/gm/scheduler.py` (mới).
+Pinned interface (3C codes against this):
 
-1. **Scheduler trong process:** lịch cron-like lưu trong DB, mỗi lần đến hạn publish một job (dùng
-   `run_after` của bus). Chịu được máy ngủ: lần chạy bị lỡ thì chạy một lần khi dậy, không chạy bù
-   nhiều lần.
-2. **Digest buổi sáng** (`GM_DIGEST_AT=07:30`, theo timezone của người dùng):
-   - Lịch hôm nay
-   - Mail đã `log` hôm qua, gom theo sender hoặc danh mục
-   - Approval đang chờ
-   - Chi tiêu tuần này (từ `ledger_entries`)
-   - Lỗi hệ thống (job dead, token cần kết nối lại)
+```rust
+pub struct RecipeContext<'a> {
+    pub task_id: i64,
+    pub account: &'a str,
+    pub event: Option<&'a db::Event>,
+    pub instruction: Option<&'a str>,  // the owner's words, trusted
+    pub args: &'a serde_json::Value,
+    pub settings: &'a UserSettings,
+    pub gmail: &'a GmailClient,
+    pub llm: &'a LlmClient,
+}
+pub enum RecipeResult {
+    Text(String),
+    NeedsInput(String),
+    Propose { action: &'static str, payload: serde_json::Value, preview: String },
+}
+#[async_trait] pub trait Recipe: Send + Sync {
+    fn intent(&self) -> &'static str;
+    async fn run(&self, cx: RecipeContext<'_>) -> anyhow::Result<RecipeResult>;
+}
+#[async_trait] pub trait Executor: Send + Sync {
+    fn action(&self) -> &'static str;
+    async fn execute(&self, cx: ExecContext<'_>, payload: &serde_json::Value) -> anyhow::Result<String>;
+}
+```
 
-   LLM chỉ đọc dữ liệu đã có cấu trúc. Gửi qua Telegram và hiện trên dashboard.
-3. **Nhắc việc:** từ hạn chót mà `analyze` (1C) hoặc quarantined reader trích ra, đề xuất "nhắc tôi
-   lúc …" (nút). Người dùng chấp nhận thì tạo lịch nhắc nội bộ; Google Tasks là tuỳ chọn, cần scope.
+Recipes and executors are idempotent per task (store intermediate ids such as a draft id in
+`tasks.result`).
 
-## 3D Preferences & memory
+1. `user.instruction` handler: create or continue a task; router if no intent; run the recipe;
+   `Text` → done + reply; `NeedsInput` → needs_input + question; `Propose` → approval with
+   `payload_hash = sha256(canonical JSON)` + preview with buttons.
+2. Router (interactive lane): owner's words + intent list → `{intent, args}`; intents `translate`,
+   `analyze`, `reply`, `unknown`. Keyword fast path in vi / en / ja before calling the model.
+3. `approval.decision` handler: lock the row, check `pending`, expiry and hash; on approve run the
+   executor, write `audit_log`, mark executed / done, reply; on reject mark rejected.
+4. Expiry sweep every 10 minutes.
 
-**Sở hữu:** `src/gm/preferences.py` (mới), `src/gm/templates/preferences.html` (mới), migration
-thêm `preferences` và `contacts_profile`.
+Tests: router fast path and fallback; lifecycle; hash mismatch refused; expiry; double tap.
 
-1. **Preferences** do người dùng đặt: ngôn ngữ mặc định, giọng văn và chữ ký khi trả lời, giờ yên lặng
-   (không thông báo trừ khi `high`), danh sách VIP. Sửa được trên web và qua Telegram ("từ giờ trả lời
-   mail công việc bằng giọng trang trọng").
-2. **Contact profile** học từ hành vi: sender nào bạn hay bấm 👍, hay trả lời, hay tắt → điểm quan
-   trọng, đưa vào decision model (2B) và digest. Bạn xem và sửa được; không lưu nội dung mail.
-3. Inject vào prompt có giới hạn độ dài. Preferences là dữ liệu tin cậy (do bạn đặt). Contact profile
-   suy ra từ dữ liệu không tin cậy, nên **chỉ** được dùng để xếp hạng, không làm chỉ dẫn.
-4. Quiet hours do 1A/notify tôn trọng: dồn lại và gửi khi hết giờ yên lặng hoặc gộp vào digest.
+## 3C Recipes
 
-## 3E Web task center & chat
+**Owns:** `src/recipes/` (new: `translate.rs`, `analyze.rs`, `reply.rs`), `src/google/compose.rs`,
+`prompts/translate.md`, `prompts/analyze.md`, `prompts/reply.md`. Adds `gmail.compose` to
+`REQUIRED_SCOPES` (owner reconnects).
 
-**Sở hữu:** `src/gm/templates/tasks.html`, `src/gm/templates/chat.html`, route trong `src/gm/web.py`
-hoặc router mới `src/gm/web_tasks.py`.
+Every recipe re-fetches the mail and wraps it in `<email>` like the summary prompt.
 
-1. `/tasks`: danh sách task và approval (lọc theo trạng thái), xem preview đầy đủ, **duyệt hoặc từ
-   chối từ web** (POST, SameSite cookie + kiểm tra session; publish `approval.decision` với
-   `via="web"`).
-2. `/chat`: gửi lệnh cho agent từ trình duyệt (publish `user.instruction` với `channel="web"`). Nhận
-   trả lời qua polling hoặc SSE. Kênh `web` có notifier riêng, dùng chung `task.reply`.
-3. Trang chi tiết event: mail đã triage, quyết định của rule/model, các task liên quan, audit log.
+1. **translate** → `Text`, into `translation_language` (falls back to summary language); numbers,
+   dates and names unchanged; long mail translated in chunks.
+2. **analyze** → `Text` (thinking on): key points, deadlines, amounts, phishing signs, next steps.
+3. **reply** → `Propose("gmail.send_draft")` (thinking on):
+   - Recipient = `Reply-To` or `From` of the original (headers, never the model). Subject `Re: …`;
+     `In-Reply-To` / `References` from `Message-ID`; `threadId` set.
+   - The model writes only the body, from the owner's words and the mail, in the mail's language
+     unless told otherwise.
+   - `drafts.create`; draft id in `tasks.result`. Preview: To, Subject, full body, "you can edit the
+     draft in Gmail before approving".
+   - An edit request in reply to the preview → expire the old approval, `drafts.update`, new approval.
+4. **Executor `gmail.send_draft`** `{draft_id, thread_id, to, subject, body_sha256}`: `drafts.get`,
+   re-check recipient and body hash (changed → new approval, never send); `drafts.send`; a missing
+   draft with a matching SENT message in the thread counts as done.
 
-## Phase 3 xong khi
+Tests (wiremock Gmail drafts API): recipient from headers even when the mail says "send this to
+x@evil.example"; threading headers; an edited draft is not sent.
 
-- Lệnh tự do nhiều bước chạy được, với mọi hành động bên ngoài đều qua approval và kiểm tra taint.
-- Có ít nhất một automation chạy thật kèm hoàn tác.
-- Digest buổi sáng đến đúng giờ.
-- Preferences ảnh hưởng tới trả lời và thông báo.
-- Duyệt được từ cả Telegram lẫn web.
+## 3Z Integration
+
+End-to-end test with fake Gmail, Telegram and LLM: translate; analyze; reply → approve → sent in the
+thread; and a prompt-injection mail asking to forward itself, where the owner taps Reply: the
+recipient stays the original sender and nothing but a draft happens. Then a real run from the phone
+(owner present), README and spec updates, status table.
+
+**Phase 3 is done when** the three intents work from the phone, every send has an approval and an
+audit row, and the end-to-end test passes.

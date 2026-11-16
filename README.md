@@ -1,169 +1,186 @@
 # Google Management
 
-Web server chạy trên máy cá nhân. Nó nhận sự kiện từ các dịch vụ Google, lọc chúng, rồi dùng LLM
-local để báo cho bạn những gì đáng quan tâm. Chỉ đúng một tài khoản Google (`GM_ALLOWED_EMAIL`) được
-đăng nhập.
+A personal assistant that runs on your Mac. It watches your Gmail, decides which mail matters using
+a tested rules file, summarizes it with a local LLM (mlx-server-runtime, Qwen3-8B 4-bit), and pings
+you on Telegram. Exactly one Google account (`GM_ALLOWED_EMAIL`) can sign in. Mail never leaves the
+machine.
 
-**Phase 0 (hiện tại):** Gmail → lọc bằng rule → LLM tóm tắt → Telegram. Chỉ đọc, chưa có hành động.
+**Phase 1 (current):** a single Rust binary. Gmail → rules engine v2 → local summary → Telegram, with
+a night policy, Keychain secrets, launchd, backups and metrics. Next: a morning digest and model
+triage (Phase 2), then Translate / Analyze / Reply with approvals (Phase 3).
+
+Start with the [documentation index](docs/README.md): decision log, PRD, architecture, specs, ADRs
+and the phased plan.
 
 ```
-Gmail ──(poll history.list | Pub/Sub pull)──► GmailIngestor
-                                                │  events + jobs + cursor: 1 transaction
-                                                ▼
-                                  gmail.message.received ──► triage (rules.yaml)
-                                                               │ notify
-                                                               ▼
-                                  gmail.message.summarize ──► LLM (OpenAI-compatible)
-                                                               │
-                                                               ▼
-                                  notify.email ─────────────► Telegram / log
+Gmail ──► Pub/Sub ──(pull)──► GmailIngestor ◄──(safety poll 15 min)
+                                       │  events + job + cursor: one transaction
+                                       ▼
+                         gmail.message.received ──► triage (rules.yaml)
+                              ignore / digest ◄──────┤
+                                                     │ notify / triage
+                                                     ▼
+                         gmail.message.summarize ──► LlmClient (lanes, 09:00–19:00)
+                                                     │
+                                                     ▼
+                         notify.email ─────────────► Telegram (silent / normal / urgent)
 ```
 
-- **Event bus:** pub/sub bền vững trên Postgres (`src/gm/bus.py`). Mỗi subscriber nhận một row trong
-  `jobs`, được claim bằng `FOR UPDATE SKIP LOCKED`, giao at-least-once, retry với exponential backoff,
-  quá số lần thì chuyển sang `dead`. Publish nằm trong transaction của caller (outbox pattern).
-- **Trạng thái event:** `new → ignored | logged | triaged → summarized → notified`, hoặc `gone` (mail
-  bị xoá trước khi xử lý). Mọi handler đều kiểm tra trạng thái trước khi làm nên chạy lại không sao.
-- **Không mất mail:** cursor `historyId` và event được ghi cùng nhau. Máy ngủ dậy thì sync bù. Nếu
-  history quá cũ (khoảng 1 tuần) thì lấy lại mail của 2 ngày gần nhất, có dedupe.
+- **Event bus:** durable pub/sub on Postgres (`crates/gm/src/bus.rs`): one `jobs` row per subscriber,
+  claimed with `FOR UPDATE SKIP LOCKED`, published inside the caller's transaction, at-least-once,
+  exponential backoff, then `dead`.
+- **Event states:** `new → ignored | digest | triaged → ready → notified`, or `gone`.
+- **Night and outage policy:** rule-only pings (card amount, Rakuten login notice) go out at any hour;
+  everything that needs the model waits for 09:00 and for the model to be running (checked every
+  5 min), urgent included. No ping is sent without its summary.
+- **No lost mail:** the cursor and the events are written together; Pub/Sub messages are
+  acknowledged only after the sync committed; a safety poll catches dropped notifications; after
+  sleep it catches up; an expired cursor recovers the last 2 days.
 
-## Cài đặt
+## Setup
 
-### 1. Hạ tầng local
+### 1. Toolchain and database
 
 ```bash
 docker compose up -d
 ```
 
 ```bash
-uv sync
+cargo build --release
 ```
 
-Dùng chế độ Pub/Sub thì cài thêm: `uv sync --extra pubsub`.
+### 2. Google Cloud (one time)
 
-### 2. Google Cloud (một lần)
+1. Create a project at <https://console.cloud.google.com> and enable the **Gmail API** and the
+   **Cloud Pub/Sub API**. Note the project id for `GM_GOOGLE_PROJECT_ID`.
+2. **OAuth consent screen**: External; add your email as a test user.
+3. **Credentials → Create OAuth client ID → Web application** with redirect URIs
+   `http://localhost:8080/auth/callback` and `http://localhost:8080/connect/google/callback`.
+4. **Branding**: home page `https://google-management-bay.vercel.app/`, privacy policy
+   `https://google-management-bay.vercel.app/privacy.html`, authorized domain
+   `google-management-bay.vercel.app`. The pages are in `deploy/oauth-pages/`; redeploy with
+   `npx vercel deploy --prod` from that folder.
+5. **Publish the app** ("In production"). In "Testing", refresh tokens expire after 7 days. No
+   verification needed; click *Advanced → Go to …* on the warning.
 
-1. Tạo project tại <https://console.cloud.google.com>, rồi **bật Gmail API**.
-2. **OAuth consent screen**: chọn External, thêm email của bạn vào Test users.
-3. **Credentials → Create OAuth client ID → Web application.** Thêm Authorized redirect URIs:
-   - `http://localhost:8080/auth/callback`
-   - `http://localhost:8080/connect/google/callback`
-4. **Quan trọng:** bấm **Publish app** (chuyển sang "In production"). Khi còn ở "Testing", refresh token
-   **hết hạn sau 7 ngày**. Không cần submit verification: Google chỉ hiện cảnh báo "unverified app",
-   bạn bấm *Advanced → Go to …* để tiếp tục.
+### 3. Secrets (macOS Keychain) and configuration
 
-### 3. Cấu hình
+```bash
+./target/release/gm gen-key
+```
+
+Run it twice and store one value as `master-key` and the other as `session-secret`; macOS prompts for
+each value, so it never appears in your shell history:
+
+```bash
+./target/release/gm keychain set master-key
+```
+
+```bash
+./target/release/gm keychain set session-secret
+```
+
+```bash
+./target/release/gm keychain set google-client-secret
+```
+
+```bash
+./target/release/gm keychain set telegram-bot-token
+```
 
 ```bash
 cp .env.example .env
 ```
 
-```bash
-uv run gm gen-keys
-```
+Fill in `GM_ALLOWED_EMAIL`, `GM_GOOGLE_CLIENT_ID`, `GM_GOOGLE_PROJECT_ID` and `GM_TELEGRAM_CHAT_ID` (send your bot a message,
+then read `chat.id` from `https://api.telegram.org/bot<TOKEN>/getUpdates`). `.env` holds no secrets.
 
-Dán hai giá trị vừa sinh vào `.env`, rồi điền `GM_ALLOWED_EMAIL`, `GM_GOOGLE_CLIENT_ID` và
-`GM_GOOGLE_CLIENT_SECRET`.
+Run the model with mlx-server-runtime (`mlx-air serve --model mlx-community/Qwen3-8B-4bit`, port
+8000).
 
-- **LLM:** chạy gateway của `mlx-server-runtime` (mặc định `http://127.0.0.1:8000/v1`) và đặt
-  `GM_LLM_MODEL` đúng với model đã cấu hình. Endpoint nào tương thích OpenAI đều dùng được. Phase 2
-  sẽ chuyển sang LiteLLM.
-- **Telegram:** tạo bot với @BotFather, nhắn cho bot một tin, rồi lấy `chat.id` từ
-  `https://api.telegram.org/bot<TOKEN>/getUpdates`. Bỏ trống thì thông báo chỉ ghi ra log.
-
-### 4. Chạy
+### 4. Run
 
 ```bash
-uv run gm serve
+./target/release/gm serve
 ```
 
-Mở <http://localhost:8080>, đăng nhập rồi bấm **Kết nối Gmail**. Chỉ mail đến **sau** khi kết nối mới
-được xử lý.
+Open <http://localhost:8080>, sign in, and click **Connect Gmail** (the consent screen asks for Gmail
+read access and Pub/Sub). gm then creates its Pub/Sub topic and subscription and starts the Gmail
+watch by itself; the dashboard shows the ingestion status. Only mail that arrives after you connect
+is processed. Set `GM_GMAIL_INGEST_MODE=poll` to skip Pub/Sub and poll every 60 s instead.
 
-Server chỉ bind `127.0.0.1`. Muốn dùng từ điện thoại thì đi qua Tailscale, đừng mở port ra internet.
+**Settings** sets the summary language, the Translate target and the UI language
+(English, Tiếng Việt, 日本語).
 
-## Chế độ Pub/Sub (tuỳ chọn, gần realtime)
+To run it as a service (start on login, nightly backups) and reach it from your phone over Tailscale,
+follow [deploy/README.md](deploy/README.md).
 
-Mặc định là `poll` (60 giây/lần, không cần setup gì thêm). Với Pub/Sub, Gmail đẩy thông báo vào topic
-và server **pull** về, nên không cần URL public:
+## Customizing the filter
+
+Edit [`rules.yaml`](rules.yaml); it reloads on save, and an invalid edit keeps the previous rules.
+The header of the file documents every field. Check it before saving:
 
 ```bash
-gcloud pubsub topics create gmail-events
+./target/release/gm rules rules.yaml
 ```
+
+The first matching rule wins. Actions: `ignore`, `digest`, `notify` (priority `silent`, `normal`,
+`high`, `urgent`) and `triage`. Rules can extract values (for example a card amount) into a short
+notification message. Every rule has redacted examples that CI checks.
+
+## Security
+
+- Sign-in: Google OIDC with PKCE; the verified email must equal `GM_ALLOWED_EMAIL`. Cookies are
+  HMAC-signed, `HttpOnly`, `SameSite=Lax`; a host allowlist blocks DNS rebinding and foreign-origin
+  POSTs are refused.
+- Secrets live in the macOS Keychain. Refresh tokens are AES-256-GCM-encrypted in the database with a
+  key that never leaves the Keychain. Google scopes: `gmail.readonly`, plus `pubsub` in Pub/Sub mode.
+- Mail is untrusted data: it reaches the model only inside delimiters it can't close, the model has no
+  tools, and Telegram messages are plain text.
+
+Full threat model: [docs/spec/security.md](docs/spec/security.md).
+
+## Development
 
 ```bash
-gcloud pubsub topics add-iam-policy-binding gmail-events \
-  --member=serviceAccount:gmail-api-push@system.gserviceaccount.com --role=roles/pubsub.publisher
-```
-
-```bash
-gcloud pubsub subscriptions create gm-pull --topic=gmail-events --ack-deadline=60
-```
-
-```bash
-gcloud auth application-default login
-```
-
-Sau đó đặt trong `.env`:
-
-```
-GM_GMAIL_INGEST_MODE=pubsub
-GM_GMAIL_PUBSUB_TOPIC=projects/<project-id>/topics/gmail-events
-GM_GMAIL_PUBSUB_SUBSCRIPTION=projects/<project-id>/subscriptions/gm-pull
-```
-
-Watch tự gia hạn trước khi hết hạn 7 ngày. Một vòng poll an toàn (15 phút) vẫn chạy song song, phòng
-khi Gmail làm rơi thông báo.
-
-## Tuỳ chỉnh bộ lọc
-
-Sửa [`rules.yaml`](rules.yaml). File được tự nạp lại khi thay đổi, không cần restart. Rule đầu tiên
-khớp sẽ quyết định. Các action gồm `ignore`, `log` và `notify`.
-
-## Bảo mật
-
-- Đăng nhập UI: Google OIDC, email phải verified và đúng `GM_ALLOWED_EMAIL`. Session cookie được ký,
-  `SameSite=Lax`. Có `TrustedHostMiddleware` để chặn DNS rebinding.
-- Refresh token được mã hoá Fernet trong DB. Scope chỉ có `gmail.readonly`.
-- Nội dung mail là dữ liệu không tin cậy. Nó được bọc trong delimiter (đã chống việc mail tự đóng
-  delimiter), và LLM **không có tool nào**: chỉ trả JSON theo schema cố định. Telegram gửi plain text,
-  không parse markup.
-
-## Phát triển
-
-```bash
-uv run pytest
+cargo test
 ```
 
 ```bash
-uv run ruff check src tests
+cargo clippy --all-targets -- -D warnings
 ```
 
-Test tích hợp cần Postgres từ `docker compose`, và tự tạo database `gm_test`. Nếu không có Postgres
-thì các test đó được skip.
-
-```
-src/gm/
-  main.py          app factory, lifespan, background tasks
-  config.py        GM_* settings
-  bus.py           durable pub/sub on Postgres
-  db.py            models: google_accounts, gmail_state, events, jobs
-  auth.py          /auth/* login, /connect/google API consent
-  google_creds.py  encrypted refresh tokens -> google Credentials
-  gmail/ingest.py  history sync, poll / Pub/Sub loops, watch renewal
-  gmail/message.py Gmail payload -> ParsedMessage
-  triage.py        rules.yaml engine
-  llm.py           OpenAI-compatible client, prompt, JSON parsing
-  pipeline.py      triage -> summarize -> notify handlers
-  notify/          Telegram + log notifier
-  web.py           dashboard, /api/events, /healthz
+```bash
+cargo fmt --all
 ```
 
-## Lộ trình
+Tests need Postgres from `docker compose` (`DATABASE_URL` is set in `.cargo/config.toml`); each test
+gets a fresh database. Google, Telegram and the LLM are faked with wiremock.
 
-- **Phase 1:** Telegram hai chiều. Bạn trả lời "dịch / phân tích / soạn trả lời / ghi số tiền vào
-  Sheets". Hành động có tác động bên ngoài phải qua duyệt (ví dụ draft trong Gmail, bấm duyệt mới gửi).
-  Thêm scope `gmail.compose` và `spreadsheets`.
-- **Phase 2:** LiteLLM gateway (budget, rate limit, fallback cloud), decision model nhỏ chạy sau rule,
-  metrics, Calendar/Drive qua `syncToken`, Alembic migrations.
-- **Phase 3:** Thêm tool, tự động hoá những việc an toàn mà không cần duyệt.
+```
+crates/gm/
+  src/main.rs          CLI: serve, migrate, gen-key, keychain, rules
+  src/app.rs           wiring, background tasks, tracing
+  src/config.rs        GM_* settings; secrets.rs Keychain; crypto.rs AES-GCM
+  src/bus.rs           durable pub/sub on Postgres
+  src/db.rs            pool, queries, retention   (migrations/ holds the schema)
+  src/google/          OAuth (PKCE), encrypted accounts, Gmail REST client
+  src/gmail/           ingestion and MIME parsing
+  src/rules.rs         rules engine v2
+  src/llm/             LlmClient: lanes, prompt building, cleaning, JSON parsing
+  src/pipeline.rs      triage → summarize → notify
+  src/notify.rs        Telegram / log notifier, formatting
+  src/user_settings.rs per-user settings;  i18n.rs + locales/ (en, vi, ja)
+  src/web/             axum routes, guards, sessions, pages (templates/)
+  prompts/             system and task prompts
+  tests/               integration tests
+```
+
+## Roadmap
+
+See [docs/plan/README.md](docs/plan/README.md).
+
+- **Phase 2:** morning digest at 09:05, model triage for unmatched mail with 👍/👎 feedback, model
+  loaded only 09:00–19:00, `gm eval`, health alerts.
+- **Phase 3:** Translate / Analyze / Reply from Telegram; sending needs your approval.
+- **Phase 4:** Calendar notifications.

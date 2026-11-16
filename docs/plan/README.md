@@ -1,99 +1,111 @@
-# Kế hoạch triển khai — tổng quan
+# Implementation plan: overview
 
-Tài liệu này dành cho các session (người hoặc agent) nhận một phần việc và làm độc lập. Đọc hết file
-này trước, rồi mới đọc file của phase bạn nhận.
+For sessions (people or agents) that pick up a piece of work and do it independently. Read this file,
+then the file for your phase. For *what* and *why*, read the [PRD](../prd.md), the
+[decision log](../decisions.md) and the [architecture](../architecture.md) first.
 
-| Phase | File | Mục tiêu |
-|-------|------|----------|
-| 0 | (đã xong, commit `145de43`) | Gmail → rule triage → LLM tóm tắt → Telegram (một chiều) |
-| 1 | [phase-1.md](phase-1.md) | Vòng hai chiều: bạn ra lệnh qua Telegram, hệ thống dịch / phân tích / soạn trả lời / ghi sổ, có duyệt |
-| 2 | [phase-2.md](phase-2.md) | LiteLLM gateway, decision model, học từ phản hồi, metrics, vận hành, Calendar/Drive |
-| 3 | [phase-3.md](phase-3.md) | Agent có tool, tự động hoá có kiểm soát, digest, memory, web task center |
+**Never decide silently.** If your workstream needs a choice the decision log doesn't cover (a new
+setting, a default, a library, a behavior the owner will see), stop and ask the owner with explained
+options and a recommendation, then record the answer in `docs/decisions.md`.
 
-## Trạng thái workstream
+| Phase | File | Goal |
+|-------|------|------|
+| 0 | (done in Python, commit `145de43`, removed) | Gmail → rules → summary → Telegram |
+| 1 | [phase-1.md](phase-1.md) | Rust port to parity, rules engine v2, operations baseline |
+| 2 | [phase-2.md](phase-2.md) | Morning digest, model triage + feedback, residency controller, `gm eval`, health alerts |
+| 3 | [phase-3.md](phase-3.md) | Two-way Telegram: Translate / Analyze / Reply with approvals and audit |
+| 4 | [phase-4.md](phase-4.md) | Calendar notifications and today's calendar in the digest |
 
-Cập nhật bảng này **trong cùng commit/PR hoàn thành workstream** (đừng commit riêng chỉ để đổi trạng
-thái, tránh conflict giữa các session).
+## Workstream status
 
-| ID | Tên | Phụ thuộc | Trạng thái |
-|----|-----|-----------|------------|
-| 1.0 | Nền tảng Phase 1 (Alembic, bảng mới, Google clients, scopes, topics) | — | todo |
-| 1A | Telegram hai chiều | 1.0 | todo |
-| 1B | Task runtime, intent router, approvals | 1.0 | todo |
-| 1C | Gmail recipes: dịch, phân tích, soạn & gửi trả lời | 1.0 (+ interface 1B) | todo |
-| 1D | Sổ chi tiêu trên Google Sheets | 1.0 (+ interface 1B) | todo |
-| 1.Z | Tích hợp & kiểm thử end-to-end Phase 1 | 1A–1D | todo |
-| 2A | LiteLLM gateway + 2 instance mlx-server-runtime | Phase 1 | todo |
-| 2B | Decision model (triage tầng 2) | 2A | todo |
-| 2C | Phản hồi & rule do người dùng quản lý | Phase 1 | todo |
-| 2D | Observability & vận hành (metrics, dead-letter UI, launchd, backup) | Phase 1 | todo |
-| 2E | Nguồn Calendar & Drive | Phase 1 | todo |
-| 2F | (tuỳ chọn) Event bus trên NATS JetStream | Phase 1 | todo |
-| 3A | Agent loop với tool + quarantine | Phase 2 | todo |
-| 3B | Standing instructions / tự động hoá | 3A | todo |
-| 3C | Digest hằng ngày & nhắc việc | Phase 2 | todo |
-| 3D | Preferences & memory | Phase 2 | todo |
-| 3E | Web task center & chat | 1B | todo |
+Update this table in the same commit that completes the workstream.
 
-Workstream trong cùng một phase được thiết kế để **chạy song song**: mỗi cái sở hữu một nhóm file
-riêng (ghi trong plan). Phần dùng chung (schema, topic, interface) được chốt trong workstream nền tảng
-hoặc ghi rõ trong plan, để không ai phải đợi ai.
+| ID | Name | Depends on | Status |
+|----|------|------------|--------|
+| 1A | Rust core: config, secrets, crypto, db, bus, clock | — | done |
+| 1B | Google OAuth, accounts, Gmail client, ingestion (poll + Pub/Sub), parser | 1A | done |
+| 1C | Rules engine v2 + `rules.yaml` from the mail analysis | 1A | done |
+| 1D | LLM client (lanes, cleaning, prompts) + pipeline + notifier | 1A–1C | done |
+| 1E | Web (askama, Fluent en/vi/ja, guards), settings, metrics | 1A, 1B | done |
+| 1F | Ops files: launchd plists, backup script, CI, `.env.example` | — | done (not installed) |
+| 1G | Remove the Python code | 1A–1E | done |
+| 1H | Health panel on the dashboard | 1E | todo (moved to 2E) |
+| 2A | Digest builder + scheduler + digest lane | Phase 1 | todo |
+| 2B | Model triage | Phase 1 | todo |
+| 2C | Feedback buttons (needs Telegram callbacks from 3A) | 2B, 3A-min | todo |
+| 2D | Residency controller | Phase 1 | todo |
+| 2E | Health alerts, health panel, dead-letter page, ignored-sender counts | Phase 1 | todo |
+| 2F | `gm eval` and the local eval set | 2B | todo |
+| 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | todo |
+| 3B | Task runtime, intent router, approvals, audit | 3A | todo |
+| 3C | Recipes: translate, analyze, reply (+ `gmail.compose`) | 3B interface | todo |
+| 3Z | Phase 3 integration + prompt-injection end-to-end test | 3A–3C | todo |
+| 4A | Calendar source + notifications + digest section | Phase 2 | todo |
 
-## Cách nhận và làm một workstream
+Workstreams in the same phase run in parallel when they own different files (listed in each plan).
 
-1. Đọc `CLAUDE.md`, file này, và mục workstream của bạn trong file phase.
-2. Tạo nhánh `phase<N>/<id>-<slug>`, ví dụ `phase1/1a-telegram`.
-3. Chỉ sửa các file workstream của bạn sở hữu. Cần đổi file dùng chung (`db.py`, `main.py`,
-   `config.py`, `topics.py`, `templates/`) thì sửa **tối thiểu** và ghi rõ trong mô tả PR.
-4. Schema thay đổi → thêm một Alembic revision mới (từ 1.0 trở đi). Trước khi merge, rebase và sửa
-   `down_revision` để chỉ có **một head** (`uv run alembic heads`).
-5. Hoàn thành khi đạt **Definition of Done** bên dưới, rồi cập nhật bảng trạng thái.
+## How to pick up a workstream
 
-## Definition of Done (mọi workstream)
+1. Read `CLAUDE.md`, this file, and your workstream's section.
+2. Branch `phase<N>/<id>-<slug>`, for example `phase2/2a-digest`.
+3. Edit only the files your workstream owns. Shared files (`lib.rs`, `app.rs`, `config.rs`, `db.rs`,
+   `web/mod.rs`, `locales/*/main.ftl`, `templates/base.html`) get minimal changes, called out in the PR.
+4. Schema changes: a new file in `crates/gm/migrations/` with the next number (`0002_…sql`). When
+   rebasing, renumber yours if another branch took that number; never edit a migration that has been
+   merged (sqlx stores checksums).
+5. Done = the Definition of Done below; then update the status table and the specs you touched.
 
-- `uv run pytest` và `uv run ruff check src tests` đều sạch.
-- Test mới cho logic mới, **không gọi mạng thật** (Google, Telegram, LLM): dùng fake/MockTransport như
-  `tests/conftest.py` (`FakeGmail`, `RecordingNotifier`, `httpx.MockTransport`).
-- Có Alembic migration nếu schema đổi; app khởi động được trên DB trống và trên DB của phase trước.
-- Biến môi trường mới có trong `.env.example`. Bước setup mới (scope, API cần bật…) có trong `README.md`.
-- Không vi phạm các **bất biến** bên dưới.
+## Definition of Done (every workstream)
 
-## Bất biến kiến trúc (không được phá)
+- `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` are clean
+  (tests need Postgres on `127.0.0.1:5433`: `docker compose up -d`).
+- `cargo run -- rules rules.yaml` passes if rules changed.
+- New logic has tests that **never call real networks**: use `wiremock` for Google, Telegram and the
+  LLM, and the helpers in `crates/gm/tests/common/mod.rs` (`test_app`, `mock_message`, `mock_llm`,
+  `drain`, `RecordingNotifier`, `FixedClock`).
+- A migration if the schema changed; the app starts on an empty DB and on the previous DB.
+- New config is in `.env.example` and `docs/spec/interfaces.md`; new user-visible strings are in all
+  three locale files (a test checks key parity).
+- Specs in `docs/spec/` match the code; new decisions are in `docs/decisions.md`.
+- None of the invariants below is broken.
 
-1. **At-least-once + idempotent.** Handler của bus phải chịu được chạy lại: kiểm tra trạng thái trước
-   khi làm. Thay đổi trạng thái và `bus.publish(...)` nằm **trong cùng một transaction**.
-2. **Nội dung từ Google là dữ liệu không tin cậy** (mail, tên file, mô tả sự kiện…). Không bao giờ
-   đưa nó cho một LLM call có quyền gây tác động bên ngoài. Người nhận / đích của một hành động
-   (địa chỉ gửi mail, spreadsheet, calendar) **không bao giờ lấy từ output của LLM**; chúng lấy từ
-   header của mail gốc, cấu hình, hoặc lời của người dùng.
-3. **Mọi tác động bên ngoài phải qua approval** (gửi mail, sửa lịch, chia sẻ file, xoá). Payload của
-   approval là bất biến (lưu hash), khi thực thi phải đúng payload đã duyệt, và ghi `audit_log`.
-   Ngoại lệ chỉ được thêm ở Phase 3B, theo allowlist rõ ràng.
-4. **Scope tối thiểu.** Thêm scope = thêm vào `REQUIRED_SCOPES` + UI báo cần kết nối lại. Ưu tiên
-   `drive.file` hơn `drive`, `gmail.compose` hơn `gmail.modify`/full.
-5. **Secret** (refresh token, bot token, master key) được mã hoá hoặc chỉ nằm trong `.env`, không bao
-   giờ xuất hiện trong log. URL của Telegram chứa bot token: không log URL đó.
-6. **Chỉ bind `127.0.0.1`.** Truy cập từ xa đi qua Tailscale. Không mở webhook public.
-7. **Mọi lời gọi LLM đi qua `gm.llm.LLMClient`** (chỉ một chỗ để đổi sang LiteLLM). Không phụ thuộc
-   vào `tools`/`response_format`: mlx-server-runtime không hỗ trợ. Yêu cầu JSON trong prompt và parse
-   bền vững như `parse_summary`.
-8. **Telegram gửi plain text** (không `parse_mode`), vì text có thể chứa nội dung từ mail.
+## Architecture invariants (must not break)
 
-## Sự thật về môi trường (đã kiểm tra)
+1. **At-least-once + idempotent.** Handlers check state before acting; a state change and its
+   `bus.publish(&mut tx, …)` happen in the same transaction.
+2. **Google content is untrusted data.** It reaches a model only inside `<email>` delimiters
+   (`clean::sanitize_delimiters`), and never a model call that can cause external effects. Targets of
+   actions (addresses, threads, calendars) never come from model output.
+3. **Every external effect goes through an approval** (send mail, change calendar, share, delete):
+   immutable payload with a stored hash, re-validated before execution, written to the audit log.
+4. **Minimal scopes.** A new scope goes in `google::REQUIRED_SCOPES`; the owner reconnects.
+5. **Secrets** live in the Keychain (`secrets::get`), never in `.env`, logs, argv or error messages.
+   Telegram URLs contain the bot token: never log them; strip URLs from reqwest errors.
+6. **Bind to loopback only.** Remote access through Tailscale; no public webhooks.
+7. **Every model call goes through `llm::LlmClient`** with a lane. No reliance on `tools` or
+   `response_format`; ask for JSON and parse tolerantly. Keep the stable system prefix (system.md +
+   task + `/no_think`) and put the mail last.
+8. **Model hours and outages.** Work that needs the model returns `Outcome::Defer` outside
+   09:00–19:00 and while the model is unavailable (`LlmUnavailable`). No notification is sent without
+   its summary; rule-only notifications go out at any hour.
+9. **Telegram messages are plain text** (no `parse_mode`).
+10. **Rules are tested.** Every rule has redacted examples (no names, real amounts, IPs or order
+    numbers); raw mail never goes into git.
 
-- Python 3.13 qua `uv`; Postgres 17 trong Docker ở `127.0.0.1:5433` (user/pass/db `gm`); test dùng DB
-  `gm_test` (tự tạo).
-- `mlx-server-runtime` (repo anh em `../mlx-server-runtime`): gateway Rust, `POST /v1/chat/completions`
-  chuẩn OpenAI (có `usage`, có SSE). **Mỗi instance chỉ phục vụ một model** (`[worker].model`). **Không
-  có** `tools`, `response_format`, hay JSON mode. Khi queue đầy thì trả `429` (bus sẽ retry). Cấu hình
-  TOML qua `MLX_RUNTIME_CONFIG`; muốn chạy instance thứ hai thì dùng `server.port` và
-  `worker.ipc_path` khác.
-- Google: app OAuth phải ở chế độ "In production" (nếu không, refresh token hết hạn sau 7 ngày).
-  Tài khoản gmail.com cá nhân **không dùng được Google Keep API** → ghi chú/sổ sách đi vào Sheets.
-- Lệnh thường dùng:
+## Environment facts (verified)
+
+- Rust stable (edition 2024), one crate `crates/gm` in a workspace at the repo root.
+- Postgres 17 in Docker at `127.0.0.1:5433` (user/password/db `gm`); `#[sqlx::test]` creates a fresh
+  database per test from `DATABASE_URL` (set in `.cargo/config.toml`).
+- `mlx-server-runtime` (sibling repo `../mlx-server-runtime`, CLI `mlx-air serve --model …`):
+  OpenAI-style `POST /v1/chat/completions` with `usage`; one model per instance; no `tools`,
+  `response_format` or JSON mode; `429` when its queue is full (the bus retries).
+- Google: the OAuth app must be "In production" (otherwise refresh tokens expire after 7 days).
+- Commands:
   ```bash
   docker compose up -d
-  uv run gm serve
-  uv run pytest
-  uv run ruff check src tests
+  cargo run -- serve
+  cargo test
+  cargo clippy --all-targets -- -D warnings
+  cargo run -- rules rules.yaml
   ```

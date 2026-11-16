@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block body %}
+<header>
+  <h1>{{ tr.get("app-title") }}</h1>
+  <div>
+    <span class="muted">{{ email }}</span>
+    <a class="btn" href="/settings">{{ tr.get("settings") }}</a>
+    <form method="post" action="/auth/logout"><button class="btn">{{ tr.get("sign-out") }}</button></form>
+  </div>
+</header>
+
+<div class="grid">
+  <section class="card">
+    <h2>{{ tr.get("gmail") }}</h2>
+    {% if account_status == "active" %}
+      <dl>
+        <dt>{{ tr.get("status") }}</dt><dd class="ok">{{ tr.get("connected") }}</dd>
+        <dt>{{ tr.get("history-id") }}</dt><dd>{{ history_id }}</dd>
+        <dt>{{ tr.get("last-sync") }}</dt><dd>{{ last_sync }}</dd>
+        <dt>{{ tr.get("ingest") }}</dt><dd>{{ ingest }}</dd>
+        {% if !ingest_error.is_empty() %}
+        <dt>Pub/Sub</dt><dd class="bad">{{ ingest_error }}</dd>
+        {% endif %}
+        {% if !last_error.is_empty() %}
+        <dt>{{ tr.get("error") }}</dt><dd class="bad">{{ last_error }}</dd>
+        {% endif %}
+      </dl>
+      <p>
+        <form method="post" action="/api/gmail/sync"><button class="btn">{{ tr.get("sync-now") }}</button></form>
+        <a class="btn" href="/connect/google">{{ tr.get("reconnect") }}</a>
+      </p>
+    {% else %}
+      {% if account_status == "needs_reconnect" %}
+        <p class="bad">{{ tr.get("needs-reconnect") }}</p>
+      {% else %}
+        <p class="muted">{{ tr.get("not-connected") }}</p>
+      {% endif %}
+      <a class="btn primary" href="/connect/google">{{ tr.get("connect-gmail") }}</a>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>{{ tr.get("pipeline") }}</h2>
+    <dl>
+      <dt>{{ tr.get("llm") }}</dt><dd>{{ llm_model }}<br><span class="muted">{{ llm_base_url }}</span></dd>
+      <dt>{{ tr.get("model-hours") }}</dt><dd>{{ model_hours }}</dd>
+      <dt>{{ tr.get("summary-language") }}</dt><dd>{{ summary_language }} <a href="/settings" class="muted">{{ tr.get("change") }}</a></dd>
+      <dt>{{ tr.get("notifications") }}</dt><dd>{{ notifier }}</dd>
+      <dt>{{ tr.get("queue") }}</dt>
+      <dd>{% for (k, v) in job_stats %}<span class="pill s-{{ k }}">{{ k }}: {{ v }}</span> {% else %}<span class="muted">{{ tr.get("empty") }}</span>{% endfor %}</dd>
+    </dl>
+  </section>
+</div>
+
+<section class="card">
+  <h2>{{ tr.get("recent-events") }}</h2>
+  {% if events.is_empty() %}
+    <p class="muted">{{ tr.get("no-events") }}</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>#</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("col-from-subject") }}</th><th>{{ tr.get("col-status") }}</th><th>{{ tr.get("col-summary") }}</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr>
+        <td class="muted">{{ e.id }}</td>
+        <td class="muted" style="white-space:nowrap">{{ e.time }}</td>
+        <td>{{ e.from }}<br>
+          {% if e.link.is_empty() %}<span class="muted">{{ e.subject }}</span>
+          {% else %}<a href="{{ e.link }}" target="_blank" rel="noopener noreferrer">{{ e.subject }}</a>{% endif %}
+        </td>
+        <td><span class="pill s-{{ e.status }}">{{ e.status }}</span><br><span class="muted">{{ e.rule }}</span></td>
+        <td>
+          {% if !e.summary.is_empty() %}<strong>{{ e.importance }}</strong> · {{ e.summary }}
+          {% else if !e.error.is_empty() %}<span class="bad">{{ e.error }}</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

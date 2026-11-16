@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Nightly pg_dump at 03:30, keeping 14 copies (ADR-0016). A run missed while asleep happens on wake. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.gm.backup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/backup.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/gm/backup.log</string>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/gm/backup.log</string>
+</dict>
+</plist>

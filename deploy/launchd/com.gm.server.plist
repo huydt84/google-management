@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- gm web server + workers. Install: see deploy/README.md. __REPO__ and __HOME__ are replaced by the install steps. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.gm.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__REPO__/target/release/gm</string>
+    <string>serve</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>GM_LOG_DIR</key><string>__HOME__/Library/Logs/gm</string>
+    <key>RUST_LOG</key><string>info</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/gm/server.stderr.log</string>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/gm/server.stdout.log</string>
+</dict>
+</plist>

@@ -1,0 +1,3 @@
+# Used by `cargo test`: #[sqlx::test] creates a fresh database per test on this server.
+[env]
+DATABASE_URL = { value = "postgres://gm:gm@127.0.0.1:5433/gm", force = false }

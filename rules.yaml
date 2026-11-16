@@ -1,29 +1,273 @@
-# Triage rules — the first matching rule wins. All conditions inside one `when` must match.
-# Actions: ignore (drop silently) | log (keep in the event log, no notification) | notify
-# Conditions: labels_any, from_contains, from_regex, subject_contains, subject_regex,
-#             has_list_unsubscribe
-# The file is reloaded automatically when it changes.
+# Triage rules (ADR-0012). The first matching rule wins; every condition inside one `when` must
+# match. The file is reloaded automatically when it changes. Check it with: gm rules rules.yaml
+#
+# when:     from (address glob, string or list) · from_name (regex) · subject (regex) ·
+#           body (regex, first 4 KB) · labels_any · labels_none · list_unsubscribe (bool)
+# action:   ignore | digest | notify | triage   (default for unmatched mail: triage)
+# notify:   priority silent|normal|high|urgent (default normal) · summarize (default true)
+#           · message: template using extracted values, {subject} and {from}
+# digest:   section (default "other") · summarize (default false)
+# extract:  name -> regex (first capture group), searched in subject + body
+# examples: redacted headers (no names, real amounts, IPs or order numbers) that must match this
+#           rule; checked by `gm rules` and by the test suite (ADR-0017).
+#
+# Policy source: docs/decisions.md, "Mail triage policy" (T1–T16).
 
-default: notify
+default: triage
 
 rules:
-  - name: gmail-noise-categories
+  # ---------------------------------------------------------------- security (T4): urgent
+  # Rule-only (summarize: false) pings at any hour; summarized ones wait for the model (P4).
+  - name: rakuten-login
     when:
-      labels_any: [CATEGORY_PROMOTIONS, CATEGORY_SOCIAL, CATEGORY_FORUMS, SPAM, TRASH]
+      from: no-reply@id.rakuten.co.jp
+    action: notify
+    priority: urgent
+    summarize: false
+    examples:
+      - from: "Rakuten <no-reply@id.rakuten.co.jp>"
+        subject: "[楽天] ログイン通知 / Login Notification (2026/01/01 00:00 JST (GMT + 09:00))"
+
+  - name: rakuten-important
+    when:
+      from: ["*@mobile.rakuten.co.jp", "*@mail.rakuten-card.co.jp"]
+      subject: "^【重要】"
+    action: notify
+    priority: urgent
+    examples:
+      - from: "楽天モバイル株式会社 <information@mobile.rakuten.co.jp>"
+        subject: "【重要】支払い証明書の第三者閲覧の可能性について(2026/1/1)"
+
+  - name: account-security
+    when:
+      from: [no-reply@accounts.google.com, appleid@id.apple.com]
+    action: notify
+    priority: urgent
+    examples:
+      - from: "Google <no-reply@accounts.google.com>"
+        subject: "Security alert"
+      - from: "Apple <appleid@id.apple.com>"
+        subject: "Your Apple Account was used to sign in"
+
+  # ---------------------------------------------------------------- Rakuten Card (T1–T3, T5, T9)
+  - name: rakuten-card-flash
+    when:
+      from: info@mail.rakuten-card.co.jp
+      subject: "速報版"
+    action: notify
+    priority: silent
+    summarize: false
+    extract:
+      amount: '本人\s*([\d,]+)\s*円'
+      date: '(\d{4}/\d{2}/\d{2})\s*本人'
+    message: "💳 Rakuten Card ¥{amount} ({date})"
+    examples:
+      - from: "楽天カード株式会社 <info@mail.rakuten-card.co.jp>"
+        subject: "【速報版】カード利用のお知らせ(本人ご利用分)"
+        labels: [CATEGORY_UPDATES, INBOX]
+        body: "ご利用日 利用者 ご利用金額 2026/01/01 本人 1,234 円"
+        expect: { amount: "1,234", date: "2026/01/01" }
+
+  - name: rakuten-card-statement
+    when:
+      from: info@mail.rakuten-card.co.jp
+      subject: "お支払予定金額"
+    action: notify
+    priority: high
+    examples:
+      - from: "楽天カード株式会社 <info@mail.rakuten-card.co.jp>"
+        subject: "【楽天カード】お支払予定金額のご案内"
+        labels: [IMPORTANT, CATEGORY_UPDATES, INBOX]
+
+  - name: rakuten-card-confirmed
+    when:
+      from: info@mail.rakuten-card.co.jp
+      subject: "^カード利用のお知らせ"
+    action: digest
+    section: card-usage
+    examples:
+      - from: "楽天カード株式会社 <info@mail.rakuten-card.co.jp>"
+        subject: "カード利用のお知らせ(本人ご利用分)"
+
+  - name: rakuten-card-promo-name
+    when:
+      from: info@mail.rakuten-card.co.jp
+      from_name: "楽天カード通信"
     action: ignore
+    examples:
+      - from: "楽天カード通信 <info@mail.rakuten-card.co.jp>"
+        subject: "抽選でポイント進呈！"
 
-  # Example: always notify for specific senders (put before the catch-all log rules).
-  # - name: bank
-  #   when:
-  #     from_contains: ["@yourbank.com"]
-  #   action: notify
+  - name: rakuten-card-promo-subject
+    when:
+      from: info@mail.rakuten-card.co.jp
+      subject: "楽天カード通信|ポイント進呈|キャンペーン|特典"
+    action: ignore
+    examples:
+      - from: "楽天カード株式会社 <info@mail.rakuten-card.co.jp>"
+        subject: "【お誕生日おめでとうございます】ささやかな特典をご用意しました！【楽天カード通信】"
 
+  - name: rakuten-card-notices
+    when:
+      from: info@mail.rakuten-card.co.jp
+    action: digest
+    section: account
+    summarize: true
+    examples:
+      - from: "楽天カード株式会社 <info@mail.rakuten-card.co.jp>"
+        subject: "会員規約改定延期のお知らせ【楽天カード株式会社】"
+
+  # ---------------------------------------------------------------- Rakuten Ichiba orders (T6–T8)
+  - name: rakuten-order-shipping
+    when:
+      from: "*@shop.rakuten.co.jp"
+      subject: "発送|出荷|入荷予定|お届け予定"
+      labels_none: [CATEGORY_PROMOTIONS]
+    action: notify
+    priority: silent
+    examples:
+      - from: "ショップ <shop-a@shop.rakuten.co.jp>"
+        subject: "[重要]発送完了のお知らせ【ショップ】"
+        labels: [IMPORTANT, CATEGORY_UPDATES, INBOX]
+      - from: "Joshin web 事務局 <joshinweb_3@shop.rakuten.co.jp>"
+        subject: "[Joshin web] 商品出荷のご案内 ( お問い合わせ番号 :00000000)"
+        labels: [IMPORTANT, CATEGORY_UPDATES, INBOX]
+      - from: "Joshin web 事務局 <joshinweb_3@shop.rakuten.co.jp>"
+        subject: "[Joshin web] 入荷予定のお知らせ ( お問い合わせ番号： 00000000)"
+        labels: [IMPORTANT, CATEGORY_UPDATES, INBOX]
+
+  - name: rakuten-order-confirmation
+    when:
+      from: "*@shop.rakuten.co.jp"
+      subject: "注文"
+      labels_none: [CATEGORY_PROMOTIONS]
+    action: digest
+    section: orders
+    summarize: true
+    examples:
+      - from: "ショップ <shop-b_2@shop.rakuten.co.jp>"
+        subject: "【楽天市場】ご注文頂きましたショップで御座います。"
+        labels: [IMPORTANT, CATEGORY_PERSONAL, INBOX]
+
+  - name: rakuten-shop-newsletters
+    when:
+      from: "*@shop.rakuten.co.jp"
+    action: ignore
+    examples:
+      - from: "楽天24 <rakuten24_8@shop.rakuten.co.jp>"
+        subject: "【バス・ビューティケア特集】最大15％OFFクーポン配布中"
+        labels: [CATEGORY_UPDATES, INBOX]
+      - from: "ショップ <shop-c@shop.rakuten.co.jp>"
+        subject: "〇〇 様  【神トク限定】＼保湿ケアセット！／※送料無料"
+        labels: [CATEGORY_PROMOTIONS, INBOX]
+
+  - name: rakuten-review-requests
+    when:
+      from: hyouka@rakuten.co.jp
+    action: ignore
+    examples:
+      - from: "楽天みんなのレビュー <hyouka@rakuten.co.jp>"
+        subject: "【楽天市場】お買い物へのレビューをお願いします"
+
+  # ---------------------------------------------------------------- coupons and points (T10)
+  - name: rakuten-coupons
+    when:
+      from: no-reply@mail.coupon.rakuten.co.jp
+    action: digest
+    section: coupons
+    examples:
+      - from: "ラ・クーポン(RaCoupon) <no-reply@mail.coupon.rakuten.co.jp>"
+        subject: "獲得されたクーポンの利用期限が迫っています！【楽天】"
+
+  - name: rakuten-points
+    when:
+      from: ["*@mail.pointcard.rakuten.co.jp", "rmobile-notification@mobile.rakuten.co.jp"]
+      subject: "ポイント"
+    action: digest
+    section: points
+    examples:
+      - from: "楽天ポイントカード <point-notice-w@mail.pointcard.rakuten.co.jp>"
+        subject: "今週の獲得ポイント数のお知らせ【楽天ポイントカード】"
+      - from: "楽天モバイルからのお知らせ <rmobile-notification@mobile.rakuten.co.jp>"
+        subject: "【楽天モバイル】利用獲得ポイントのお知らせ"
+
+  # ---------------------------------------------------------------- other Rakuten marketing (T9)
+  - name: rakuten-marketing
+    when:
+      from: ["*@*rakuten.co.jp", "*@*rakuten-card.co.jp"]
+    action: ignore
+    examples:
+      - from: "楽天モバイルニュース <rmobile-news@news.mobile.rakuten.co.jp>"
+        subject: "楽天モバイル紹介キャンペーンでみんなでおトクに！【楽天モバイル】"
+        labels: [CATEGORY_PROMOTIONS, INBOX]
+      - from: "楽天マガジン <no-reply@mail.magazine.rakuten.co.jp>"
+        subject: "楽天マガジンライトが申し込み不要でご利用可能です"
+      - from: "楽天アフィリエイト <mail@affiliate.rakuten.co.jp>"
+        subject: "初回限定！報酬受取で500円GET【楽天アフィリエイト】"
+
+  # ---------------------------------------------------------------- LinkedIn (T12–T14)
+  - name: linkedin-job-alerts
+    when:
+      from: [jobalerts-noreply@linkedin.com, jobs-noreply@linkedin.com]
+    action: digest
+    section: jobs
+    summarize: true
+    examples:
+      - from: "LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>"
+        subject: "“software engineer”: new jobs"
+
+  - name: linkedin-messages
+    when:
+      from: messages-noreply@linkedin.com
+    action: notify
+    examples:
+      - from: "LinkedIn <messages-noreply@linkedin.com>"
+        subject: "You have a new message"
+        labels: [CATEGORY_SOCIAL, INBOX]
+
+  - name: linkedin-other
+    when:
+      from: "*@linkedin.com"
+    action: ignore
+    examples:
+      - from: "Someone <invitations@linkedin.com>"
+        subject: "I want to connect"
+        labels: [CATEGORY_SOCIAL, INBOX]
+
+  # ---------------------------------------------------------------- newsletters you read (T11)
   - name: newsletters
     when:
-      has_list_unsubscribe: true
-    action: log
+      from:
+        - "*@m.learn.coursera.org"
+        - "*@mail.blinkist.com"
+        - "*@mail.japan-dev.com"
+        - interviewingjapan@creator.patreon.com
+        - "*@geeksforgeeks.org"
+    action: digest
+    section: newsletters
+    summarize: true
+    examples:
+      - from: "Coursera <Coursera@m.learn.coursera.org>"
+        subject: "Recommended for you"
+        labels: [CATEGORY_PROMOTIONS, INBOX]
+      - from: "Eric at Japan Dev <eric@mail.japan-dev.com>"
+        subject: "This week in Japan tech"
 
-  - name: updates-category
+  # ---------------------------------------------------------------- everything else
+  - name: promotions-tab
     when:
-      labels_any: [CATEGORY_UPDATES]
-    action: log
+      labels_any: [CATEGORY_PROMOTIONS]
+    action: ignore
+    examples:
+      - from: "Some Shop <news@shop.example.com>"
+        subject: "Big sale this weekend"
+        labels: [CATEGORY_PROMOTIONS, INBOX]
+
+  - name: noise-categories
+    when:
+      labels_any: [CATEGORY_SOCIAL, CATEGORY_FORUMS, SPAM, TRASH]
+    action: ignore
+    examples:
+      - from: "Forum <noreply@forum.example.com>"
+        subject: "New reply in a thread"
+        labels: [CATEGORY_FORUMS, INBOX]
