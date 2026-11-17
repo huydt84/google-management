@@ -81,6 +81,8 @@ pub struct Config {
     pub model_off: NaiveTime,
     /// Default morning digest time; each user can change it in Settings (decision N4).
     pub digest_at: NaiveTime,
+    /// launchd label of the mlx-server-runtime agent driven by the residency controller.
+    pub mlx_launchd_label: String,
 
     // Defaults for users who have not saved settings
     pub default_summary_language: String,
@@ -214,6 +216,7 @@ impl Config {
             model_on: time("MODEL_ON", "09:00")?,
             model_off: time("MODEL_OFF", "19:00")?,
             digest_at: time("DIGEST_AT", "09:05")?,
+            mlx_launchd_label: env_or("MLX_LAUNCHD_LABEL", "com.gm.mlx"),
             default_summary_language: env_or("DEFAULT_SUMMARY_LANGUAGE", "Vietnamese"),
             default_ui_language: env_or("DEFAULT_UI_LANGUAGE", "en"),
             telegram_bot_token: secrets::get("telegram-bot-token"),
@@ -263,6 +266,7 @@ impl Config {
             model_on: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             model_off: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             digest_at: NaiveTime::from_hms_opt(9, 5, 0).unwrap(),
+            mlx_launchd_label: "com.gm.mlx".into(),
             default_summary_language: "Vietnamese".into(),
             default_ui_language: "en".into(),
             telegram_bot_token: None,

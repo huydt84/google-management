@@ -15,6 +15,7 @@ pub mod i18n;
 pub mod llm;
 pub mod notify;
 pub mod pipeline;
+pub mod residency;
 pub mod rules;
 pub mod scheduler;
 pub mod secrets;

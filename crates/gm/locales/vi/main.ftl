@@ -100,3 +100,14 @@ col-sender = Người gửi
 col-count = Số thư
 col-last-subject = Tiêu đề gần nhất
 col-rule = Bỏ qua bởi
+
+# Residency (2D)
+model-state = Mô hình
+model-resident = đã nạp (trả lời /ready)
+model-not-resident = chưa nạp
+residency = gm tự nạp/gỡ
+on = Bật
+off = Tắt
+turn-on = Bật
+turn-off = Tắt
+residency-help = Khi bật, gm khởi động mô hình lúc bắt đầu giờ chạy mô hình và dừng khi hết giờ (launchd agent com.gm.mlx).

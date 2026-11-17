@@ -161,4 +161,7 @@ Decided by the owner in a structured interview on 2026-11-17, before Phase 2 was
   150 tokens, job list cap 600 tokens; model load timeout 5 min; the "model down" health check is
   skipped outside model hours (an open incident stays open, no recovery message at 19:00); in
   Pub/Sub mode the ingest-lag threshold is the safety-poll interval + 10 min (a quiet mailbox would
-  otherwise alarm every 15 min); Telegram long poll 25 s.
+  otherwise alarm every 15 min); Telegram long poll 25 s; the residency controller also reconciles
+  every 10 minutes (restarts a crashed model by day, stops one started at night); the mlx plist is
+  `RunAtLoad` without `KeepAlive`, so with the switch off the model starts at login and runs until
+  stopped.

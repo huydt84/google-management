@@ -24,6 +24,9 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
 - **Residency:** the residency controller starts the mlx-server-runtime launchd job at
   `GM_MODEL_ON` (09:00) and stops it at `GM_MODEL_OFF` (19:00), in the user's timezone. Jobs that
   need the model while it is off are deferred (`run_after` = next on-time), not failed.
+  *Amended 2026-11-17 (decision N10, N11):* the controller acts only while the machine-wide switch
+  "Load/unload by gm" (dashboard, off by default) is on; it waits at most 5 minutes for in-flight
+  requests before stopping the model.
 - **Prompt shape:** a shared, stable system prefix (role, untrusted-content rules, output rules),
   then the task block, then user settings, then the mail last inside `<email>` delimiters that the
   content cannot close. Prompts are versioned files under `prompts/`. This maximizes prefix-cache

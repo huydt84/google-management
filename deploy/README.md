@@ -28,6 +28,11 @@ A one-time registration; afterwards the agents start on every login (decision O1
 command). The model agent (`com.gm.mlx`) is not loaded for now: until it is, summaries simply wait
 in the queue and rule-only pings still go out (decision L12).
 
+When you install it later (same loop with `com.gm.mlx`), turn on **Load/unload by gm** on the
+dashboard: gm then starts the model at 09:00 and stops it at 19:00 (after in-flight requests, at most
+5 min). The agent is not kept alive by launchd; with the switch off it starts at login and runs until
+you stop it (`launchctl kill TERM gui/$(id -u)/com.gm.mlx`).
+
 ```bash
 mkdir -p ~/Library/Logs/gm
 for name in com.gm.server com.gm.backup; do

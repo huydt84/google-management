@@ -52,6 +52,8 @@ struct IndexPage {
     llm_model: String,
     llm_base_url: String,
     model_hours: String,
+    model_resident: bool,
+    residency_on: bool,
     summary_language: String,
     notifier: String,
     job_stats: Vec<(String, i64)>,
@@ -207,6 +209,8 @@ pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<R
         llm_model: state.cfg.llm_model.clone(),
         llm_base_url: state.cfg.llm_base_url.clone(),
         model_hours: hours,
+        model_resident: state.residency.resident().await,
+        residency_on: state.residency.enabled().await?,
         summary_language: prefs.summary_language,
         notifier: if state.notifier_name == "telegram" {
             tr.get("telegram")
@@ -446,6 +450,10 @@ pub async fn metrics(
             "# TYPE gm_ingest_lag_seconds gauge\ngm_ingest_lag_seconds {lag:.0}\n"
         ));
     }
+    out.push_str(&format!(
+        "# TYPE gm_model_resident gauge\ngm_model_resident {}\n",
+        u8::from(state.residency.resident().await)
+    ));
     out.push_str("# TYPE gm_health_failing gauge\n");
     for r in state.health.evaluate().await? {
         if let Some(f) = r.failing {
@@ -700,4 +708,32 @@ pub async fn senders_page(
             })
             .collect(),
     })
+}
+
+#[derive(Deserialize)]
+pub struct ResidencyForm {
+    on: String,
+}
+
+/// Turn the residency controller on or off (decision N10).
+pub async fn set_residency(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    Form(f): Form<ResidencyForm>,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let on = f.on == "1";
+    // Turning it on may start the model and wait for it: don't hold the request for minutes.
+    crate::db::system_set(&state.pool, crate::residency::SETTING, &json!(on)).await?;
+    if on {
+        let r = state.residency.clone();
+        tokio::spawn(async move {
+            if let Err(e) = r.set_enabled(true).await {
+                tracing::error!(error = %e, "residency reconcile failed");
+            }
+        });
+    }
+    Ok(Redirect::to("/").into_response())
 }

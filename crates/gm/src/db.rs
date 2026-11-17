@@ -104,3 +104,23 @@ pub async fn apply_retention(pool: &PgPool, days: i64) -> sqlx::Result<(u64, u64
         .await?;
     Ok((ev, jobs))
 }
+
+/// A machine-wide setting (`system_settings`), or `None` if never set.
+pub async fn system_get(pool: &PgPool, key: &str) -> sqlx::Result<Option<Value>> {
+    sqlx::query_scalar("SELECT value FROM system_settings WHERE key = $1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn system_set(pool: &PgPool, key: &str, value: &Value) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO system_settings (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(pool)
+    .await?;
+    Ok(())
+}

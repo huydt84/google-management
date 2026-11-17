@@ -39,7 +39,7 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 |-------|----------|------------|---------|-------------------|
 | `gmail.message.classify` | `triage` (action `triage`) | `classify` (model triage, notify lane) | as `gmail.message.received` | event status `classify` (row locked) |
 | `digest.item.summarize` | `triage` / `classify` (digest with `summarize: true`) | `digest_summarize` (batch lane) | `{event_id}` | status `digest` and `summary IS NULL` (row locked) |
-| `schedule.due` | scheduler | `digest_build` (kind `digest`) | `{kind: digest|load|unload, at, owner?}` | one `digests` row per (owner, date) |
+| `schedule.due` | scheduler | `digest_build` (kind `digest`), `residency` (kinds `load` / `unload`, only while the switch is on) | `{kind: digest|load|unload, at, owner?}` | one `digests` row per (owner, date) |
 | `digest.refresh` | `digest_summarize` (item of a sent digest) | `digest_refresh` | `{digest_id}` | digest `sent`, same local day, inside model hours; skipped if the text is unchanged |
 
 ### Phase 2 (planned)

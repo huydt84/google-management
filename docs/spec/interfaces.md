@@ -33,7 +33,7 @@ Guards on every request (`web::guard`):
 
 Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 `gm_llm_prompt_tokens_24h`, `gm_llm_completion_tokens_24h`, `gm_llm_latency_ms_sum_24h` (per task and lane),
-`gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode), `gm_health_failing{check}` (Phase 2). Counts only, no content.
+`gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode), `gm_health_failing{check}`, `gm_model_resident` (Phase 2). Counts only, no content.
 
 ### Implemented (Phase 2)
 
@@ -41,6 +41,7 @@ Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 |--------|------|------|---------|
 | GET | `/digest[?id=]` | session | The last 60 digests (date, items, status) and the text of the selected one (default: latest) |
 | GET | `/jobs[?status=dead|pending|running|done]` | session | Jobs by status (default `dead`, latest 200) with their last error |
+| POST | `/model/residency` | session | Form `on=1|0`: the residency switch (decision N10); turning it on reconciles in the background; redirect to `/` |
 | POST | `/jobs/{id}/retry`, `/jobs/retry-dead` | session | A dead job (or all of them) back to `pending` with attempts reset; redirect to `/jobs` |
 | GET | `/senders` | session | Ignored mail of the last 30 days grouped by sender address: count, last subject, the rule(s) that ignored it |
 
@@ -182,6 +183,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_NO_THINK_TAG` | `/no_think` | Appended to the system prompt; empty to disable |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
 | `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on) |
+| `GM_MLX_LAUNCHD_LABEL` | `com.gm.mlx` | launchd agent the residency controller starts and stops (`gui/<uid>/<label>`) |
 | `GM_DIGEST_AT` | `09:05` | Default morning digest time; each user can change it in Settings (inside model hours) |
 | `GM_DEFAULT_SUMMARY_LANGUAGE` | `Vietnamese` | Default summary language |
 | `GM_DEFAULT_UI_LANGUAGE` | `en` | Default UI language (`en`, `vi`, `ja`) |

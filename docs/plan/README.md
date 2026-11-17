@@ -33,7 +33,7 @@ Update this table in the same commit that completes the workstream.
 | 2A | Digest builder + scheduler + digest lane | Phase 1 | done |
 | 2B | Model triage | Phase 1 | done |
 | 2C | Feedback buttons (needs Telegram callbacks from 3A) | 2B, 3A-min | todo |
-| 2D | Residency controller | Phase 1 | todo |
+| 2D | Residency controller | Phase 1 | done |
 | 2E | Health alerts, health panel, dead-letter page, ignored-sender counts | Phase 1 | done |
 | 2F | `gm eval` and the local eval set | 2B | todo |
 | 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | todo |

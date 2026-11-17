@@ -30,6 +30,7 @@ pub struct AppState {
     pub user_settings: UserSettingsStore,
     pub signer: Signer,
     pub health: Arc<crate::health::Health>,
+    pub residency: Arc<crate::residency::Residency>,
     pub notifier_name: &'static str,
 }
 
@@ -116,6 +117,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/jobs/retry-dead", post(pages::retry_all_dead))
         .route("/jobs/{id}/retry", post(pages::retry_job))
         .route("/senders", get(pages::senders_page))
+        .route("/model/residency", post(pages::set_residency))
         .route("/api/gmail/sync", post(pages::sync_now))
         .route("/api/events", get(pages::events_json))
         .route("/healthz", get(pages::healthz))

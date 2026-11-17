@@ -134,3 +134,12 @@ One row per failing health check, deleted when it passes again.
 | `failing_since` | timestamptz | first failing check of this incident |
 | `alerted_at` | timestamptz | when the Telegram alert went out (after 15 min); a recovery message follows only if set |
 | `detail` | text | the localized problem text (reused in the recovery message) |
+
+### `system_settings` (`0005_system_settings.sql`)
+
+Machine-wide settings edited in the app (not per user).
+
+| Key | Value | Notes |
+|-----|-------|-------|
+| `model_residency` | bool | residency controller switch (decision N10); missing = off |
+| `telegram_offset` | int | next `getUpdates` offset (2C) |

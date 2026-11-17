@@ -21,6 +21,7 @@ use crate::health::Health;
 use crate::llm::LlmClient;
 use crate::notify::{LogNotifier, Notifier, TelegramNotifier};
 use crate::pipeline::Pipeline;
+use crate::residency::{CommandRunner, Residency, SystemRunner};
 use crate::rules::RuleFile;
 use crate::scheduler::Scheduler;
 use crate::user_settings::UserSettingsStore;
@@ -30,6 +31,8 @@ use crate::web::{self, AppState, SharedState, session::Signer};
 pub struct Overrides {
     pub notifier: Option<Arc<dyn Notifier>>,
     pub clock: Option<Arc<dyn Clock>>,
+    /// Runs `launchctl` / `id` for the residency controller (a fake in tests).
+    pub runner: Option<Arc<dyn CommandRunner>>,
 }
 
 pub struct App {
@@ -43,6 +46,7 @@ pub struct App {
     pub digest: Arc<Digest>,
     pub scheduler: Arc<Scheduler>,
     pub health: Arc<Health>,
+    pub residency: Arc<Residency>,
     pub state: SharedState,
 }
 
@@ -131,6 +135,17 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         feedback: None,
     });
     digest.register();
+    let residency = Arc::new(Residency::new(
+        pool.clone(),
+        http.clone(),
+        &cfg.llm_ready_url,
+        &cfg.mlx_launchd_label,
+        overrides.runner.unwrap_or_else(|| Arc::new(SystemRunner)),
+        pipeline.llm.clone(),
+        pipeline.hours,
+        pipeline.clock.clone(),
+    ));
+    residency.register(&bus);
     let scheduler = Arc::new(Scheduler {
         pool: pool.clone(),
         bus: bus.clone(),
@@ -148,6 +163,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         user_settings,
         signer: Signer::new(&cfg.session_secret),
         health: health.clone(),
+        residency: residency.clone(),
         notifier_name: notifier.name(),
     });
     Ok(App {
@@ -160,6 +176,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         digest,
         scheduler,
         health,
+        residency,
         state,
     })
 }
@@ -213,6 +230,8 @@ pub fn spawn_background(app: &App) {
     if let Some(pubsub) = app.pubsub.clone() {
         supervise("gmail-pubsub", move || pubsub.clone().run());
     }
+    let residency = app.residency.clone();
+    supervise("residency", move || residency.clone().run());
     let health = app.health.clone();
     supervise("health", move || health.clone().run());
     let scheduler = app.scheduler.clone();
