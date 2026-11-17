@@ -111,3 +111,10 @@ off = オフ
 turn-on = オンにする
 turn-off = オフにする
 residency-help = オンにすると、モデル稼働時間の開始時に gm がモデルを起動し、終了時に停止します (launchd エージェント com.gm.mlx)。
+
+# Feedback (2C)
+feedback = この処理は正しかったですか？
+feedback-thanks = 記録しました。
+button-unknown = このボタンは現在使えません。
+feedback-rule-hint = ルール「{ $rule }」による判定です。rules.yaml で修正してください。
+feedback-model-hint = モデルによる判定です。正しいアクションで評価セットに追加してください。

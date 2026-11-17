@@ -111,3 +111,10 @@ off = Off
 turn-on = Turn on
 turn-off = Turn off
 residency-help = When on, gm starts the model at the start of model hours and stops it at the end (launchd agent com.gm.mlx).
+
+# Feedback (2C)
+feedback = Was this handled right?
+feedback-thanks = Thanks, noted.
+button-unknown = This button is no longer supported.
+feedback-rule-hint = Rule "{ $rule }" decided this: edit it in rules.yaml.
+feedback-model-hint = The model decided this: add it to the eval set with the right action.

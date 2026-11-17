@@ -86,7 +86,7 @@
     <thead><tr><th>#</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("col-from-subject") }}</th><th>{{ tr.get("col-status") }}</th><th>{{ tr.get("col-summary") }}</th></tr></thead>
     <tbody>
     {% for e in events %}
-      <tr>
+      <tr id="event-{{ e.id }}">
         <td class="muted">{{ e.id }}</td>
         <td class="muted" style="white-space:nowrap">{{ e.time }}</td>
         <td>{{ e.from }}<br>
@@ -97,6 +97,16 @@
         <td>
           {% if !e.summary.is_empty() %}<strong>{{ e.importance }}</strong> · {{ e.summary }}
           {% else if !e.error.is_empty() %}<span class="bad">{{ e.error }}</span>{% endif %}
+          {% if e.status != "new" && e.status != "gone" %}
+          <div style="margin-top:4px">
+            <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="up"><button class="btn" title="{{ tr.get("feedback") }}">{% if e.feedback == "up" %}✅{% endif %}👍</button></form>
+            <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="down"><button class="btn" title="{{ tr.get("feedback") }}">{% if e.feedback == "down" %}✅{% endif %}👎</button></form>
+          </div>
+          {% if e.feedback == "down" %}
+            {% if e.rule == "model" %}<p class="warn" style="margin:4px 0 0">{{ tr.get("feedback-model-hint") }}</p>
+            {% else %}<p class="warn" style="margin:4px 0 0">{{ tr.args("feedback-rule-hint", [("rule", e.rule.clone())]) }}</p>{% endif %}
+          {% endif %}
+          {% endif %}
         </td>
       </tr>
     {% endfor %}

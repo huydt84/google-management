@@ -8,6 +8,7 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod digest;
+pub mod feedback;
 pub mod gmail;
 pub mod google;
 pub mod health;
@@ -19,6 +20,7 @@ pub mod residency;
 pub mod rules;
 pub mod scheduler;
 pub mod secrets;
+pub mod telegram;
 pub mod triage_model;
 pub mod user_settings;
 pub mod web;
@@ -32,4 +34,5 @@ pub mod topics {
     pub const DIGEST_ITEM_SUMMARIZE: &str = "digest.item.summarize";
     pub const DIGEST_REFRESH: &str = "digest.refresh";
     pub const SCHEDULE_DUE: &str = "schedule.due";
+    pub const FEEDBACK_RECEIVED: &str = "feedback.received";
 }

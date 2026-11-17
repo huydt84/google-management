@@ -118,6 +118,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/jobs/{id}/retry", post(pages::retry_job))
         .route("/senders", get(pages::senders_page))
         .route("/model/residency", post(pages::set_residency))
+        .route("/events/{id}/feedback", post(pages::event_feedback))
         .route("/api/gmail/sync", post(pages::sync_now))
         .route("/api/events", get(pages::events_json))
         .route("/healthz", get(pages::healthz))

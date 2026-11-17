@@ -43,7 +43,7 @@ Trust-boundary diagram: [architecture §10](../architecture.md#10-trust-boundari
 | T12 | A settings value injects text into prompts | Settings are writable only by the signed-in owner; language names must match `^\p{L}[\p{L}\p{M} ()'\-]*$`, 2–40 characters; `ui_language` from a fixed list. | 1 |
 | T18 | Pub/Sub messages forged or replayed | A notification only names a mailbox to sync; gm then reads Gmail itself, so a forged message can at most cause an extra sync. Only active accounts are synced; malformed messages are dropped. The subscription lives in the owner's project, readable only with the owner's token. | 1 |
 | T13 | A bad `rules.yaml` edit hides security mail | Security rules are first in the file; `gm rules` and CI check every rule's examples; an invalid file keeps the previous rules. | 1 |
-| T14 | Stranger controls the bot | Only updates from `GM_TELEGRAM_CHAT_ID` are processed. | 3 |
+| T14 | Stranger controls the bot | Only updates from `GM_TELEGRAM_CHAT_ID` are processed; callback data is parsed strictly (`^f:\d{1,18}:(up|down)$` in Phase 2) and can only record feedback. | 2 (buttons), 3 |
 | T15 | An action executes something other than what was approved | Immutable approval payload with sha256; executor re-checks hash and the live draft; approvals expire. | 3 |
 | T16 | Replay / double execution | Approval row locked and must be `pending`; executors idempotent. | 3 |
 | T17 | Model invents a recipient | Recipients never come from model output. | 3 |

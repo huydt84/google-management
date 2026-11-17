@@ -40,13 +40,13 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 | `gmail.message.classify` | `triage` (action `triage`) | `classify` (model triage, notify lane) | as `gmail.message.received` | event status `classify` (row locked) |
 | `digest.item.summarize` | `triage` / `classify` (digest with `summarize: true`) | `digest_summarize` (batch lane) | `{event_id}` | status `digest` and `summary IS NULL` (row locked) |
 | `schedule.due` | scheduler | `digest_build` (kind `digest`), `residency` (kinds `load` / `unload`, only while the switch is on) | `{kind: digest|load|unload, at, owner?}` | one `digests` row per (owner, date) |
+| `feedback.received` | Telegram poller (`callback_query` `f:<id>:up|down` from the owner's chat) | `feedback` | `{event_id, label, tapped_at, message_id?, keyboard}` | upsert keeps the latest `tapped_at`; keyboard redraw is idempotent |
 | `digest.refresh` | `digest_summarize` (item of a sent digest) | `digest_refresh` | `{digest_id}` | digest `sent`, same local day, inside model hours; skipped if the text is unchanged |
 
 ### Phase 2 (planned)
 
 | Topic | Producer | Subscriber | Payload |
 |-------|----------|------------|---------|
-| `feedback.received` | Telegram poller | feedback handler | `{event_id, label}` |
 
 ### Phase 3 (planned)
 

@@ -36,6 +36,8 @@ pub struct EventRow {
     pub importance: String,
     pub summary: String,
     pub error: String,
+    /// The owner's 👍/👎 (`up` / `down`), if any.
+    pub feedback: String,
 }
 
 #[derive(Template)]
@@ -141,7 +143,26 @@ fn event_row(e: crate::db::Event) -> EventRow {
         importance: s(&summary["importance"]),
         summary: summary_text(&summary),
         error: s(&summary["error"]),
+        feedback: String::new(),
     }
+}
+
+async fn with_feedback(
+    state: &SharedState,
+    events: Vec<crate::db::Event>,
+) -> Result<Vec<EventRow>, AppError> {
+    let ids: Vec<i64> = events.iter().map(|e| e.id).collect();
+    let labels = crate::feedback::labels(&state.pool, &ids).await?;
+    Ok(events
+        .into_iter()
+        .map(|e| {
+            let fb = labels.get(&e.id).cloned().unwrap_or_default();
+            EventRow {
+                feedback: fb,
+                ..event_row(e)
+            }
+        })
+        .collect())
 }
 
 pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<Response, AppError> {
@@ -219,11 +240,7 @@ pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<R
         },
         job_stats: crate::db::count_by(&state.pool, "jobs").await?,
         health: health_rows(&state, &tr).await?,
-        events: crate::db::recent_events(&state.pool, 50)
-            .await?
-            .into_iter()
-            .map(event_row)
-            .collect(),
+        events: with_feedback(&state, crate::db::recent_events(&state.pool, 50).await?).await?,
         tr,
     };
     render(&page)
@@ -736,4 +753,26 @@ pub async fn set_residency(
         });
     }
     Ok(Redirect::to("/").into_response())
+}
+
+#[derive(Deserialize)]
+pub struct FeedbackForm {
+    label: String,
+}
+
+/// 👍 / 👎 from the dashboard (2C).
+pub async fn event_feedback(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Form(f): Form<FeedbackForm>,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if !matches!(f.label.as_str(), "up" | "down") {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    }
+    crate::feedback::record(&state.pool, id, &f.label, "web", chrono::Utc::now()).await?;
+    Ok(Redirect::to(&format!("/#event-{id}")).into_response())
 }

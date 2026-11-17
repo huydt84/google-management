@@ -329,7 +329,11 @@ impl Pipeline {
         let tr = Tr::new(&prefs.ui_language);
         let text = format_email_notification(&tr, &ev.data, ev.summary.as_ref(), priority);
         self.notifier
-            .send(&OutgoingMessage::text(text, priority == Priority::Silent))
+            .send(&OutgoingMessage {
+                text,
+                silent: priority == Priority::Silent,
+                buttons: vec![crate::notify::feedback_row(p.event_id, "", None)],
+            })
             .await?;
         self.set_status(p.event_id, "ready", "notified").await?;
         Ok(Outcome::Done)

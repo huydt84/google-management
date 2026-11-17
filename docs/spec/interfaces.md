@@ -41,6 +41,7 @@ Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 |--------|------|------|---------|
 | GET | `/digest[?id=]` | session | The last 60 digests (date, items, status) and the text of the selected one (default: latest) |
 | GET | `/jobs[?status=dead|pending|running|done]` | session | Jobs by status (default `dead`, latest 200) with their last error |
+| POST | `/events/{id}/feedback` | session | Form `label=up|down`: 👍/👎 from the dashboard (2C); redirect to the event row |
 | POST | `/model/residency` | session | Form `on=1|0`: the residency switch (decision N10); turning it on reconciles in the background; redirect to `/` |
 | POST | `/jobs/{id}/retry`, `/jobs/retry-dead` | session | A dead job (or all of them) back to `pending` with attempts reset; redirect to `/jobs` |
 | GET | `/senders` | session | Ignored mail of the last 30 days grouped by sender address: count, last subject, the rule(s) that ignored it |
@@ -88,6 +89,18 @@ https://mail.google.com/…
   or the subject, sender and link.
 - A notification that needs a summary is never sent without it: it waits for model hours and for the
   model to answer (decisions P4, L12).
+- Phase 2: every notification carries a `👍` `👎` row (callback data `f:<event_id>:up|down`).
+
+### Button presses (Phase 2: feedback; minimal part of 3A)
+
+`src/telegram.rs` long-polls `getUpdates` (`timeout` 25 s, `allowed_updates: ["callback_query"]`;
+offset in `system_settings.telegram_offset`, stored after each update). Presses whose
+`message.chat.id` is not `GM_TELEGRAM_CHAT_ID` are answered empty and ignored; unknown callback data
+gets "This button is no longer supported". A feedback press is answered at once ("Thanks, noted.")
+and published as `feedback.received`; its handler stores the label (last tap wins by tap time) and
+redraws the message's keyboard with ✅ on the current choice (`editMessageReplyMarkup`). 👎 on a
+rule-matched mail shows a hint on the dashboard to edit that rule in `rules.yaml`; on a model-triaged
+mail, to add it to the eval set (decision N3: no mute button).
 
 ### Digest (Phase 2)
 
@@ -120,7 +133,6 @@ retried the next minute. Incidents live in `health_state`.
 
 | Feature | Phase |
 |---------|-------|
-| Feedback buttons `f:<event_id>:up/down` under notifications and model-triaged items | 2 |
 | **[Translate]**, **[Analyze]**, **[Reply]** buttons (`i:<event_id>:<intent>`); approvals `a:<approval_id>:y/n` | 3 |
 | Replies to notifications as instructions; `/status`, `/pause`, `/resume`, `/language` | 3 |
 

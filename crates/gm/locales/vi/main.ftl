@@ -111,3 +111,10 @@ off = Tắt
 turn-on = Bật
 turn-off = Tắt
 residency-help = Khi bật, gm khởi động mô hình lúc bắt đầu giờ chạy mô hình và dừng khi hết giờ (launchd agent com.gm.mlx).
+
+# Feedback (2C)
+feedback = Xử lý thế này có đúng không?
+feedback-thanks = Cảm ơn, đã ghi nhận.
+button-unknown = Nút này không còn được hỗ trợ.
+feedback-rule-hint = Quy tắc "{ $rule }" đã quyết định việc này: hãy sửa trong rules.yaml.
+feedback-model-hint = Mô hình đã quyết định việc này: hãy thêm vào bộ đánh giá với hành động đúng.

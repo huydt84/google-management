@@ -143,3 +143,13 @@ Machine-wide settings edited in the app (not per user).
 |-----|-------|-------|
 | `model_residency` | bool | residency controller switch (decision N10); missing = off |
 | `telegram_offset` | int | next `getUpdates` offset (2C) |
+
+### `triage_feedback` (`0006_feedback.sql`)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `event_id` | bigint PK FK → `events` (cascade) | one answer per event |
+| `label` | text | `up`, `down` |
+| `rule` | text | the event's rule when rated (`model` = model triage → eval candidate) |
+| `via` | text | `telegram`, `web` |
+| `tapped_at` | timestamptz | the newest tap wins |
