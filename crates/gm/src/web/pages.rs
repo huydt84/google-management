@@ -55,7 +55,50 @@ struct IndexPage {
     summary_language: String,
     notifier: String,
     job_stats: Vec<(String, i64)>,
+    health: Vec<HealthRow>,
     events: Vec<EventRow>,
+}
+
+pub struct HealthRow {
+    pub label: String,
+    /// ok | failing | skipped
+    pub state: String,
+    pub since: String,
+}
+
+async fn health_rows(state: &SharedState, tr: &Tr) -> Result<Vec<HealthRow>, AppError> {
+    let incidents = state.health.incidents().await?;
+    Ok(state
+        .health
+        .evaluate()
+        .await?
+        .into_iter()
+        .map(|r| {
+            let since = incidents
+                .iter()
+                .find(|(n, _)| n == r.name)
+                .map(|(_, t)| {
+                    t.with_timezone(&chrono::Local)
+                        .format("%m-%d %H:%M")
+                        .to_string()
+                })
+                .unwrap_or_default();
+            HealthRow {
+                state: match r.failing {
+                    Some(true) => "failing",
+                    Some(false) => "ok",
+                    None => "skipped",
+                }
+                .into(),
+                label: if r.failing == Some(true) {
+                    r.message(tr)
+                } else {
+                    tr.get(&format!("health-label-{}", r.name.replace('_', "-")))
+                },
+                since,
+            }
+        })
+        .collect())
 }
 
 /// The summary as one line: a notification summary, a digest line, or a job list.
@@ -171,6 +214,7 @@ pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<R
             tr.get("log-only")
         },
         job_stats: crate::db::count_by(&state.pool, "jobs").await?,
+        health: health_rows(&state, &tr).await?,
         events: crate::db::recent_events(&state.pool, 50)
             .await?
             .into_iter()
@@ -402,6 +446,16 @@ pub async fn metrics(
             "# TYPE gm_ingest_lag_seconds gauge\ngm_ingest_lag_seconds {lag:.0}\n"
         ));
     }
+    out.push_str("# TYPE gm_health_failing gauge\n");
+    for r in state.health.evaluate().await? {
+        if let Some(f) = r.failing {
+            out.push_str(&format!(
+                "gm_health_failing{{check=\"{}\"}} {}\n",
+                r.name,
+                u8::from(f)
+            ));
+        }
+    }
     if state.cfg.pubsub.is_some() {
         out.push_str(&format!(
             "# TYPE gm_pubsub_healthy gauge\ngm_pubsub_healthy {}\n",
@@ -470,5 +524,180 @@ pub async fn digest_page(
             .collect(),
         selected_id,
         selected_text,
+    })
+}
+
+type JobDbRow = (
+    i64,
+    String,
+    String,
+    String,
+    i32,
+    chrono::DateTime<chrono::Utc>,
+    Option<String>,
+);
+type SenderDbRow = (
+    String,
+    i64,
+    Option<String>,
+    chrono::DateTime<chrono::Utc>,
+    Option<String>,
+);
+
+pub struct JobRow {
+    pub id: i64,
+    pub topic: String,
+    pub subscriber: String,
+    pub status: String,
+    pub attempts: i32,
+    pub updated: String,
+    pub error: String,
+}
+
+#[derive(Template)]
+#[template(path = "jobs.html")]
+struct JobsPage {
+    tr: Tr,
+    email: String,
+    status: String,
+    statuses: Vec<String>,
+    jobs: Vec<JobRow>,
+}
+
+#[derive(Deserialize)]
+pub struct JobsQuery {
+    status: Option<String>,
+}
+
+/// Jobs by status, dead letters by default, with Retry (2E, decision N18).
+pub async fn jobs_page(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    Query(q): Query<JobsQuery>,
+) -> Result<Response, AppError> {
+    let Some(email) = current_owner(&state, &jar) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let statuses = ["dead", "pending", "running", "done"];
+    let status = q
+        .status
+        .filter(|s| statuses.contains(&s.as_str()))
+        .unwrap_or_else(|| "dead".into());
+    let rows: Vec<JobDbRow> = sqlx::query_as(
+        "SELECT id, topic, subscriber, status, attempts, updated_at, last_error FROM jobs
+             WHERE status = $1 ORDER BY id DESC LIMIT 200",
+    )
+    .bind(&status)
+    .fetch_all(&state.pool)
+    .await?;
+    let prefs = state.user_settings.get(&email).await?;
+    render(&JobsPage {
+        tr: Tr::new(&prefs.ui_language),
+        email,
+        status,
+        statuses: statuses.iter().map(|s| s.to_string()).collect(),
+        jobs: rows
+            .into_iter()
+            .map(
+                |(id, topic, subscriber, status, attempts, updated, error)| JobRow {
+                    id,
+                    topic,
+                    subscriber,
+                    status,
+                    attempts,
+                    updated: updated
+                        .with_timezone(&chrono::Local)
+                        .format("%m-%d %H:%M")
+                        .to_string(),
+                    error: error.unwrap_or_default(),
+                },
+            )
+            .collect(),
+    })
+}
+
+const RETRY_SQL: &str = "UPDATE jobs SET status = 'pending', attempts = 0, run_after = now(),
+    last_error = NULL, locked_at = NULL, updated_at = now() WHERE status = 'dead'";
+
+pub async fn retry_job(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    sqlx::query(&format!("{RETRY_SQL} AND id = $1"))
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    Ok(Redirect::to("/jobs?status=dead").into_response())
+}
+
+pub async fn retry_all_dead(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let n = sqlx::query(RETRY_SQL)
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+    tracing::info!(n, "dead jobs retried from the dashboard");
+    Ok(Redirect::to("/jobs?status=dead").into_response())
+}
+
+pub struct SenderRow {
+    pub address: String,
+    pub count: i64,
+    pub last_subject: String,
+    pub last_seen: String,
+    pub rules: String,
+}
+
+#[derive(Template)]
+#[template(path = "senders.html")]
+struct SendersPage {
+    tr: Tr,
+    email: String,
+    senders: Vec<SenderRow>,
+}
+
+/// Ignored mail of the last 30 days by sender (T15, decision N17).
+pub async fn senders_page(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+) -> Result<Response, AppError> {
+    let Some(email) = current_owner(&state, &jar) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let rows: Vec<SenderDbRow> = sqlx::query_as(
+        "SELECT COALESCE(NULLIF(data->>'from_addr', ''), '?') AS addr, count(*),
+                    (array_agg(data->>'subject' ORDER BY id DESC))[1], max(created_at),
+                    string_agg(DISTINCT COALESCE(rule, '?'), ', ')
+             FROM events WHERE status = 'ignored' AND created_at > now() - interval '30 days'
+             GROUP BY addr ORDER BY count(*) DESC, addr LIMIT 300",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let prefs = state.user_settings.get(&email).await?;
+    render(&SendersPage {
+        tr: Tr::new(&prefs.ui_language),
+        email,
+        senders: rows
+            .into_iter()
+            .map(|(address, count, subject, last, rules)| SenderRow {
+                address,
+                count,
+                last_subject: subject.unwrap_or_default(),
+                last_seen: last
+                    .with_timezone(&chrono::Local)
+                    .format("%m-%d")
+                    .to_string(),
+                rules: rules.unwrap_or_default(),
+            })
+            .collect(),
     })
 }

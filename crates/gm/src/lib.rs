@@ -10,6 +10,7 @@ pub mod db;
 pub mod digest;
 pub mod gmail;
 pub mod google;
+pub mod health;
 pub mod i18n;
 pub mod llm;
 pub mod notify;

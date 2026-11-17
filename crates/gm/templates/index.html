@@ -5,6 +5,8 @@
   <div>
     <span class="muted">{{ email }}</span>
     <a class="btn" href="/digest">{{ tr.get("digests") }}</a>
+    <a class="btn" href="/jobs">{{ tr.get("jobs") }}</a>
+    <a class="btn" href="/senders">{{ tr.get("senders") }}</a>
     <a class="btn" href="/settings">{{ tr.get("settings") }}</a>
     <form method="post" action="/auth/logout"><button class="btn">{{ tr.get("sign-out") }}</button></form>
   </div>
@@ -52,6 +54,16 @@
     </dl>
   </section>
 </div>
+
+<section class="card">
+  <h2>{{ tr.get("health") }}</h2>
+  <dl>
+  {% for h in health %}
+    <dt class="{% if h.state == "failing" %}bad{% else if h.state == "ok" %}ok{% else %}muted{% endif %}">{% if h.state == "failing" %}✗{% else if h.state == "ok" %}✓{% else %}–{% endif %}</dt>
+    <dd>{{ h.label }}{% if !h.since.is_empty() %} <span class="muted">({{ tr.get("since") }} {{ h.since }})</span>{% endif %}{% if h.state == "skipped" %} <span class="muted">({{ tr.get("health-skipped") }})</span>{% endif %}</dd>
+  {% endfor %}
+  </dl>
+</section>
 
 <section class="card">
   <h2>{{ tr.get("recent-events") }}</h2>

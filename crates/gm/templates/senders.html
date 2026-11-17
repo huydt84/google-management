@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block body %}
+<header>
+  <h1><a href="/" style="color:inherit;text-decoration:none">{{ tr.get("app-title") }}</a> · {{ tr.get("senders") }}</h1>
+  <div><span class="muted">{{ email }}</span> <a class="btn" href="/">{{ tr.get("back") }}</a></div>
+</header>
+<section class="card">
+  <p class="muted">{{ tr.get("senders-note") }}</p>
+  {% if senders.is_empty() %}
+    <p class="muted">{{ tr.get("no-senders") }}</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>{{ tr.get("col-sender") }}</th><th>{{ tr.get("col-count") }}</th><th>{{ tr.get("col-last-subject") }}</th><th>{{ tr.get("col-rule") }}</th></tr></thead>
+    <tbody>
+    {% for s in senders %}
+      <tr>
+        <td style="overflow-wrap:anywhere">{{ s.address }}</td>
+        <td>{{ s.count }}</td>
+        <td><span class="muted">{{ s.last_seen }}</span> {{ s.last_subject }}</td>
+        <td class="muted">{{ s.rules }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

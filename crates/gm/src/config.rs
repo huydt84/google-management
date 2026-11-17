@@ -63,6 +63,9 @@ pub struct Config {
 
     // LLM (OpenAI-compatible: mlx-server-runtime)
     pub llm_base_url: String,
+    /// mlx-server-runtime readiness probe (`GET`, 2xx = model loaded). Default: the base URL
+    /// without `/v1`, plus `/ready`.
+    pub llm_ready_url: String,
     pub llm_api_key: String,
     pub llm_model: String,
     pub llm_timeout_s: u64,
@@ -156,6 +159,11 @@ impl Config {
                 "GM_HOST must be a loopback address (got {host:?}); use Tailscale for remote access"
             );
         }
+        let llm_base_url = env_or("LLM_BASE_URL", "http://127.0.0.1:8000/v1")
+            .trim_end_matches('/')
+            .to_string();
+        let llm_ready_url = env("LLM_READY_URL")
+            .unwrap_or_else(|| format!("{}/ready", llm_base_url.trim_end_matches("/v1")));
         let cfg = Self {
             host,
             port: parse("PORT", 8080)?,
@@ -192,9 +200,8 @@ impl Config {
                 other => bail!("GM_GMAIL_INGEST_MODE must be poll or pubsub (got {other:?})"),
             },
             rules_path: PathBuf::from(env_or("RULES_PATH", "rules.yaml")),
-            llm_base_url: env_or("LLM_BASE_URL", "http://127.0.0.1:8000/v1")
-                .trim_end_matches('/')
-                .to_string(),
+            llm_base_url,
+            llm_ready_url,
             llm_api_key: env_or("LLM_API_KEY", "not-needed"),
             llm_model: env_or("LLM_MODEL", "mlx-community/Qwen3-8B-4bit"),
             llm_timeout_s: parse("LLM_TIMEOUT_S", 120)?,
@@ -244,6 +251,7 @@ impl Config {
             pubsub: None,
             rules_path: PathBuf::from("does-not-exist.yaml"),
             llm_base_url: "http://127.0.0.1:9/v1".into(),
+            llm_ready_url: "http://127.0.0.1:9/ready".into(),
             llm_api_key: "test".into(),
             llm_model: "test-model".into(),
             llm_timeout_s: 5,

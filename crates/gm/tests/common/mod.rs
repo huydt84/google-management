@@ -33,6 +33,7 @@ pub fn config(server: &MockServer) -> Config {
     cfg.google_token_url = format!("{uri}/token");
     cfg.gmail_api_base = format!("{uri}/gmail/v1");
     cfg.llm_base_url = format!("{uri}/v1");
+    cfg.llm_ready_url = format!("{uri}/ready");
     cfg.telegram_api_base = uri;
     cfg.rules_path = format!("{}/../../rules.yaml", env!("CARGO_MANIFEST_DIR")).into();
     cfg
@@ -62,6 +63,13 @@ pub async fn test_app(
     now: Option<chrono::DateTime<Local>>,
 ) -> TestApp {
     let server = MockServer::start().await;
+    // The model is up unless a test says otherwise (low priority: `mock_ready` overrides it).
+    Mock::given(method("GET"))
+        .and(path("/ready"))
+        .respond_with(ResponseTemplate::new(200))
+        .with_priority(10)
+        .mount(&server)
+        .await;
     let mut cfg = config(&server);
     configure(&mut cfg);
     let notifier = Arc::new(RecordingNotifier::default());
@@ -217,4 +225,62 @@ pub const SUMMARY: &str = "Task: summarize one email for a phone notification";
 
 pub fn triage_json(action: &str, reason: &str) -> String {
     format!(r#"{{"action": "{action}", "reason": "{reason}"}}"#)
+}
+
+// ------------------------------------------------------------------------------ web helpers
+
+pub async fn send(
+    router: &axum::Router,
+    req: axum::http::Request<axum::body::Body>,
+) -> (axum::http::StatusCode, axum::http::HeaderMap, String) {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let resp = router.clone().oneshot(req).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    (
+        parts.status,
+        parts.headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+pub fn get(uri: &str, cookie: Option<&str>) -> axum::http::Request<axum::body::Body> {
+    let mut b = axum::http::Request::get(uri).header(axum::http::header::HOST, "localhost:8080");
+    if let Some(c) = cookie {
+        b = b.header(axum::http::header::COOKIE, c);
+    }
+    b.body(axum::body::Body::empty()).unwrap()
+}
+
+pub fn post_form(uri: &str, cookie: &str, form: &str) -> axum::http::Request<axum::body::Body> {
+    use axum::http::header;
+    axum::http::Request::post(uri)
+        .header(header::HOST, "localhost:8080")
+        .header(header::COOKIE, cookie)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(axum::body::Body::from(form.to_string()))
+        .unwrap()
+}
+
+pub fn session_cookie(t: &TestApp, email: &str) -> String {
+    use gm::web::session::{Session, Signer};
+    let now = chrono::Utc::now().timestamp();
+    let tok = Signer::new(&t.app.cfg.session_secret).sign(
+        "session",
+        &Session {
+            email: email.into(),
+            iat: now,
+            exp: now + 600,
+        },
+    );
+    format!("gm_session={tok}")
+}
+
+pub async fn mock_ready(server: &MockServer, ok: bool) {
+    Mock::given(method("GET"))
+        .and(path("/ready"))
+        .respond_with(ResponseTemplate::new(if ok { 200 } else { 503 }))
+        .mount(server)
+        .await;
 }

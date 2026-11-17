@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block body %}
+<header>
+  <h1><a href="/" style="color:inherit;text-decoration:none">{{ tr.get("app-title") }}</a> · {{ tr.get("jobs") }}</h1>
+  <div><span class="muted">{{ email }}</span> <a class="btn" href="/">{{ tr.get("back") }}</a></div>
+</header>
+<section class="card">
+  <p>
+    {% for s in statuses %}
+      <a class="pill s-{{ s }}" href="/jobs?status={{ s }}">{% if s.as_str() == status.as_str() %}<strong>{{ s }}</strong>{% else %}{{ s }}{% endif %}</a>
+    {% endfor %}
+    {% if status == "dead" && !jobs.is_empty() %}
+      <form method="post" action="/jobs/retry-dead"><button class="btn">{{ tr.get("retry-all") }}</button></form>
+    {% endif %}
+  </p>
+  {% if jobs.is_empty() %}
+    <p class="muted">{{ tr.get("no-jobs") }}</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>#</th><th>{{ tr.get("col-job") }}</th><th>{{ tr.get("col-attempts") }}</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("error") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+      <tr>
+        <td class="muted">{{ j.id }}</td>
+        <td>{{ j.subscriber }}<br><span class="muted">{{ j.topic }}</span></td>
+        <td>{{ j.attempts }}</td>
+        <td class="muted" style="white-space:nowrap">{{ j.updated }}</td>
+        <td class="bad" style="overflow-wrap:anywhere">{{ j.error }}</td>
+        <td>{% if j.status == "dead" %}<form method="post" action="/jobs/{{ j.id }}/retry"><button class="btn">{{ tr.get("retry") }}</button></form>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -18,7 +18,7 @@ Guards on every request (`web::guard`):
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model hours, queue counts, last 50 events |
+| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model hours, queue counts, health panel (Phase 2), last 50 events |
 | GET | `/auth/login` | — | Start sign-in (OIDC, PKCE, signed `gm_oauth` state cookie) |
 | GET | `/auth/callback` | — | Finish sign-in; 403 on state mismatch or unless the verified email equals `GM_ALLOWED_EMAIL` |
 | POST | `/auth/logout` | — | Clear the session |
@@ -33,20 +33,21 @@ Guards on every request (`web::guard`):
 
 Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 `gm_llm_prompt_tokens_24h`, `gm_llm_completion_tokens_24h`, `gm_llm_latency_ms_sum_24h` (per task and lane),
-`gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode). Counts only, no content.
+`gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode), `gm_health_failing{check}` (Phase 2). Counts only, no content.
 
 ### Implemented (Phase 2)
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | GET | `/digest[?id=]` | session | The last 60 digests (date, items, status) and the text of the selected one (default: latest) |
+| GET | `/jobs[?status=dead|pending|running|done]` | session | Jobs by status (default `dead`, latest 200) with their last error |
+| POST | `/jobs/{id}/retry`, `/jobs/retry-dead` | session | A dead job (or all of them) back to `pending` with attempts reset; redirect to `/jobs` |
+| GET | `/senders` | session | Ignored mail of the last 30 days grouped by sender address: count, last subject, the rule(s) that ignored it |
 
 ### Planned
 
 | Method | Path | Phase | Purpose |
 |--------|------|-------|---------|
-| GET | `/jobs?status=dead`, POST `/jobs/{id}/retry` | 2 | Dead-letter management |
-| GET | `/senders` | 2 | Ignored-sender counts (promote a sender to the newsletter list) |
 | GET | `/tasks`, POST `/approvals/{id}/approve` · `/reject` | 3 | Tasks and web approvals |
 
 ## Telegram
@@ -104,11 +105,20 @@ first appearance (titles from `digest-section-<name>` in the locale files, else 
 Nothing is sent when there is nothing to say. While model hours last that day, the message is edited
 (`editMessageText`) when pending summaries arrive.
 
+### Health alerts (Phase 2)
+
+Checked every minute (`src/health.rs`): `dead_jobs` (any job `dead`), `ingest_lag` (an active
+account not synced for more than 10 min; in Pub/Sub mode while it works, the safety-poll interval +
+10 min), `model_down` (`GM_LLM_READY_URL` not 2xx within 5 s; only checked during model hours, an open
+incident stays open outside them), `needs_reconnect` (an account whose refresh token was rejected).
+After 15 minutes of the same failure: one message `🩺 Problem for <n> min: <problem>`, and
+`✅ Resolved: <problem>` when it passes. Silent 19:00–09:00, with sound by day. A failed send is
+retried the next minute. Incidents live in `health_state`.
+
 ### Planned
 
 | Feature | Phase |
 |---------|-------|
-| Health alert after 15 minutes unhealthy (dead jobs, ingest lag > 10 min, model down in model hours, token invalid) | 2 |
 | Feedback buttons `f:<event_id>:up/down` under notifications and model-triaged items | 2 |
 | **[Translate]**, **[Analyze]**, **[Reply]** buttons (`i:<event_id>:<intent>`); approvals `a:<approval_id>:y/n` | 3 |
 | Replies to notifications as instructions; `/status`, `/pause`, `/resume`, `/language` | 3 |
@@ -163,6 +173,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_RULES_PATH` | `rules.yaml` | Rules file |
 | `GM_LLM_BASE_URL` | `http://127.0.0.1:8000/v1` | OpenAI-compatible endpoint |
 | `GM_LLM_API_KEY` | `not-needed` | Bearer token for it |
+| `GM_LLM_READY_URL` | base URL without `/v1` + `/ready` | Readiness probe of mlx-server-runtime (health check, residency) |
 | `GM_LLM_MODEL` | `mlx-community/Qwen3-8B-4bit` | Model name |
 | `GM_LLM_TIMEOUT_S` | 120 | Request timeout |
 | `GM_LLM_MAX_INFLIGHT` | 2 | Concurrent model requests across lanes |

@@ -17,6 +17,7 @@ use crate::gmail::pubsub::PubSubIngest;
 use crate::google::accounts::AccountStore;
 use crate::google::gmail::GmailClient;
 use crate::google::pubsub::PubSubClient;
+use crate::health::Health;
 use crate::llm::LlmClient;
 use crate::notify::{LogNotifier, Notifier, TelegramNotifier};
 use crate::pipeline::Pipeline;
@@ -41,6 +42,7 @@ pub struct App {
     pub pipeline: Arc<Pipeline>,
     pub digest: Arc<Digest>,
     pub scheduler: Arc<Scheduler>,
+    pub health: Arc<Health>,
     pub state: SharedState,
 }
 
@@ -111,9 +113,21 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         llm_unavailable_retry: chrono::Duration::seconds(cfg.llm_unavailable_retry_s as i64),
     });
     pipeline.register();
+    let health = Arc::new(Health {
+        pool: pool.clone(),
+        http: http.clone(),
+        ready_url: cfg.llm_ready_url.clone(),
+        hours: pipeline.hours,
+        clock: pipeline.clock.clone(),
+        notifier: notifier.clone(),
+        user_settings: user_settings.clone(),
+        ingestor: ingestor.clone(),
+        pubsub_safety_poll_s: cfg.pubsub.as_ref().map(|p| p.safety_poll_interval_s),
+        owner: cfg.allowed_email.clone(),
+    });
     let digest = Arc::new(Digest {
         p: pipeline.clone(),
-        problems: None,
+        problems: Some(health.clone()),
         feedback: None,
     });
     digest.register();
@@ -133,6 +147,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         ingestor: ingestor.clone(),
         user_settings,
         signer: Signer::new(&cfg.session_secret),
+        health: health.clone(),
         notifier_name: notifier.name(),
     });
     Ok(App {
@@ -144,6 +159,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         pipeline,
         digest,
         scheduler,
+        health,
         state,
     })
 }
@@ -197,6 +213,8 @@ pub fn spawn_background(app: &App) {
     if let Some(pubsub) = app.pubsub.clone() {
         supervise("gmail-pubsub", move || pubsub.clone().run());
     }
+    let health = app.health.clone();
+    supervise("health", move || health.clone().run());
     let scheduler = app.scheduler.clone();
     supervise("scheduler", move || scheduler.clone().run());
     let (pool, days) = (app.pool.clone(), app.cfg.retention_days);

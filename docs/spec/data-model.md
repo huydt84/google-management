@@ -123,3 +123,14 @@ Deleted after `GM_RETENTION_DAYS` like events.
 |--------|------|-------|
 | `name` | text PK | `digest:<owner>`, `residency` |
 | `last_at` | timestamptz | last occurrence fired (or recorded on first sight) |
+
+### `health_state` (`0004_health.sql`)
+
+One row per failing health check, deleted when it passes again.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `check_name` | text PK | `dead_jobs`, `ingest_lag`, `model_down`, `needs_reconnect` |
+| `failing_since` | timestamptz | first failing check of this incident |
+| `alerted_at` | timestamptz | when the Telegram alert went out (after 15 min); a recovery message follows only if set |
+| `detail` | text | the localized problem text (reused in the recovery message) |
