@@ -2,16 +2,16 @@
 
 | | |
 |---|---|
-| Status | Phase 0 shipped (Python); Phase 1 (Rust port, rules v2, operations) implemented; Phases 2–4 planned |
+| Status | Phases 1–4 implemented in Rust |
 | Owner | The machine owner (single user) |
-| Last updated | 2026-11-16 |
+| Last updated | 2026-11-18 |
 | Related | [Architecture](architecture.md) · [Specs](spec/) · [ADRs](adr/) · [Plan](plan/README.md) |
 
 ## 1. Summary
 
 Google Management is a personal assistant that runs on the owner's Mac. It watches the owner's Gmail
-(Calendar later), decides which mail matters, pings the phone about the few that do, collects the rest
-into a morning digest, and later lets the owner act on mail ("translate", "reply that I agree") with
+and Calendar, decides which mail matters, pings the phone about the few that do, collects the rest
+into a morning digest, and lets the owner act on mail ("translate", "reply that I agree") with
 explicit approval for anything that leaves the account.
 
 All model work runs locally on `mlx-server-runtime` (Qwen3-8B 4-bit), so mail never leaves the Mac.
@@ -160,8 +160,9 @@ Bonsai-27B 1-bit model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md))
 
 ### 7.4 Notifications
 
-- **FR-14** Notifications are plain-text Telegram messages ≤ 4096 characters with sender, subject or
+- **FR-14** Mail notifications are Telegram text messages ≤ 4096 characters with sender, subject or
   rule message, summary (when enabled), suggested actions and a Gmail link, in the owner's UI language.
+  Calendar notices use emphasized headings and values, compact local times and actual changes.
 - **FR-15** Silent priority sends without sound. Rule-only notifications (no LLM needed) are sent at
   any hour; notifications that need a summary are sent once it exists, in model hours.
 - **FR-16** No notification is sent without its summary: while the model is unavailable the work is

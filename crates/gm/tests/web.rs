@@ -287,7 +287,7 @@ async fn connect_flow_stores_encrypted_token_and_bootstraps(pool: PgPool) {
         .and(body_string_contains("grant_type=authorization_code"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "access_token": "a", "refresh_token": "the-refresh-token", "id_token": id_token(OWNER, "client-id"),
-            "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose"
+            "scope": "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly"
         })))
         .mount(&t.server)
         .await;

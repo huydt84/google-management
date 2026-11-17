@@ -5,7 +5,7 @@ Decisions: [ADR-0013](../docs/adr/0013-ops-launchd-keychain-tailscale.md),
 
 ## One-time setup
 
-In Google Cloud, enable the **Gmail API** and the **Cloud Pub/Sub API** for the project in
+In Google Cloud, enable the **Gmail API**, **Google Calendar API** and **Cloud Pub/Sub API** for the project in
 `GM_GOOGLE_PROJECT_ID`; gm creates its topic and subscription itself.
 
 ```bash

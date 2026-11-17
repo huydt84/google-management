@@ -1,7 +1,9 @@
 //! Thin hand-written Google clients (ADR-0009): OAuth (login + API consent), access tokens from
-//! stored refresh tokens, the Gmail REST API and Cloud Pub/Sub.
+//! stored refresh tokens, the Gmail and Calendar REST APIs and Cloud Pub/Sub.
 
 pub mod accounts;
+pub mod calendar;
+mod client;
 pub mod compose;
 pub mod gmail;
 pub mod oauth;
@@ -9,6 +11,7 @@ pub mod pubsub;
 
 /// Scopes. Which ones are required depends on the config ([`crate::config::Config::required_scopes`]);
 /// adding one means the owner reconnects (invariant 4).
+pub const CALENDAR_READONLY: &str = "https://www.googleapis.com/auth/calendar.readonly";
 pub const GMAIL_READONLY: &str = "https://www.googleapis.com/auth/gmail.readonly";
 /// Only requested in Pub/Sub ingest mode (ADR-0002): lets gm create its topic and subscription
 /// and pull notifications with the same encrypted refresh token.

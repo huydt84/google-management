@@ -52,6 +52,7 @@ pub struct Config {
     pub google_auth_url: String,
     pub google_token_url: String,
     pub gmail_api_base: String,
+    pub calendar_api_base: String,
 
     // Gmail ingestion
     pub gmail_poll_interval_s: u64,
@@ -226,6 +227,10 @@ impl Config {
             ),
             google_token_url: env_or("GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token"),
             gmail_api_base: env_or("GMAIL_API_BASE", "https://gmail.googleapis.com/gmail/v1"),
+            calendar_api_base: env_or(
+                "CALENDAR_API_BASE",
+                "https://www.googleapis.com/calendar/v3",
+            ),
             gmail_poll_interval_s: parse("GMAIL_POLL_INTERVAL_S", 60)?,
             gmail_label_ids: env_or("GMAIL_LABEL_IDS", "INBOX")
                 .split(',')
@@ -311,6 +316,7 @@ impl Config {
             google_auth_url: "http://127.0.0.1:9/auth".into(),
             google_token_url: "http://127.0.0.1:9/token".into(),
             gmail_api_base: "http://127.0.0.1:9/gmail/v1".into(),
+            calendar_api_base: "http://127.0.0.1:9/calendar/v3".into(),
             gmail_poll_interval_s: 60,
             gmail_label_ids: vec!["INBOX".into()],
             pubsub: None,
@@ -354,7 +360,11 @@ impl Config {
 
     /// Google API scopes the Connect flow requests and requires (invariant 4: minimal scopes).
     pub fn required_scopes(&self) -> Vec<&'static str> {
-        let mut scopes = vec![crate::google::GMAIL_READONLY, crate::google::GMAIL_COMPOSE];
+        let mut scopes = vec![
+            crate::google::GMAIL_READONLY,
+            crate::google::GMAIL_COMPOSE,
+            crate::google::CALENDAR_READONLY,
+        ];
         if self.pubsub.is_some() {
             scopes.push(crate::google::PUBSUB);
         }

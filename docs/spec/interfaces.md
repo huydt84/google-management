@@ -64,7 +64,7 @@ Code: [`src/web/tasks.rs`](../../crates/gm/src/web/tasks.rs), [`templates/tasks.
 
 Code: [`src/notify.rs`](../../crates/gm/src/notify.rs), [`src/telegram/`](../../crates/gm/src/telegram/), [`src/tasks/`](../../crates/gm/src/tasks/), [`src/recipes/`](../../crates/gm/src/recipes/), [`src/feedback.rs`](../../crates/gm/src/feedback.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/health.rs`](../../crates/gm/src/health.rs).
 
-The bot sends to exactly one chat, `GM_TELEGRAM_CHAT_ID`. Messages are plain text (no `parse_mode`),
+The bot sends to exactly one chat, `GM_TELEGRAM_CHAT_ID`. Messages carry literal text (no `parse_mode`), with trusted formatting entities for Calendar messages,
 ≤ 4096 characters, link previews disabled. Strings are localized with the owner's `ui_language`;
 summaries use their `summary_language`.
 
@@ -243,7 +243,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_ALLOWED_EMAIL` | required | The only account that can sign in |
 | `GM_DATABASE_URL` | `postgres://gm:gm@127.0.0.1:5433/gm` | Database |
 | `GM_GOOGLE_CLIENT_ID` | required | OAuth client (Web application) |
-| `GM_GOOGLE_AUTH_URL`, `GM_GOOGLE_TOKEN_URL`, `GM_GMAIL_API_BASE`, `GM_TELEGRAM_API_BASE` | Google / Telegram | Overridden in tests |
+| `GM_GOOGLE_AUTH_URL`, `GM_GOOGLE_TOKEN_URL`, `GM_GMAIL_API_BASE`, `GM_CALENDAR_API_BASE`, `GM_TELEGRAM_API_BASE` | Google / Telegram | Overridden in tests |
 | `GM_GMAIL_INGEST_MODE` | `poll` | `poll` or `pubsub` (the owner's setup uses `pubsub`) |
 | `GM_GOOGLE_PROJECT_ID` | required for `pubsub` | Google Cloud project that holds gm's topic and subscription |
 | `GM_GMAIL_PUBSUB_TOPIC` / `GM_GMAIL_PUBSUB_SUBSCRIPTION` | `gm-gmail` / `gm-gmail-pull` | Created by gm if missing |
@@ -368,3 +368,21 @@ Batch lane. Stored in `events.summary`.
 A reply cut off mid-JSON keeps the text recovered so far; other output that still isn't JSON after the
 retry is used as plain text (thinking removed). For Reply the owner sees it in the preview before
 anything can be sent.
+
+## Calendar notifications and agenda
+
+Code: [`calendar/mod.rs`](../../crates/gm/src/calendar/mod.rs),
+[`google/calendar.rs`](../../crates/gm/src/google/calendar.rs), [`digest.rs`](../../crates/gm/src/digest.rs).
+
+The primary calendar of each account is polled every five minutes with read-only access. Events in
+the next 30 days trigger styled templates with title, local time, organizer and changed fields.
+Declined events are excluded; nighttime notifications are silent. Today's live agenda appears
+before mail sections in the digest, including on days without digest mail. Full contracts and
+reconnection instructions are in the [Calendar spec](calendar.md).
+
+`GM_CALENDAR_API_BASE` defaults to `https://www.googleapis.com/calendar/v3`; tests override it with
+wiremock. No Calendar writes or new HTTP routes are introduced.
+
+Calendar notification emphasis uses the optional `entities` list on Telegram `sendMessage` and
+`editMessageText`. Content stays literal text with no `parse_mode`; entity offsets use UTF-16 code
+units. A plain-text edit explicitly clears previous formatting entities. See the [Calendar spec](calendar.md).

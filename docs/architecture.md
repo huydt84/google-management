@@ -3,7 +3,7 @@
 This document explains how Google Management is put together, at increasing levels of detail. The
 diagrams use [Mermaid](https://mermaid.js.org/) and render on GitHub and in most Markdown viewers.
 
-Legend used throughout: **solid** = exists today (Phases 1–3, Rust), **dashed** = planned (phase noted).
+Legend used throughout: **solid** = exists today (Phases 1–4, Rust), **dashed** = planned (phase noted).
 
 - [1. Scope and quality goals](#1-scope-and-quality-goals)
 - [2. System context](#2-system-context)
@@ -65,7 +65,7 @@ flowchart LR
     gm -- "sendMessage" --> tg
     gm -- "getUpdates (long poll)" --> tg
     gm -- "drafts.create / update / get / send (approved only)" --> gmail
-    gm -. "events (Phase 4)" .-> cal
+    gm -->|"read-only events"| cal
 ```
 
 - Every connection is **outbound** from the Mac; nothing on the internet calls gm. Gmail changes
@@ -170,12 +170,13 @@ flowchart LR
 | [`crypto.rs`](../crates/gm/src/crypto.rs) | `SecretBox`: AES-256-GCM for refresh tokens, key = Keychain `master-key`. |
 | [`db.rs`](../crates/gm/src/db.rs) | sqlx pool, embedded [`migrations/`](../crates/gm/migrations/), small typed queries, retention, `system_get`/`system_set`. |
 | [`bus.rs`](../crates/gm/src/bus.rs) | Durable pub/sub on Postgres (§8). |
-| [`google/`](../crates/gm/src/google/) | OAuth (PKCE, id_token check), encrypted account store with access-token cache, thin Gmail REST client (incl. drafts), Pub/Sub REST (`pubsub.rs`), reply composition (`compose.rs`: headers from the original mail, RFC 2047, RFC 5322 text). |
+| [`google/`](../crates/gm/src/google/) | OAuth (PKCE, id_token check), encrypted account store with access-token cache, thin Gmail REST client (incl. drafts), Calendar client (`calendar.rs`), shared authenticated requests (`client.rs`), Pub/Sub REST (`pubsub.rs`), reply composition (`compose.rs`: headers from the original mail, RFC 2047, RFC 5322 text). |
 | [`gmail/`](../crates/gm/src/gmail/) | Ingestion (bootstrap, history sync, 404 recovery, poll loop), Pub/Sub loop (watch renewal, pull, ack) and MIME parsing (charsets incl. ISO-2022-JP, HTML → text). |
 | [`rules.rs`](../crates/gm/src/rules.rs) | Rules engine v2 ([ADR-0012](adr/0012-rules-engine-v2.md)): matchers, extractors, actions, examples, hot reload; `Action::as_str` / `parse_final` are the only action-name mapping. |
 | [`pipeline.rs`](../crates/gm/src/pipeline.rs) | Idempotent handlers `triage`, `classify`, `summarize`, `notify`; `route` (verdict → next topic); `model_step`, the shared steps of every model job (model hours, fetch or `gone`, owner language, wait while the model is unavailable). |
 | [`model.rs`](../crates/gm/src/model.rs) | Model residency ([ADR-0010](adr/0010-llm-client-lanes-residency.md)): the editable model controls, the loop that stops the model after hours and starts it in hours, the owner-request wake and idle timer, `mlx-air serve/stop` behind a `ModelProcess` trait. |
 | [`triage_model.rs`](../crates/gm/src/triage_model.rs) | Model triage for mail no rule covers (prompt, parse, fail-open verdict). |
+| [`calendar/`](../crates/gm/src/calendar/) | Primary-calendar sync tokens and snapshots, five-minute polling, template notifications (`message.rs`: hierarchy and Telegram entity spans), and the live digest agenda. [Contract](spec/calendar.md). |
 | [`digest.rs`](../crates/gm/src/digest.rs) | Digest items (`summarize_item`), building, sending and late edits of the morning digest. |
 | [`scheduler.rs`](../crates/gm/src/scheduler.rs) | Publishes `schedule.due` at each owner's `digest_at`; missed times fire once. |
 | [`health.rs`](../crates/gm/src/health.rs) | Health checks (dead jobs, ingest lag, model `/ready`, reconnect), alerts after 15 min, recovery messages; feeds the dashboard panel, the digest System section and `/metrics`. |
@@ -186,7 +187,7 @@ flowchart LR
 | [`status.rs`](../crates/gm/src/status.rs) | `gm status`: launchd agents, running build, endpoints, model name, migrations and queue, read from the live Mac; reuses the health checker's queries. |
 | [`eval.rs`](../crates/gm/src/eval.rs) | Local eval set files and `gm eval` (runs rules → triage → the summary `Pipeline::route` picks). |
 | [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9). |
-| [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (plain text, silent flag, buttons, edits), log, recording (tests); notification formatting. |
+| [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (literal text, formatting entities, silent flag, buttons, edits), log, recording (tests); notification formatting. |
 | [`user_settings.rs`](../crates/gm/src/user_settings.rs) | Per-user settings with validation; `tr(email)` gives UI strings in the owner's language. |
 | [`i18n.rs`](../crates/gm/src/i18n.rs) | Fluent strings for en / vi / ja ([`locales/`](../crates/gm/locales/)). |
 | [`clock.rs`](../crates/gm/src/clock.rs) | `Clock` (system or fixed in tests) and `ModelHours`. |

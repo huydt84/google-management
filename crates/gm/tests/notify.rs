@@ -81,6 +81,11 @@ async fn telegram_returns_ids_edits_and_sends_buttons() {
         .await;
     let n = TelegramClient::new(reqwest::Client::new(), &server.uri(), "T", "42");
     let msg = OutgoingMessage {
+        entities: vec![gm::notify::MessageEntity {
+            offset: 0,
+            length: 1,
+            kind: gm::notify::EntityKind::Bold,
+        }],
         text: "x".into(),
         silent: false,
         buttons: vec![vec![gm::notify::Button {
@@ -90,7 +95,25 @@ async fn telegram_returns_ids_edits_and_sends_buttons() {
         reply_to: None,
     };
     assert_eq!(n.send(&msg).await.unwrap(), Some(77));
-    n.edit(77, &msg).await.expect("not modified is fine");
+    n.edit(77, &OutgoingMessage::text("x", false))
+        .await
+        .expect("not modified is fine");
+    let bodies: Vec<serde_json::Value> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect();
+    assert_eq!(
+        bodies[0]["entities"],
+        json!([{"type": "bold", "offset": 0, "length": 1}])
+    );
+    assert_eq!(
+        bodies[1]["entities"],
+        json!([]),
+        "an edit to plain text clears old formatting"
+    );
 }
 
 #[test]

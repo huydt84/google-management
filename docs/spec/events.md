@@ -64,11 +64,11 @@ Rules for the task runtime ([`tasks/runtime.rs`](../../crates/gm/src/tasks/runti
   the task `failed` and tells the owner; other errors retry like any job.
 - A sweep every 10 minutes expires due approvals and their tasks and publishes `task.reply` `expired`.
 
-### Phase 4 (planned)
+### Phase 4 (implemented)
 
 | Topic | Producer | Subscriber | Payload |
 |-------|----------|------------|---------|
-| `calendar.event.invitation` / `.changed` / `.cancelled` | Calendar source | `notify_calendar` | `{event_id, account, calendar_event_id}` |
+| `calendar.event.invitation`, `calendar.event.changed`, `calendar.event.cancelled` | Primary-calendar poller | `notify_calendar_invitation`, `notify_calendar_changed`, `notify_calendar_cancelled` | `{event_id, account, calendar_event_id}`; event status `ready` is locked before sending |
 
 ## Event record (`events` table)
 
@@ -124,3 +124,5 @@ Code: [`src/gmail/ingest.rs`](../../crates/gm/src/gmail/ingest.rs), [`src/gmail/
 at the owner's `digest_at`. `schedule_runs.last_at` records the last occurrence fired: an occurrence later than
 it fires once (also after sleep), and a schedule seen for the first time is recorded without firing.
 The record and the publish share one transaction.
+
+Calendar ingestion, snapshot fields, filtering, recurrence and cursor recovery: [Calendar spec](calendar.md).

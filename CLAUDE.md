@@ -1,6 +1,6 @@
 # Google Management
 
-Personal, single-user server on the owner's Mac: ingests Gmail (Calendar later), triages it with a
+Personal, single-user server on the owner's Mac: ingests Gmail and Calendar, triages it with a
 tested rules file, summarizes with a local LLM (mlx-server-runtime, Qwen3-8B 4-bit, called directly;
 the model process is run by mlx-air, never by gm), and notifies via Telegram. Only `GM_ALLOWED_EMAIL` can log in. Rust (one binary `gm`) + axum + sqlx +
 Postgres. Docs, code, comments and UI source strings are in English; the UI is localized (en / vi /
@@ -31,6 +31,7 @@ The full module map, one row per file, is in [docs/architecture.md §4](docs/arc
   `eval.rs`: Phase 2 (digest, schedules, health alerts, 👍/👎, model triage, `gm eval`).
 - `crates/gm/src/telegram/`, `tasks/`, `recipes/`, `google/compose.rs`, `web/tasks.rs`: Phase 3
   (Telegram poller and commands, owner tasks, router, approvals, audit, translate / analyze / reply).
+- `crates/gm/src/calendar/`, `crates/gm/src/google/calendar.rs`: Phase 4 (primary-calendar sync, notifications, digest agenda).
 - `crates/gm/src/gmail/`, `crates/gm/src/google/`: ingestion, parsing, OAuth, Gmail client.
 - `crates/gm/migrations/`: schema. `crates/gm/locales/`: UI strings. `crates/gm/prompts/`: prompts.
 - `crates/gm/tests/common/mod.rs`: `test_app`, wiremock helpers, `RecordingNotifier`, `FixedClock`.
@@ -40,10 +41,12 @@ The full module map, one row per file, is in [docs/architecture.md §4](docs/arc
 
 **Never decide silently.** Any product or technical choice the docs don't already settle is asked
 first, with explained options and a recommendation. Record the answer as plain wording in the doc it
-governs: the spec for behavior and contracts, an ADR (in `docs/adr/`) for choices that are expensive
-to reverse, the PRD for scope. No decision IDs or conversation references: a reader must understand
-the doc without having seen the conversation. History goes in commit messages, not in docs. A
-default you pick without asking goes under "Open questions" in
+governs: the spec for behavior and contracts, an ADR (in `docs/adr/`) for architectural constraints
+and tradeoffs, the PRD for scope. Describe the resulting contract, not who chose it or how the
+conversation reached it. Every document must make sense from the codebase alone. Keep conversation
+history, deployment reports, account consent state, live verification results and test-run totals
+in chat or commit messages. Docs may include reproducible verification commands and expected behavior.
+A default you pick without asking goes under "Open questions" in
 [docs/plan/README.md](docs/plan/README.md#open-questions) until the owner confirms it.
 
 For the big picture, see [docs/README.md](docs/README.md): PRD, architecture, ADRs, specs and plan.
@@ -62,6 +65,8 @@ implement them (Hugging Face style: a `Code:` line or a link per section, e.g.
 against it. `cargo test` checks this (`crates/gm/tests/docs.rs`): every route, `GM_*` variable,
 topic, table and CLI command in the code must appear in `docs/spec/`, and every relative doc link must
 resolve.
+
+**Self-containment.** Don't contaminate documents with model's implicit decision or live verification performed inside the conversation. Only include self-contain information - that other developers, with only the codebase and documentation, can see and understand
 
 ## Verification and mistakes
 
@@ -87,23 +92,26 @@ process, not only in code), fix the instance, then fix the class at the highest 
 5. a script or `gm` command the agent runs (a lever, not a memory),
 6. a written rule in this file, last, because nothing fails when an agent skips a rule.
 
-Show that a new check fails on the real past mistake. Add the lesson to the table below in the same
-change. If a lesson with only a written rule happens again, move it up a layer. If two fixes built on
-the same premise fail, stop and question the premise instead of trying a third.
+Show that a new check fails on the real past mistake and report that result in chat. Document the
+current constraint and its enforcement, without an incident narrative. If a constraint with only a
+written rule fails again, move it up a layer. If two fixes built on the same premise fail, stop and
+question the premise instead of trying a third.
 
-| Mistake that happened | Enforcement |
-|-----------------------|-------------|
-| Docs drifted from the code (stale ADR, module table, routes, settings) | `crates/gm/tests/docs.rs` fails `cargo test` |
-| Docs cited decision IDs that only made sense next to a conversation | `crates/gm/tests/docs.rs` |
-| A string present in one language only | locale key-parity test |
-| A `rules.yaml` edit that stops matching its intended mail | rule examples, checked by `gm rules` and `cargo test` |
-| A fixed test clock fell in the past and deferred jobs looped | structural: `test_day()` is always a week ahead |
-| Built gm-side model start/stop that duplicated mlx-air | rule only: "Check before you claim or build" (no check possible inside this repo) |
-| Claimed the services weren't installed without looking at the Mac | lever: `gm status` reads launchd, the running build, `/healthz`, model `/ready`, migrations and the queue from the live Mac |
-| A docs fix edited an already-applied migration (sqlx refuses to start on a changed checksum) | `gm status` fails on an applied migration whose file changed |
-| A test set a time with Postgres `now()` and checked it with the host clock; the Docker VM clock runs ~1 ms ahead, so "16 min" read as 15 | rule only: in tests, take times that gm compares from the clock gm reads (`Utc::now()` or the `FixedClock`), not from `now()` in SQL |
-| Called Phase 2 done on tests alone, never run against the real model or Gmail | rule only, for now: "Prove it works on the real system" |
-| `gm status` said "restart to run it" right after the documented upgrade, because `ps` start times are whole seconds | unit test `a_build_in_the_same_second_as_the_start_is_not_stale` in `status.rs` |
+| Constraint | Enforcement |
+|------------|-------------|
+| Specs match routes, configuration, topics, schema and CLI commands | `crates/gm/tests/docs.rs` |
+| Docs are self-contained and contain no conversation-specific decision IDs | `crates/gm/tests/docs.rs` |
+| Every locale contains the same keys | locale key-parity test |
+| Every rule matches its redacted examples | `gm rules` and `cargo test` |
+| Deferred test jobs remain in the future | `test_day()` is always a week ahead |
+| mlx-air owns model process management | Reuse mlx-air; gm only calls the model endpoint |
+| Installation and runtime claims require current machine evidence | `gm status` reads launchd, the running build, health endpoints, migrations and the queue |
+| Mail-only handlers and controls accept only Gmail events | Source checks and `crates/gm/tests/calendar_serve.rs` |
+| Calendar field comparisons require a previous snapshot; formatting spans use UTF-16 offsets | Calendar integration tests and `calendar_serve.rs` |
+| Applied migrations are immutable | `gm status` checks applied migration checksums |
+| Test timestamps use the clock read by the code under test | Use `Utc::now()` or `FixedClock` for host-clock comparisons, not Postgres `now()` |
+| Feature verification includes the actual runtime flow | Run the relevant command or service and inspect its result; report observations in chat |
+| Build freshness comparisons account for second-resolution process times | `a_build_in_the_same_second_as_the_start_is_not_stale` in `status.rs` |
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and
@@ -111,7 +119,7 @@ the **architecture invariants** you must not break: idempotent handlers with tra
 Google content is untrusted; external side effects only through approvals; minimal scopes; secrets
 only in the Keychain and never logged; bind localhost only; all LLM calls through `LlmClient` with a
 lane and no reliance on `tools`/`response_format`; model work deferred outside model hours; Telegram
-plain text; every rule has redacted examples.
+literal text with app-owned formatting spans; every rule has redacted examples.
 
 Per-phase plans: [phase-1.md](docs/plan/phase-1.md) (done), [phase-2.md](docs/plan/phase-2.md),
 [phase-3.md](docs/plan/phase-3.md), [phase-4.md](docs/plan/phase-4.md).
