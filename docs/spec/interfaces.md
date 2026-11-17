@@ -32,14 +32,14 @@ Guards on every request (`web::guard`):
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model state and hours, queue counts, health panel (Phase 2), last 50 events with their route, a key of the three routes (notify, digest, ignore) with how many of those mails took each, and a closed "How mail is sorted" disclosure explaining them |
+| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model state and hours, queue counts, health panel (Phase 2), last 50 events with their route, a key of the three routes (notify, digest, ignore) with how many of those mails took each, and a closed "How mail is sorted" disclosure explaining them (its toggle stays at the right end of the heading row; the panel opens as the full-width row below). A mail row shows its summary and its suggested actions as a list, a linked action with its host; a calendar row shows the calendar notification text with its links and emphasis, and its title links to the event |
 | GET | `/auth/login` | — | Start sign-in (OIDC, PKCE, signed `gm_oauth` state cookie) |
 | GET | `/auth/callback` | — | Finish sign-in; 403 on state mismatch or unless the verified email equals `GM_ALLOWED_EMAIL` |
 | POST | `/auth/logout` | — | Clear the session |
 | GET | `/connect/google` | session | Start API consent (`gmail.readonly` and `gmail.compose`, plus `pubsub` in Pub/Sub mode; offline, `prompt=consent`). The dashboard warns when the stored grant lacks a required scope |
 | GET | `/connect/google/callback` | session | Check owner and scopes, store the encrypted refresh token, bootstrap the Gmail cursor |
 | GET | `/settings[?saved=1][?model=]` | session (else redirect to `/`) | The user's settings, rendered in their UI language, and the model controls with their save result |
-| POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`, `digest_at` (HH:MM inside model hours); 400 with a localized reason, else redirect `/settings?saved=1` |
+| POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`, `digest_at` (HH:MM inside model hours), `trusted_link_domains` (domain names separated by new lines, spaces or commas; at most 50); 400 with a localized reason, else redirect `/settings?saved=1` |
 | POST | `/model` | session | Form `on`, `off` (HH:MM), `manage` (checkbox), `idle_min` (1–720), `grace_s` (0–1800), `model` (id, no spaces): the model controls ([ADR-0010](../adr/0010-llm-client-lanes-residency.md)); the new hours must contain the owner's digest time. Redirect `/settings?model=saved#model`, or `/settings?model=<error id>#model` |
 | POST | `/api/gmail/sync` | session | Sync the owner's mailbox now, redirect to `/` |
 | GET | `/api/events` | session (401 JSON otherwise) | Last 100 events as JSON |
@@ -76,7 +76,7 @@ Code: [`src/web/tasks.rs`](../../crates/gm/src/web/tasks.rs), [`templates/tasks.
 
 Code: [`src/notify.rs`](../../crates/gm/src/notify.rs), [`src/telegram/`](../../crates/gm/src/telegram/), [`src/tasks/`](../../crates/gm/src/tasks/), [`src/recipes/`](../../crates/gm/src/recipes/), [`src/feedback.rs`](../../crates/gm/src/feedback.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/health.rs`](../../crates/gm/src/health.rs).
 
-The bot sends to exactly one chat, `GM_TELEGRAM_CHAT_ID`. Messages carry literal text (no `parse_mode`), with trusted formatting entities for Calendar messages,
+The bot sends to exactly one chat, `GM_TELEGRAM_CHAT_ID`. Messages carry literal text (no `parse_mode`), with trusted formatting entities for mail and Calendar notifications (built by `notify::RichText`),
 ≤ 4096 characters, link previews disabled. Strings are localized with the owner's `ui_language`;
 summaries use their `summary_language`.
 
@@ -90,9 +90,11 @@ From: <name> <address>
 
 <2–4 sentence summary>
 
-Suggested: <action> · <action>
+Suggested:
+• <action>
+• <linked action> (<host>)
 
-https://mail.google.com/mail/?authuser=<account>#all/<thread id>
+Open in Gmail
 ```
 
 With a rule `message` (no summary), for example the card flash:
@@ -101,12 +103,17 @@ With a rule `message` (no summary), for example the card flash:
 🔕 💳 Rakuten Card ¥1,234 (2026/01/01)
 From: 楽天カード株式会社 <info@mail.rakuten-card.co.jp>
 
-https://mail.google.com/…
+Open in Gmail
 ```
 
 - Icon: 🚨 urgent, 🔕 silent, 🔴 high; for normal priority it follows the summary importance
   (🔴 high, 🟡 medium, ⚪ low).
 - Priority `silent` sends with `disable_notification` (no sound).
+- `Open in Gmail` is a `text_link` span to `https://mail.google.com/mail/?authuser=<account>#all/<thread id>`,
+  built by code. A reply to a notification missing from `chat_messages` finds its mail from a Gmail
+  link in the replied message's text or in its link spans.
+- Each suggested action is one `• ` line. An action with a URL (see [Summary](#summary-implemented))
+  is a `text_link` span on its text, followed by the URL's host in parentheses.
 - Rule-only notifications (`summarize: false`) go out at any hour; their text is the rule `message`
   or the subject, sender and link.
 - A notification that needs a summary is never sent without it: it waits for model hours and for the
@@ -339,6 +346,7 @@ All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) throug
    cache can reuse it.
 2. User message: `Output language: <language>`, then the mail (headers, attachment names, cleaned and
    capped body) inside `<email>…</email>`. Any `<email` / `</email` in the content is neutralized.
+   The summary task appends the mail's trusted links, numbered, in a `<links>` block after the mail.
 
 ### Summary (implemented)
 
@@ -346,9 +354,18 @@ All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) throug
 {"summary": "2-4 short sentences in the output language",
  "importance": "low | medium | high",
  "category": "personal | work | finance | billing | shopping | travel | security | newsletter | jobs | other",
- "suggested_actions": ["at most 3"],
+ "suggested_actions": [{"text": "a short next step", "link": 1}],
  "language": "language of the email"}
 ```
+
+At most 3 actions; `link` is optional. Trusted links (`ParsedMessage::trusted_links`,
+[`gmail/message.rs`](../../crates/gm/src/gmail/message.rs)) are the mail's https links (HTML `href`s
+and URLs in text; default port, no user info, at most 10) whose host is a domain on the owner's
+`trusted_link_domains` or its subdomain, when Gmail's own `Authentication-Results` (the topmost
+header, authserv-id `mx.google.com`) reports `dmarc=pass` with a `header.from` under the same
+trusted domain. `link: n` maps to the n-th listed link; any other value, or a mail with no trusted
+links, leaves the action without a URL. The model never writes a URL. `events.summary` stores
+`suggested_actions` as `[{"text", "url"?}]`; summaries stored as plain strings still render.
 
 Parsing strips `<think>…</think>` and code fences and takes the outermost `{…}`. On failure the
 client retries once with a reminder; then it keeps the raw text (≤ 1,200 characters) as the summary

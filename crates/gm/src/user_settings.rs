@@ -36,6 +36,8 @@ pub enum SettingsError {
     UiLanguage,
     #[error("invalid-digest-time")]
     DigestTime,
+    #[error("invalid-trusted-domain")]
+    TrustedDomain,
 }
 
 impl SettingsError {
@@ -45,8 +47,38 @@ impl SettingsError {
             SettingsError::Language => "invalid-language",
             SettingsError::UiLanguage => "invalid-ui-language",
             SettingsError::DigestTime => "invalid-digest-time",
+            SettingsError::TrustedDomain => "invalid-trusted-domain",
         }
     }
+}
+
+// A domain name with at least two labels, so a bare top-level domain ("com") is never trusted.
+static DOMAIN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
+        .unwrap()
+});
+
+/// At most this many trusted link domains.
+pub const MAX_TRUSTED_DOMAINS: usize = 50;
+
+/// Parse the trusted link domains typed on the Settings page: separated by spaces, commas or new
+/// lines; lowercase; duplicates removed.
+pub fn parse_trusted_domains(value: &str) -> Result<Vec<String>, SettingsError> {
+    let mut out: Vec<String> = Vec::new();
+    for d in value.split(|c: char| c.is_whitespace() || c == ',') {
+        let d = d.trim().trim_end_matches('.').to_ascii_lowercase();
+        if d.is_empty() || out.contains(&d) {
+            continue;
+        }
+        if d.len() > 253 || !DOMAIN_RE.is_match(&d) {
+            return Err(SettingsError::TrustedDomain);
+        }
+        out.push(d);
+    }
+    if out.len() > MAX_TRUSTED_DOMAINS {
+        return Err(SettingsError::TrustedDomain);
+    }
+    Ok(out)
 }
 
 pub fn normalize_language(value: &str) -> Result<String, SettingsError> {
@@ -71,6 +103,10 @@ pub struct UserSettings {
     /// Morning digest time, HH:MM local; must fall inside model hours.
     #[serde(default = "default_digest_at")]
     pub digest_at: String,
+    /// Domains whose links a suggested action may open, when the mail is DMARC-authenticated
+    /// for the same domain ([`crate::gmail::message::ParsedMessage::trusted_links`]).
+    #[serde(default)]
+    pub trusted_link_domains: Vec<String>,
 }
 
 fn default_digest_at() -> String {
@@ -108,6 +144,7 @@ impl UserSettings {
             translation_language,
             ui_language: self.ui_language,
             digest_at: digest_at.format("%H:%M").to_string(),
+            trusted_link_domains: parse_trusted_domains(&self.trusted_link_domains.join(" "))?,
         })
     }
 }
@@ -139,6 +176,7 @@ impl UserSettingsStore {
                 translation_language: None,
                 ui_language: ui.to_string(),
                 digest_at: default_digest_at.format("%H:%M").to_string(),
+                trusted_link_domains: vec![],
             },
             model,
         }
@@ -242,17 +280,42 @@ mod tests {
             translation_language: Some(" ".into()),
             ui_language: "ja".into(),
             digest_at: "9:05".into(),
+            trusted_link_domains: vec!["GitHub.com".into(), "github.com.".into()],
         };
         let v = s.validated().unwrap();
         assert_eq!(v.digest_at, "09:05");
         assert_eq!(v.translation_language, None);
         assert_eq!(v.effective_translation_language(), "English");
+        assert_eq!(v.trusted_link_domains, ["github.com"]);
         let bad = UserSettings {
             summary_language: "English".into(),
             translation_language: None,
             ui_language: "fr".into(),
             digest_at: "09:05".into(),
+            trusted_link_domains: vec![],
         };
         assert_eq!(bad.validated(), Err(SettingsError::UiLanguage));
+    }
+
+    #[test]
+    fn trusted_domains_are_names_with_two_labels() {
+        assert_eq!(
+            parse_trusted_domains(" github.com,\nAccounts.Google.com  github.com ").unwrap(),
+            ["github.com", "accounts.google.com"]
+        );
+        assert_eq!(parse_trusted_domains("").unwrap(), Vec::<String>::new());
+        for bad in [
+            "com",
+            "https://github.com",
+            "*.github.com",
+            "git hub.com/x",
+            "-a.com",
+        ] {
+            assert_eq!(
+                parse_trusted_domains(bad),
+                Err(SettingsError::TrustedDomain),
+                "{bad:?} should be rejected"
+            );
+        }
     }
 }

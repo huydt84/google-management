@@ -3,90 +3,28 @@
 use serde_json::Value;
 
 use crate::i18n::Tr;
-use crate::notify::{EntityKind, MessageEntity, TELEGRAM_LIMIT};
+use crate::notify::{EntityKind, Rendered, RichText};
 
-pub(crate) struct RenderedNotification {
-    pub text: String,
-    pub entities: Vec<MessageEntity>,
+/// `Label: value` on its own line.
+fn field(message: &mut RichText, label: &str, value: &str) {
+    message.bold(label);
+    message.push(": ");
+    message.push(value);
+    message.push("\n");
 }
 
-#[derive(Default)]
-struct Message {
-    text: String,
-    entities: Vec<MessageEntity>,
-}
-
-impl Message {
-    fn push(&mut self, text: &str) {
-        self.text.push_str(text);
+/// A changed field: the old value struck through, then the new one.
+fn change(message: &mut RichText, label: &str, old: &str, new: &str) {
+    if old == new {
+        return;
     }
-
-    fn styled(&mut self, text: &str, kind: EntityKind) {
-        let offset = self.text.encode_utf16().count();
-        self.push(text);
-        let length = text.encode_utf16().count();
-        if length > 0 {
-            self.entities.push(MessageEntity {
-                offset,
-                length,
-                kind,
-            });
-        }
-    }
-
-    fn bold(&mut self, text: &str) {
-        self.styled(text, EntityKind::Bold);
-    }
-
-    fn field(&mut self, label: &str, value: &str) {
-        self.bold(label);
-        self.push(": ");
-        self.push(value);
-        self.push("\n");
-    }
-
-    fn change(&mut self, label: &str, old: &str, new: &str) {
-        if old == new {
-            return;
-        }
-        self.push("\n");
-        self.bold(label);
-        self.push("\n");
-        self.styled(old, EntityKind::Strikethrough);
-        self.push("\n→ ");
-        self.bold(new);
-        self.push("\n");
-    }
-
-    fn finish(mut self) -> RenderedNotification {
-        if self.text.encode_utf16().count() > TELEGRAM_LIMIT {
-            let mut units = 0;
-            let end = self
-                .text
-                .char_indices()
-                .find_map(|(byte, ch)| {
-                    if units + ch.len_utf16() > TELEGRAM_LIMIT - 1 {
-                        return Some(byte);
-                    }
-                    units += ch.len_utf16();
-                    None
-                })
-                .unwrap_or(self.text.len());
-            self.text.truncate(end);
-            self.text.push('…');
-            self.entities.retain_mut(|entity| {
-                if entity.offset >= units {
-                    return false;
-                }
-                entity.length = entity.length.min(units - entity.offset);
-                true
-            });
-        }
-        RenderedNotification {
-            text: self.text.trim_end().to_string(),
-            entities: self.entities,
-        }
-    }
+    message.push("\n");
+    message.bold(label);
+    message.push("\n");
+    message.styled(old, EntityKind::Strikethrough);
+    message.push("\n→ ");
+    message.bold(new);
+    message.push("\n");
 }
 
 fn value(text: Option<&str>, limit: usize) -> String {
@@ -125,7 +63,7 @@ fn location(tr: &Tr, event: &Value) -> String {
     }
 }
 
-fn calendar_link(event: &Value) -> Option<String> {
+pub(crate) fn calendar_link(event: &Value) -> Option<String> {
     let url = url::Url::parse(event["htmlLink"].as_str()?).ok()?;
     (url.scheme() == "https"
         && matches!(
@@ -136,7 +74,7 @@ fn calendar_link(event: &Value) -> Option<String> {
     .then(|| url.to_string())
 }
 
-pub(crate) fn notification(tr: &Tr, kind: &str, data: &Value) -> RenderedNotification {
+pub(crate) fn notification(tr: &Tr, kind: &str, data: &Value) -> Rendered {
     let event = &data["event"];
     let previous = &data["previous"];
     let (icon, heading) = match kind {
@@ -145,19 +83,31 @@ pub(crate) fn notification(tr: &Tr, kind: &str, data: &Value) -> RenderedNotific
         _ if !previous.is_object() => ("📅", "calendar-created"),
         _ => ("✏️", "calendar-changed"),
     };
-    let mut message = Message::default();
+    let mut message = RichText::default();
     message.push(&format!("{icon} "));
     message.bold(&tr.get(heading));
     message.push("\n");
     message.bold(&super::title(tr, event));
     message.push("\n\n");
-    message.field(&tr.get("calendar-when"), &super::time_range(tr, event));
-    message.field(&tr.get("calendar-organizer"), &organizer(tr, event));
+    field(
+        &mut message,
+        &tr.get("calendar-when"),
+        &super::time_range(tr, event),
+    );
+    field(
+        &mut message,
+        &tr.get("calendar-organizer"),
+        &organizer(tr, event),
+    );
     if event["location"]
         .as_str()
         .is_some_and(|s| !s.trim().is_empty())
     {
-        message.field(&tr.get("calendar-field-location"), &location(tr, event));
+        field(
+            &mut message,
+            &tr.get("calendar-field-location"),
+            &location(tr, event),
+        );
     }
     if kind == "event.changed" && previous.is_object() {
         let changed = |key: &str| {
@@ -166,28 +116,32 @@ pub(crate) fn notification(tr: &Tr, kind: &str, data: &Value) -> RenderedNotific
                 .is_some_and(|a| a.iter().any(|v| v == key))
         };
         if changed("summary") {
-            message.change(
+            change(
+                &mut message,
                 &tr.get("calendar-field-summary"),
                 &super::title(tr, previous),
                 &super::title(tr, event),
             );
         }
         if changed("start") || changed("end") {
-            message.change(
+            change(
+                &mut message,
                 &tr.get("calendar-field-start"),
                 &super::time_range(tr, previous),
                 &super::time_range(tr, event),
             );
         }
         if changed("location") {
-            message.change(
+            change(
+                &mut message,
                 &tr.get("calendar-field-location"),
                 &location(tr, previous),
                 &location(tr, event),
             );
         }
         if changed("organizer") {
-            message.change(
+            change(
+                &mut message,
                 &tr.get("calendar-organizer"),
                 &organizer(tr, previous),
                 &organizer(tr, event),
@@ -205,7 +159,7 @@ pub(crate) fn notification(tr: &Tr, kind: &str, data: &Value) -> RenderedNotific
         && let Some(url) = calendar_link(event)
     {
         message.push("\n");
-        message.styled(&tr.get("calendar-open"), EntityKind::TextLink { url });
+        message.link(&tr.get("calendar-open"), &url);
     }
     message.finish()
 }

@@ -39,7 +39,13 @@ async fn unmatched_mail_triaged_notify_is_summarized_and_notified(pool: PgPool) 
     assert!(sent[0].text.contains("🔴 📧 Lunch?"));
     assert!(sent[0].text.contains("From: Alice <alice@example.org>"));
     assert!(sent[0].text.contains("Tóm tắt."));
-    assert!(sent[0].text.contains("Suggested: reply"));
+    assert!(sent[0].text.contains("Suggested:\n• reply"));
+    assert!(sent[0].text.ends_with("Open in Gmail"));
+    assert!(
+        sent[0].entities.iter().any(|e| matches!(&e.kind,
+            gm::notify::EntityKind::TextLink { url } if url.starts_with("https://mail.google.com/"))),
+        "the Gmail link is a span, not raw text"
+    );
     assert!(!sent[0].silent);
 
     let ev = gm::db::event(&t.app.pool, id).await.unwrap().unwrap();

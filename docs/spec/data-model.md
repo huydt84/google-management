@@ -34,10 +34,11 @@ and by the test suite). Diagram: [architecture §7](../architecture.md#7-data-mo
 | Column | Type | Notes |
 |--------|------|-------|
 | `email` | text PK | the gm user |
-| `settings` | jsonb | `{summary_language, translation_language, ui_language, digest_at}`; missing keys fall back to `GM_DEFAULT_SUMMARY_LANGUAGE` / `GM_DEFAULT_UI_LANGUAGE` |
+| `settings` | jsonb | `{summary_language, translation_language, ui_language, digest_at, trusted_link_domains}`; missing keys fall back to `GM_DEFAULT_SUMMARY_LANGUAGE` / `GM_DEFAULT_UI_LANGUAGE` |
 
 Validation (`user_settings.rs`): language names are 2–40 characters of letters, marks, spaces,
-`( ) ' -`; `ui_language` is one of `en`, `vi`, `ja`.
+`( ) ' -`; `ui_language` is one of `en`, `vi`, `ja`; `trusted_link_domains` holds at most 50
+lowercase domain names of two or more labels (no scheme, path or wildcard), default empty.
 
 ### `events`
 

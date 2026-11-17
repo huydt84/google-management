@@ -24,7 +24,7 @@ use crate::llm::{Lane, LlmClient, LlmUnavailable};
 use crate::notify::{Notifier, OutgoingMessage, format_email_notification};
 use crate::rules::{Action, Priority, RuleFile, Verdict};
 use crate::topics;
-use crate::user_settings::UserSettingsStore;
+use crate::user_settings::{UserSettings, UserSettingsStore};
 
 pub struct Pipeline {
     pub pool: PgPool,
@@ -129,7 +129,7 @@ impl Pipeline {
     }
 
     /// The steps every model job shares (ADR-0015): outside model hours the job waits for
-    /// them; the mail is fetched (deleted → `gone`); `call` runs with the owner's summary language;
+    /// them; the mail is fetched (deleted → `gone`); `call` runs with the owner's settings;
     /// while the model is unavailable the job waits `GM_LLM_UNAVAILABLE_RETRY_S` without using an
     /// attempt. `Err(outcome)` means the job stops here with that outcome.
     pub(crate) async fn model_step<T>(
@@ -139,7 +139,7 @@ impl Pipeline {
         account: &str,
         message_id: &str,
         task: &str,
-        call: impl AsyncFnOnce(&ParsedMessage, &str) -> anyhow::Result<T>,
+        call: impl AsyncFnOnce(&ParsedMessage, &UserSettings) -> anyhow::Result<T>,
     ) -> anyhow::Result<Result<T, Outcome>> {
         let now = self.clock.now();
         if !self.model.hours().is_on(now) {
@@ -153,7 +153,7 @@ impl Pipeline {
         };
         let owner = self.accounts.owner_of(account).await?;
         let prefs = self.user_settings.get(&owner).await?;
-        match call(&msg, &prefs.summary_language).await {
+        match call(&msg, &prefs).await {
             Ok(v) => Ok(Ok(v)),
             Err(e) if LlmUnavailable::is(&e) => {
                 let retry_at = now.with_timezone(&chrono::Utc) + self.llm_unavailable_retry;
@@ -264,7 +264,9 @@ impl Pipeline {
                 &p.account,
                 &p.message_id,
                 "triage",
-                async |m, lang| crate::triage_model::classify(&self.llm, m, lang).await,
+                async |m, prefs| {
+                    crate::triage_model::classify(&self.llm, m, &prefs.summary_language).await
+                },
             )
             .await?;
         let decision = match step {
@@ -304,7 +306,12 @@ impl Pipeline {
                 &p.account,
                 &p.message_id,
                 "summary",
-                async |m, lang| self.llm.summarize_email(m, lang, Lane::Notify).await,
+                async |m, prefs| {
+                    let links = m.trusted_links(&prefs.trusted_link_domains);
+                    self.llm
+                        .summarize_email(m, &prefs.summary_language, &links, Lane::Notify)
+                        .await
+                },
             )
             .await?;
         let summary = match step {
@@ -365,12 +372,12 @@ impl Pipeline {
         let owner = self.accounts.owner_of(&ev.account).await?;
         let prefs = self.user_settings.get(&owner).await?;
         let tr = Tr::new(&prefs.ui_language);
-        let text = format_email_notification(&tr, &ev.data, ev.summary.as_ref(), priority);
+        let rendered = format_email_notification(&tr, &ev.data, ev.summary.as_ref(), priority);
         let message_id = self
             .notifier
             .send(&OutgoingMessage {
-                entities: vec![],
-                text,
+                entities: rendered.entities,
+                text: rendered.text,
                 silent: priority == Priority::Silent,
                 buttons: vec![
                     crate::telegram::intent_row(&tr, p.event_id),

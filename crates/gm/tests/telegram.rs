@@ -79,6 +79,29 @@ async fn a_reply_to_an_unrecorded_notification_finds_its_mail_by_the_link(pool: 
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn a_reply_to_an_unrecorded_notification_finds_its_mail_by_the_open_in_gmail_link(
+    pool: PgPool,
+) {
+    let t = test_app(pool, telegram, None).await;
+    let id = t.notified_event("m1", "Hello").await;
+    sqlx::query("DELETE FROM chat_messages")
+        .execute(&t.app.pool)
+        .await
+        .unwrap();
+    let mut u = text_update(1, 42, "Say more detail", Some(NOTIFICATION_MSG));
+    u["message"]["reply_to_message"]["text"] = json!("💳 Card\nFrom: x\n\nOpen in Gmail");
+    u["message"]["reply_to_message"]["entities"] = json!([{"type": "text_link", "offset": 20,
+        "length": 13, "url": "https://mail.google.com/mail/?authuser=a%40b.c#all/m1"}]);
+    t.update(u).await;
+    let payload: serde_json::Value =
+        sqlx::query_scalar("SELECT payload FROM jobs WHERE topic = 'user.instruction'")
+            .fetch_one(&t.app.pool)
+            .await
+            .unwrap();
+    assert_eq!(payload["event_id"], id);
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
 async fn the_offset_survives_a_restart(pool: PgPool) {
     let t = test_app(pool.clone(), telegram, None).await;
     Mock::given(method("POST"))

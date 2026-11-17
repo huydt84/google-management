@@ -85,7 +85,8 @@ Each Google object becomes one row, keyed by `(source, external_id)`.
 `snippet`, `labels`, `thread_id`, `attachments`, `link`, and `verdict`
 (`{rule, action, priority, summarize, section, message, extracted}`). The full body is never stored.
 
-`events.summary`: the summary JSON (`summary`, `importance`, `category`, `suggested_actions`,
+`events.summary`: the summary JSON (`summary`, `importance`, `category`, `suggested_actions` as
+`[{text, url?}]`,
 `language`, `parse_ok`); for digest items `{line, parse_ok}` or `{jobs, parse_ok}`. Nothing is notified without it: an unavailable model defers the job every
 `GM_LLM_UNAVAILABLE_RETRY_S` (300 s), and other errors leave the job `dead`.
 

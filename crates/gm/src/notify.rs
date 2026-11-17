@@ -38,6 +38,132 @@ pub struct MessageEntity {
     pub kind: EntityKind,
 }
 
+/// Text with app-owned formatting spans, built left to right. Every Telegram message with
+/// formatting (mail and calendar notifications) is built here, so offsets are always UTF-16 and a
+/// cut at [`TELEGRAM_LIMIT`] never leaves a span past the end.
+#[derive(Debug, Default)]
+pub struct RichText {
+    text: String,
+    entities: Vec<MessageEntity>,
+}
+
+/// A finished [`RichText`]: what [`OutgoingMessage`] sends, and what the web renders as segments.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rendered {
+    pub text: String,
+    pub entities: Vec<MessageEntity>,
+}
+
+impl RichText {
+    pub fn push(&mut self, text: &str) {
+        self.text.push_str(text);
+    }
+
+    pub fn styled(&mut self, text: &str, kind: EntityKind) {
+        let offset = self.text.encode_utf16().count();
+        self.push(text);
+        let length = text.encode_utf16().count();
+        if length > 0 {
+            self.entities.push(MessageEntity {
+                offset,
+                length,
+                kind,
+            });
+        }
+    }
+
+    pub fn bold(&mut self, text: &str) {
+        self.styled(text, EntityKind::Bold);
+    }
+
+    pub fn link(&mut self, text: &str, url: &str) {
+        self.styled(
+            text,
+            EntityKind::TextLink {
+                url: url.to_string(),
+            },
+        );
+    }
+
+    /// Cut to [`TELEGRAM_LIMIT`] UTF-16 units (with "…") and trim trailing whitespace; spans are
+    /// clipped to the text that is left.
+    pub fn finish(mut self) -> Rendered {
+        if self.text.encode_utf16().count() > TELEGRAM_LIMIT {
+            let mut units = 0;
+            let end = self
+                .text
+                .char_indices()
+                .find_map(|(byte, ch)| {
+                    if units + ch.len_utf16() > TELEGRAM_LIMIT - 1 {
+                        return Some(byte);
+                    }
+                    units += ch.len_utf16();
+                    None
+                })
+                .unwrap_or(self.text.len());
+            self.text.truncate(end);
+            self.text.push('…');
+            self.entities.retain_mut(|entity| {
+                if entity.offset >= units {
+                    return false;
+                }
+                entity.length = entity.length.min(units - entity.offset);
+                true
+            });
+        }
+        Rendered {
+            text: self.text.trim_end().to_string(),
+            entities: self.entities,
+        }
+    }
+}
+
+/// A run of [`Rendered`] text with the formatting of the spans that cover it, for the web page.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Segment {
+    pub text: String,
+    pub bold: bool,
+    pub strike: bool,
+    /// Link target; empty for plain text.
+    pub url: String,
+}
+
+impl Rendered {
+    /// Split the text where spans start and end. Spans that do not fall on character boundaries
+    /// are ignored.
+    pub fn segments(&self) -> Vec<Segment> {
+        let units: Vec<u16> = self.text.encode_utf16().collect();
+        let mut cuts = vec![0, units.len()];
+        for e in &self.entities {
+            cuts.extend([
+                e.offset.min(units.len()),
+                (e.offset + e.length).min(units.len()),
+            ]);
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        cuts.windows(2)
+            .filter_map(|w| {
+                let text = String::from_utf16(&units[w[0]..w[1]]).ok()?;
+                let mut seg = Segment {
+                    text,
+                    ..Default::default()
+                };
+                for e in &self.entities {
+                    if e.offset <= w[0] && w[1] <= e.offset + e.length {
+                        match &e.kind {
+                            EntityKind::Bold => seg.bold = true,
+                            EntityKind::Strikethrough => seg.strike = true,
+                            EntityKind::TextLink { url } => seg.url = url.clone(),
+                        }
+                    }
+                }
+                Some(seg)
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OutgoingMessage {
     pub text: String,
@@ -197,62 +323,79 @@ fn icon(priority: Priority, summary: Option<&Value>) -> &'static str {
     }
 }
 
-fn truncate(text: String) -> String {
-    if text.chars().count() <= TELEGRAM_LIMIT {
-        return text;
-    }
-    let mut t: String = text.chars().take(TELEGRAM_LIMIT - 1).collect();
-    t.push('…');
-    t
-}
-
 /// Build the notification for one mail event. `data` is `events.data` (sender, subject, link,
-/// verdict); `summary` is `events.summary`.
+/// verdict); `summary` is `events.summary`. Suggestions are one bullet each; a suggestion with a
+/// trusted link is a text link followed by the link's host. The Gmail link (built by code) is the
+/// last line, as an "Open in Gmail" text link.
 pub fn format_email_notification(
     tr: &Tr,
     data: &Value,
     summary: Option<&Value>,
     priority: Priority,
-) -> String {
+) -> Rendered {
     let subject = data["subject"].as_str().unwrap_or("(no subject)");
     let sender = data["from"].as_str().unwrap_or("?");
     let link = data["link"].as_str().unwrap_or_default();
-    let rule_message = data["verdict"]["message"].as_str();
-    let mut lines = Vec::new();
+    let mut m = RichText::default();
 
-    if let Some(message) = rule_message {
-        lines.push(format!("{} {message}", icon(priority, None)));
-        lines.push(format!("{}: {sender}", tr.get("notif-from")));
+    if let Some(message) = data["verdict"]["message"].as_str() {
+        m.push(&format!("{} {message}\n", icon(priority, None)));
+        m.push(&format!("{}: {sender}\n", tr.get("notif-from")));
     } else {
-        lines.push(format!("{} 📧 {subject}", icon(priority, summary)));
-        lines.push(format!("{}: {sender}", tr.get("notif-from")));
-        match summary {
-            Some(s) if s["summary"].is_string() => {
-                lines.push(String::new());
-                lines.push(s["summary"].as_str().unwrap_or_default().trim().to_string());
-                let actions: Vec<&str> = s["suggested_actions"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(Value::as_str).collect())
-                    .unwrap_or_default();
-                if !actions.is_empty() {
-                    lines.push(String::new());
-                    lines.push(format!(
-                        "{}: {}",
-                        tr.get("notif-suggested"),
-                        actions.join(" · ")
-                    ));
+        m.push(&format!("{} 📧 {subject}\n", icon(priority, summary)));
+        m.push(&format!("{}: {sender}\n", tr.get("notif-from")));
+        if let Some(s) = summary.filter(|s| s["summary"].is_string()) {
+            m.push(&format!(
+                "\n{}\n",
+                s["summary"].as_str().unwrap_or_default().trim()
+            ));
+            let actions = crate::llm::SuggestedAction::list(s);
+            if !actions.is_empty() {
+                m.push(&format!("\n{}:\n", tr.get("notif-suggested")));
+                for a in actions {
+                    m.push("• ");
+                    match a.host() {
+                        Some(host) => {
+                            m.link(a.text.trim(), &a.url);
+                            m.push(&format!(" ({host})\n"));
+                        }
+                        None => m.push(&format!("{}\n", a.text.trim())),
+                    }
                 }
             }
-            _ => {}
         }
     }
     if !link.is_empty() {
-        lines.push(String::new());
-        lines.push(link.to_string());
+        m.push("\n");
+        m.link(&tr.get("notif-open-gmail"), link);
     }
-    // Remove a trailing empty line left by rule-only messages.
-    while lines.last().is_some_and(String::is_empty) {
-        lines.pop();
+    m.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segments_follow_spans_measured_in_utf16() {
+        let mut m = RichText::default();
+        m.push("🚀 ");
+        m.bold("Title");
+        m.push("\n");
+        m.link("Open", "https://calendar.google.com/calendar/x");
+        let segs = m.finish().segments();
+        let got: Vec<(&str, bool, &str)> = segs
+            .iter()
+            .map(|s| (s.text.as_str(), s.bold, s.url.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("🚀 ", false, ""),
+                ("Title", true, ""),
+                ("\n", false, ""),
+                ("Open", false, "https://calendar.google.com/calendar/x"),
+            ]
+        );
     }
-    truncate(lines.join("\n"))
 }

@@ -47,6 +47,12 @@
       <input id="digest_at" name="digest_at" type="time" required value="{{ digest_at }}" class="input num-input" aria-describedby="digest_at-help">
       <span class="help" id="digest_at-help">{{ digest_help }}</span>
     </div>
+    <div class="field">
+      <label for="trusted_link_domains">{{ tr.get("trusted-domains") }}</label>
+      <textarea id="trusted_link_domains" name="trusted_link_domains" rows="3" maxlength="4000" class="input"
+                spellcheck="false" autocapitalize="off" placeholder="github.com" aria-describedby="trusted_link_domains-help">{{ trusted_link_domains }}</textarea>
+      <span class="help" id="trusted_link_domains-help">{{ tr.get("trusted-domains-help") }}</span>
+    </div>
     <datalist id="languages">
       {% for lang in languages %}<option value="{{ lang }}">{% endfor %}
     </datalist>

@@ -187,7 +187,7 @@ flowchart LR
 | [`status.rs`](../crates/gm/src/status.rs) | `gm status`: launchd agents, running build, endpoints, model name, migrations and queue, read from the live Mac; reuses the health checker's queries. |
 | [`eval.rs`](../crates/gm/src/eval.rs) | Local eval set files and `gm eval` (runs rules → triage → the summary `Pipeline::route` picks). |
 | [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9). |
-| [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (literal text, formatting entities, silent flag, buttons, edits), log, recording (tests); notification formatting. |
+| [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (literal text, formatting entities, silent flag, buttons, edits), log, recording (tests); `RichText` (UTF-16 formatting spans, cut at 4096) and its web `segments`; mail notification formatting. |
 | [`user_settings.rs`](../crates/gm/src/user_settings.rs) | Per-user settings with validation; `tr(email)` gives UI strings in the owner's language. |
 | [`i18n.rs`](../crates/gm/src/i18n.rs) | Fluent strings for en / vi / ja ([`locales/`](../crates/gm/locales/)). |
 | [`clock.rs`](../crates/gm/src/clock.rs) | `Clock` (system or fixed in tests) and `ModelHours`. |
@@ -385,7 +385,7 @@ erDiagram
     }
     user_settings {
         text email PK
-        jsonb settings "summary_language, translation_language, ui_language"
+        jsonb settings "summary_language, translation_language, ui_language, trusted_link_domains"
     }
     events {
         bigint id PK

@@ -16,7 +16,7 @@ use crate::pipeline::Pipeline;
 use crate::topics;
 
 mod message;
-pub(crate) use message::notification;
+pub(crate) use message::{calendar_link, notification};
 
 const PRIMARY: &str = "primary";
 const WINDOW_DAYS: i64 = 30;

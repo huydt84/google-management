@@ -133,11 +133,68 @@ pub struct EmailSummary {
     #[serde(default = "other")]
     pub category: String,
     #[serde(default)]
-    pub suggested_actions: Vec<String>,
+    pub suggested_actions: Vec<SuggestedAction>,
     #[serde(default)]
     pub language: String,
     #[serde(default = "yes")]
     pub parse_ok: bool,
+}
+
+/// One suggested next step. `url` is set only when the model picked one of the trusted links
+/// it was shown ([`ParsedMessage::trusted_links`]); the model never writes a URL itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(from = "RawAction")]
+pub struct SuggestedAction {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
+}
+
+/// Stored summaries written before links existed hold plain strings.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawAction {
+    Text(String),
+    Full {
+        text: String,
+        #[serde(default)]
+        url: String,
+    },
+}
+
+impl From<RawAction> for SuggestedAction {
+    fn from(raw: RawAction) -> Self {
+        match raw {
+            RawAction::Text(text) => Self {
+                text,
+                url: String::new(),
+            },
+            RawAction::Full { text, url } => Self { text, url },
+        }
+    }
+}
+
+impl SuggestedAction {
+    /// The suggestions of a stored `events.summary` (strings or objects); unusable items are skipped.
+    pub fn list(summary: &Value) -> Vec<Self> {
+        summary["suggested_actions"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| serde_json::from_value::<Self>(v.clone()).ok())
+                    .filter(|a| !a.text.trim().is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The host shown next to a linked suggestion, so the owner sees where it goes.
+    pub fn host(&self) -> Option<String> {
+        url::Url::parse(&self.url)
+            .ok()?
+            .host_str()
+            .map(str::to_string)
+    }
 }
 
 fn medium() -> String {
@@ -177,8 +234,9 @@ pub fn parse_json_object(text: &str) -> Option<serde_json::Map<String, Value>> {
     }
 }
 
-/// Validate a summary. `None` if unusable.
-pub fn parse_summary(text: &str) -> Option<EmailSummary> {
+/// Validate a summary. `None` if unusable. `links` are the trusted links the prompt listed: an
+/// action's `"link": n` becomes `links[n - 1]`; any other value leaves the action unlinked.
+pub fn parse_summary(text: &str, links: &[String]) -> Option<EmailSummary> {
     let obj = parse_json_object(text)?;
     let summary = obj.get("summary")?.as_str()?.trim().to_string();
     if summary.is_empty() {
@@ -206,7 +264,7 @@ pub fn parse_summary(text: &str) -> Option<EmailSummary> {
             .and_then(Value::as_array)
             .map(|a| {
                 a.iter()
-                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .filter_map(|x| parse_action(x, links))
                     .take(3)
                     .collect()
             })
@@ -217,6 +275,30 @@ pub fn parse_summary(text: &str) -> Option<EmailSummary> {
             .unwrap_or_default()
             .to_string(),
         parse_ok: true,
+    })
+}
+
+fn parse_action(item: &Value, links: &[String]) -> Option<SuggestedAction> {
+    let (text, link) = match item {
+        Value::String(t) => (t.as_str(), None),
+        Value::Object(o) => (
+            o.get("text")?.as_str()?,
+            o.get("link").and_then(Value::as_u64),
+        ),
+        _ => return None,
+    };
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let url = link
+        .and_then(|n| usize::try_from(n).ok()?.checked_sub(1))
+        .and_then(|i| links.get(i))
+        .cloned()
+        .unwrap_or_default();
+    Some(SuggestedAction {
+        text: text.to_string(),
+        url,
     })
 }
 
@@ -450,12 +532,23 @@ impl LlmClient {
         ]
     }
 
-    pub fn summary_messages(&self, m: &ParsedMessage, language: &str) -> Vec<Value> {
-        self.task_messages(
-            SUMMARY_TASK,
-            language,
-            &self.email_block(m, self.max_input_tokens),
-        )
+    /// `links` are the mail's trusted links ([`ParsedMessage::trusted_links`]), listed after the
+    /// mail so a suggested action can point at one by number.
+    pub fn summary_messages(
+        &self,
+        m: &ParsedMessage,
+        language: &str,
+        links: &[String],
+    ) -> Vec<Value> {
+        let mut block = self.email_block(m, self.max_input_tokens);
+        if !links.is_empty() {
+            block.push_str("\n\n<links>\n");
+            for (i, l) in links.iter().enumerate() {
+                block.push_str(&format!("[{}] {}\n", i + 1, clean::sanitize_delimiters(l)));
+            }
+            block.push_str("</links>");
+        }
+        self.task_messages(SUMMARY_TASK, language, &block)
     }
 
     /// Ask for one JSON object; if `parse` rejects the reply, ask once more with a format reminder
@@ -491,15 +584,16 @@ impl LlmClient {
         &self,
         m: &ParsedMessage,
         language: &str,
+        links: &[String],
         lane: Lane,
     ) -> anyhow::Result<EmailSummary> {
         let reply = self
             .chat_json(
                 "summary",
                 lane,
-                self.summary_messages(m, language),
+                self.summary_messages(m, language, links),
                 self.summary_max_tokens,
-                parse_summary,
+                |t| parse_summary(t, links),
             )
             .await?;
         Ok(reply.parsed.unwrap_or_else(|| {

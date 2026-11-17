@@ -68,6 +68,8 @@ resolve.
 
 **Self-containment.** Don't contaminate documents with model's implicit decision or live verification performed inside the conversation. Only include self-contain information - that other developers, with only the codebase and documentation, can see and understand
 
+**Follow best-pracice.** Whenever there is UI/UX complains, check UI/UX best practice to see how to deal with it, then ask the user for confirmation.
+
 ## Verification and mistakes
 
 **Prove it works on the real system.** Passing `cargo test` is not "done". Before you report a change

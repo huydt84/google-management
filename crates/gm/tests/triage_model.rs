@@ -119,7 +119,7 @@ fn triage_prompt_keeps_the_shared_prefix() {
         ..Default::default()
     };
     let triage = gm::triage_model::messages(&llm, &m, "English");
-    let summary = llm.summary_messages(&m, "English");
+    let summary = llm.summary_messages(&m, "English", &[]);
     let (ts, ss) = (
         triage[0]["content"].as_str().unwrap(),
         summary[0]["content"].as_str().unwrap(),

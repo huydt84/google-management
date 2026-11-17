@@ -11,12 +11,39 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
 fn parse_summary_is_tolerant() {
-    let s = parse_summary("<think>hmm {not json}</think>```json\n{\"summary\":\"S\",\"importance\":\"URGENT\",\"suggested_actions\":[\"a\",\"b\",\"c\",\"d\"]}\n```").unwrap();
+    let s = parse_summary("<think>hmm {not json}</think>```json\n{\"summary\":\"S\",\"importance\":\"URGENT\",\"suggested_actions\":[\"a\",\"b\",\"c\",\"d\"]}\n```", &[]).unwrap();
     assert_eq!(s.summary, "S");
     assert_eq!(s.importance, "medium", "unknown importance falls back");
     assert_eq!(s.suggested_actions.len(), 3);
-    assert!(parse_summary("no json here").is_none());
-    assert!(parse_summary("{\"summary\": \"\"}").is_none());
+    assert!(parse_summary("no json here", &[]).is_none());
+    assert!(parse_summary("{\"summary\": \"\"}", &[]).is_none());
+}
+
+#[test]
+fn a_suggested_action_links_only_to_a_listed_trusted_link() {
+    let links = vec!["https://github.com/o/r/actions/runs/1".to_string()];
+    let s = parse_summary(
+        r#"{"summary": "S", "suggested_actions": [
+            {"text": "View run", "link": 1},
+            {"text": "Out of range", "link": 2},
+            {"text": "Model URL", "link": "https://phish.example"},
+            "plain"]}"#,
+        &links,
+    )
+    .unwrap();
+    let got: Vec<(&str, &str)> = s
+        .suggested_actions
+        .iter()
+        .map(|a| (a.text.as_str(), a.url.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("View run", links[0].as_str()),
+            ("Out of range", ""),
+            ("Model URL", "")
+        ]
+    );
 }
 
 #[test]
@@ -29,13 +56,14 @@ fn prompt_keeps_a_stable_prefix_and_puts_the_mail_last() {
         body_text: "Body\n> quoted".into(),
         ..Default::default()
     };
-    let a = llm.summary_messages(&m, "Vietnamese");
+    let a = llm.summary_messages(&m, "Vietnamese", &[]);
     let b = llm.summary_messages(
         &ParsedMessage {
             subject: "Other".into(),
             ..m.clone()
         },
         "Japanese",
+        &[],
     );
     assert_eq!(
         a[0], b[0],
@@ -50,6 +78,13 @@ fn prompt_keeps_a_stable_prefix_and_puts_the_mail_last() {
         user.matches("</email>").count(),
         1,
         "mail cannot close the delimiter"
+    );
+    let linked = llm.summary_messages(&m, "Vietnamese", &["https://github.com/a".to_string()]);
+    assert_eq!(linked[0], a[0], "links do not change the shared prefix");
+    let user = linked[1]["content"].as_str().unwrap();
+    assert!(
+        user.trim_end()
+            .ends_with("<links>\n[1] https://github.com/a\n</links>")
     );
 }
 
@@ -77,7 +112,7 @@ async fn retries_once_with_a_format_reminder() {
     cfg.llm_base_url = format!("{}/v1", server.uri());
     let llm = LlmClient::new(&cfg, None);
     let s = llm
-        .summarize_email(&ParsedMessage::default(), "English", Lane::Notify)
+        .summarize_email(&ParsedMessage::default(), "English", &[], Lane::Notify)
         .await
         .unwrap();
     assert!(s.parse_ok);

@@ -1,5 +1,5 @@
 use gm::i18n::Tr;
-use gm::notify::{Notifier, OutgoingMessage, format_email_notification};
+use gm::notify::{EntityKind, Notifier, OutgoingMessage, format_email_notification};
 use gm::rules::Priority;
 use gm::telegram::TelegramClient;
 use serde_json::json;
@@ -8,22 +8,45 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
 fn formatting_is_localized_and_bounded() {
-    let data = json!({"subject": "件名", "from": "A <a@b.c>", "link": "https://mail.google.com/x"});
-    let summary = json!({"summary": "S", "importance": "low", "suggested_actions": ["translate"]});
+    let gmail = "https://mail.google.com/x";
+    let data = json!({"subject": "件名", "from": "A <a@b.c>", "link": gmail});
+    let summary = json!({"summary": "S", "importance": "low", "suggested_actions": [
+        "translate",
+        {"text": "View run", "url": "https://github.com/o/r/actions/runs/1"}
+    ]});
     let ja = format_email_notification(&Tr::new("ja"), &data, Some(&summary), Priority::Normal);
     assert_eq!(
-        ja,
-        "⚪ 📧 件名\n差出人: A <a@b.c>\n\nS\n\n提案: translate\n\nhttps://mail.google.com/x"
+        ja.text,
+        "⚪ 📧 件名\n差出人: A <a@b.c>\n\nS\n\n提案:\n• translate\n• View run (github.com)\n\nGmail で開く"
     );
+    let span = |text: &str, url: &str| {
+        let units: Vec<u16> = ja.text.encode_utf16().collect();
+        let e = ja
+            .entities
+            .iter()
+            .find(|e| matches!(&e.kind, EntityKind::TextLink { url: u } if u == url))
+            .unwrap_or_else(|| panic!("no link to {url}"));
+        assert_eq!(
+            String::from_utf16(&units[e.offset..e.offset + e.length]).unwrap(),
+            text
+        );
+    };
+    span("View run", "https://github.com/o/r/actions/runs/1");
+    span("Gmail で開く", gmail);
+    assert_eq!(ja.entities.len(), 2, "unlinked suggestions carry no span");
     // Rule-only (no summary): header, sender and link only.
     let rule_only = format_email_notification(&Tr::new("vi"), &data, None, Priority::Urgent);
     assert_eq!(
-        rule_only,
-        "🚨 📧 件名\nTừ: A <a@b.c>\n\nhttps://mail.google.com/x"
+        rule_only.text,
+        "🚨 📧 件名\nTừ: A <a@b.c>\n\nMở trong Gmail"
     );
     let long = json!({"summary": "x".repeat(5000)});
     let t = format_email_notification(&Tr::new("en"), &data, Some(&long), Priority::Normal);
-    assert_eq!(t.chars().count(), gm::notify::TELEGRAM_LIMIT);
+    assert_eq!(t.text.encode_utf16().count(), gm::notify::TELEGRAM_LIMIT);
+    assert!(
+        t.entities.is_empty(),
+        "the cut removes the Gmail link span with its text"
+    );
 }
 
 #[tokio::test]

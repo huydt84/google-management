@@ -169,7 +169,9 @@ pub async fn run(
         // The summary the pipeline would run next for this verdict.
         match Pipeline::route(&verdict).1 {
             Some(topics::GMAIL_MESSAGE_SUMMARIZE) => {
-                let s = llm.summarize_email(&msg, language, Lane::Notify).await?;
+                let s = llm
+                    .summarize_email(&msg, language, &[], Lane::Notify)
+                    .await?;
                 report.parsed("summary", s.parse_ok);
             }
             Some(topics::DIGEST_ITEM_SUMMARIZE) => {

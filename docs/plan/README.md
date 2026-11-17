@@ -133,6 +133,9 @@ one, write the answer into the doc it governs and delete the line here.
   recovery message at 19:00); in Pub/Sub mode the ingest-lag limit is the safety-poll interval +
   10 min, so a quiet mailbox doesn't alarm every 15 min.
 - Telegram: `getUpdates` long poll of 25 s.
+- Trusted links: `trusted_link_domains` starts empty (no linked suggestions until the owner adds
+  domains); at most 10 trusted links per summary prompt and 50 domains per owner; `gm eval` runs the
+  summary prompt without links.
 - Phase 3 caps: router 60 output tokens; translate chunks of ~1,200 input tokens, at most 6 per mail,
   2,048 output tokens each; analyze 2,048 and reply 1,536 output tokens (thinking included);
   thinking passes at temperature 0.6.

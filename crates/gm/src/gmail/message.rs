@@ -28,6 +28,11 @@ pub struct ParsedMessage {
     pub references: String,
     /// `Reply-To` addresses (lowercase); a reply goes here, else to `from_addr`.
     pub reply_to: Vec<String>,
+    /// https links in the body (HTML `href`s and URLs in text), in order, without duplicates.
+    pub links: Vec<String>,
+    /// The `header.from` domain when Gmail's own `Authentication-Results` (the topmost one, from
+    /// `mx.google.com`) says `dmarc=pass`; `None` otherwise.
+    pub dmarc_domain: Option<String>,
 }
 
 impl ParsedMessage {
@@ -37,6 +42,30 @@ impl ParsedMessage {
         } else {
             format!("{} <{}>", self.from_name, self.from_addr)
         }
+    }
+
+    /// The links a suggestion may open: the link's host and the DMARC-authenticated sender
+    /// domain both fall under one of the owner's trusted domains. At most [`MAX_TRUSTED_LINKS`].
+    pub fn trusted_links(&self, trusted_domains: &[String]) -> Vec<String> {
+        let Some(sender) = self.dmarc_domain.as_deref() else {
+            return vec![];
+        };
+        let trusted: Vec<&str> = trusted_domains
+            .iter()
+            .map(String::as_str)
+            .filter(|d| within(sender, d))
+            .collect();
+        self.links
+            .iter()
+            .filter(|l| {
+                url::Url::parse(l)
+                    .ok()
+                    .and_then(|u| u.host_str().map(str::to_string))
+                    .is_some_and(|h| trusted.iter().any(|d| within(&h, d)))
+            })
+            .take(MAX_TRUSTED_LINKS)
+            .cloned()
+            .collect()
     }
 
     pub fn gmail_link(&self, account: &str) -> String {
@@ -96,6 +125,79 @@ pub fn parse_address_list(raw: &str) -> Vec<String> {
         .map(|a| parse_address(a).1)
         .filter(|a| !a.is_empty())
         .collect()
+}
+
+/// How many trusted links a summary prompt lists.
+pub const MAX_TRUSTED_LINKS: usize = 10;
+const MAX_LINKS: usize = 200;
+
+/// `host` is `domain` or one of its subdomains (both lowercase).
+pub fn within(host: &str, domain: &str) -> bool {
+    host == domain
+        || host
+            .strip_suffix(domain)
+            .is_some_and(|rest| rest.ends_with('.'))
+}
+
+static HREF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)href\s*=\s*["']?(https://[^"'\s>]+)"#).unwrap());
+static TEXT_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"https://[^\s<>"'()\[\]{}]+"#).unwrap());
+
+/// A link the owner may open: https on the default port, with a host and no user info.
+fn clean_link(raw: &str) -> Option<String> {
+    let raw = raw.trim_end_matches(['.', ',', ';', ':', '!', '?']);
+    let url = url::Url::parse(&html_escape::decode_html_entities(raw)).ok()?;
+    (url.scheme() == "https"
+        && url.host_str().is_some()
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.as_str().len() <= 2048)
+        .then(|| url.to_string())
+}
+
+fn extract_links(plain: &[String], html: &[String]) -> Vec<String> {
+    let found = html
+        .iter()
+        .flat_map(|h| HREF.captures_iter(h).map(|c| c.get(1).unwrap().as_str()))
+        .chain(
+            plain
+                .iter()
+                .flat_map(|p| TEXT_URL.find_iter(p).map(|m| m.as_str())),
+        );
+    let mut links: Vec<String> = Vec::new();
+    for l in found.filter_map(clean_link) {
+        if !links.contains(&l) {
+            links.push(l);
+        }
+        if links.len() == MAX_LINKS {
+            break;
+        }
+    }
+    links
+}
+
+/// `header.from` of a `dmarc=pass` in Gmail's own result. Only the first
+/// `Authentication-Results` counts: Gmail adds it on top, so a header the sender wrote lower down
+/// is never read.
+fn dmarc_domain(hs: &[(String, String)]) -> Option<String> {
+    let results = header(hs, "authentication-results")?;
+    let mut clauses = results.split(';').map(str::trim);
+    if !clauses.next()?.eq_ignore_ascii_case("mx.google.com") {
+        return None;
+    }
+    let dmarc = clauses.find(|c| c.to_ascii_lowercase().starts_with("dmarc="))?;
+    let mut words = dmarc.split_whitespace();
+    if !words.next()?.eq_ignore_ascii_case("dmarc=pass") {
+        return None;
+    }
+    let domain = words.find_map(|w| {
+        w.to_ascii_lowercase()
+            .strip_prefix("header.from=")
+            .map(str::to_string)
+    })?;
+    (!domain.is_empty()).then_some(domain)
 }
 
 fn headers(part: &Value) -> Vec<(String, String)> {
@@ -229,6 +331,7 @@ pub fn parse_message(msg: &Value) -> ParsedMessage {
         String::new()
     };
 
+    let links = extract_links(&plain, &html);
     let id = msg["id"].as_str().unwrap_or_default().to_string();
     ParsedMessage {
         thread_id: msg["threadId"]
@@ -263,5 +366,7 @@ pub fn parse_message(msg: &Value) -> ParsedMessage {
             .collect::<Vec<_>>()
             .join(" "),
         reply_to: parse_address_list(header(&hs, "reply-to").unwrap_or_default()),
+        links,
+        dmarc_domain: dmarc_domain(&hs),
     }
 }

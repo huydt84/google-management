@@ -430,7 +430,7 @@ impl Digest {
                 &ev.account,
                 &ev.external_id,
                 "digest item",
-                async |m, lang| summarize_item(&p.llm, m, &section, lang).await,
+                async |m, prefs| summarize_item(&p.llm, m, &section, &prefs.summary_language).await,
             )
             .await?;
         let summary = match step {

@@ -45,12 +45,23 @@ pub struct EventRow {
     /// Model triage reason (`rule = "model"`).
     pub reason: String,
     pub importance: String,
-    pub summary: String,
+    /// The summary (mail) or the notification text (calendar), split where links and emphasis
+    /// start and end, as the Telegram message formats it.
+    pub summary: Vec<crate::notify::Segment>,
+    /// Suggested next steps of a mail summary, one per line.
+    pub actions: Vec<ActionRow>,
     pub error: String,
     /// The owner's 👍/👎 (`up` / `down`), if any.
     pub feedback: String,
     /// Whether the message is in the local eval set.
     pub in_eval: bool,
+}
+
+/// A suggested next step; `url` and `host` only for a trusted link.
+pub struct ActionRow {
+    pub text: String,
+    pub url: String,
+    pub host: String,
 }
 
 /// One of the three routes on the dashboard: how many recent mails took it, and what it does.
@@ -179,16 +190,40 @@ fn event_row(e: crate::db::Event, tr: &Tr) -> EventRow {
         .as_str()
         .map(str::to_string)
         .unwrap_or(e.external_id.clone()),
-        link: s(&e.data["link"]),
+        link: if is_gmail {
+            s(&e.data["link"])
+        } else {
+            crate::calendar::calendar_link(&e.data["event"]).unwrap_or_default()
+        },
         status: e.status,
         rule: e.rule.unwrap_or_default(),
         reason: s(&e.data["verdict"]["reason"]),
         importance: s(&summary["importance"]),
         summary: if is_gmail {
-            summary_text(&summary)
+            let text = summary_text(&summary);
+            if text.is_empty() {
+                vec![]
+            } else {
+                vec![crate::notify::Segment {
+                    text,
+                    ..Default::default()
+                }]
+            }
         } else {
-            crate::calendar::notification(tr, &e.kind, &e.data).text
+            crate::calendar::notification(tr, &e.kind, &e.data).segments()
         },
+        actions: crate::llm::SuggestedAction::list(&summary)
+            .into_iter()
+            .map(|a| ActionRow {
+                host: a.host().unwrap_or_default(),
+                url: if a.host().is_some() {
+                    a.url
+                } else {
+                    String::new()
+                },
+                text: a.text.trim().to_string(),
+            })
+            .collect(),
         error: s(&summary["error"]),
         feedback: String::new(),
         in_eval: false,
@@ -361,6 +396,8 @@ struct SettingsPage {
     default_help: String,
     digest_at: String,
     digest_help: String,
+    /// One trusted link domain per line.
+    trusted_link_domains: String,
     error: String,
     saved: bool,
     model_state: String,
@@ -406,6 +443,7 @@ async fn settings_page_for(
             ],
         ),
         digest_at: s.digest_at.clone(),
+        trusted_link_domains: s.trusted_link_domains.join("\n"),
         tr,
         email,
         summary_language: s.summary_language.clone(),
@@ -460,6 +498,8 @@ pub struct SettingsForm {
     ui_language: String,
     #[serde(default)]
     digest_at: String,
+    #[serde(default)]
+    trusted_link_domains: String,
 }
 
 pub async fn save_settings(
@@ -483,6 +523,13 @@ pub async fn save_settings(
         } else {
             f.digest_at
         },
+        // Validated (and normalized) by `save`; kept as typed to show it again on an error.
+        trusted_link_domains: f
+            .trusted_link_domains
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|d| !d.is_empty())
+            .map(str::to_string)
+            .collect(),
     };
     match state.user_settings.save(&email, submitted.clone()).await? {
         Ok(_) => Ok(Redirect::to("/settings?saved=1").into_response()),

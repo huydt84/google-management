@@ -12,8 +12,10 @@
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--faint); margin-right:7px; vertical-align:1px; }
   .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); } .dot.warn { background:var(--warn); }
 
-  /* Route key above the mail list: counts every visit, the teaching text only on request. */
-  .list-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 24px; margin-bottom:12px; }
+  /* Route key above the mail list. The "How mail is sorted" toggle is pinned to the top right of this row and never moves; its
+     panel is always the full-width last row, empty while closed (disclosure pattern). */
+  .list-head { --howto-w:14rem; position:relative; display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 24px;
+               margin-bottom:12px; padding-right:var(--howto-w); }
   .list-head h2 { margin:0; }
   .legend { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 18px;
             font-size:14px; color:var(--graphite); }
@@ -24,12 +26,12 @@
   .r-notify .swatch, .ev.r-notify::before { background:var(--notify); }
   .r-digest .swatch, .ev.r-digest::before { background:var(--digest); }
   .r-ignore .swatch, .ev.r-ignore::before { background:var(--ignore); }
-  details.howto { margin-left:auto; font-size:13px; }
-  details.howto > summary { cursor:pointer; color:var(--graphite); }
+  details.howto { flex-basis:calc(100% + var(--howto-w)); order:3; margin:-6px calc(-1 * var(--howto-w)) 0 0; font-size:14px; }
+  details.howto > summary { position:absolute; top:0; right:0; line-height:1.7;
+                            font-size:13px; cursor:pointer; color:var(--graphite); white-space:nowrap; }
   details.howto > summary:hover { color:var(--ink); }
-  details.howto[open] { flex-basis:100%; order:3; margin:4px 0 0; padding:14px 16px; background:var(--paper);
-                        border-radius:var(--radius); font-size:14px; }
-  details.howto[open] > summary { margin-bottom:10px; }
+  details.howto[open] { margin-top:4px; }
+  .howto-body { padding:14px 16px; background:var(--paper); border-radius:var(--radius); }
   .howto p { margin:0 0 10px; max-width:72ch; color:var(--graphite); }
   .howto dl { grid-template-columns:max-content minmax(0,1fr); gap:8px 16px; margin-bottom:12px; }
   .howto dt { display:flex; align-items:center; align-self:start; gap:6px; color:var(--ink); font-weight:600; }
@@ -52,6 +54,8 @@
   .ev-subject a { text-decoration:underline; text-decoration-color:var(--rule); }
   .ev.r-ignore .ev-from, .ev.r-ignore .ev-subject, .ev.r-gone .ev-from, .ev.r-gone .ev-subject { color:var(--graphite); }
   .ev-summary { margin:4px 0 0; max-width:78ch; white-space:pre-line; }
+  .ev-actions { margin:6px 0 0; font-size:14px; }
+  .ev-actions ul { margin:2px 0 0; padding-left:1.2em; max-width:74ch; }
   .imp { font-size:13px; color:var(--graphite); }
   .imp-high { color:var(--notify); font-weight:600; }
   .ev-state { font-size:13px; color:var(--graphite); display:grid; gap:2px; align-content:start; }
@@ -97,7 +101,10 @@
     .pair { grid-template-columns:minmax(0,1fr); gap:0; }
   }
   @media (max-width: 760px) {
-    details.howto { margin-left:0; }
+    .list-head { --howto-w:0px; }
+    details.howto, details.howto[open] { margin-top:0; }
+    details.howto > summary { position:static; }
+    details.howto[open] > summary { margin-bottom:8px; }
     .howto dl { grid-template-columns:minmax(0,1fr); gap:2px; }
     .howto dd { margin-bottom:8px; }
     .ev { grid-template-columns:minmax(0,1fr); }
@@ -173,6 +180,7 @@
     {% endif %}
     <details class="howto">
       <summary>{{ tr.get("routes-title") }}</summary>
+      <div class="howto-body">
       <p>{{ tr.get("routes-intro") }}</p>
       <dl>
         {% for r in routes %}
@@ -181,6 +189,7 @@
         {% endfor %}
       </dl>
       <p>{{ tr.get("feedback-help") }}</p>
+      </div>
     </details>
   </div>
   {% if events.is_empty() %}
@@ -193,7 +202,12 @@
         <div class="ev-from">{{ e.from }}</div>
         <div class="ev-subject">{% if e.link.is_empty() %}{{ e.subject }}{% else %}<a href="{{ e.link }}" target="_blank" rel="noopener noreferrer">{{ e.subject }}</a>{% endif %}</div>
         {% if !e.summary.is_empty() %}
-          <p class="ev-summary">{% if !e.importance.is_empty() %}<span class="imp imp-{{ e.importance }}">{{ e.importance }}:</span> {% endif %}{{ e.summary }}</p>
+          <p class="ev-summary">{% if !e.importance.is_empty() %}<span class="imp imp-{{ e.importance }}">{{ e.importance }}:</span> {% endif %}{% for g in e.summary %}{% if !g.url.is_empty() %}<a href="{{ g.url }}" target="_blank" rel="noopener noreferrer">{% endif %}{% if g.bold %}<strong>{% endif %}{% if g.strike %}<s>{% endif %}{{ g.text }}{% if g.strike %}</s>{% endif %}{% if g.bold %}</strong>{% endif %}{% if !g.url.is_empty() %}</a>{% endif %}{% endfor %}</p>
+          {% if !e.actions.is_empty() %}
+          <div class="ev-actions"><span class="muted">{{ tr.get("notif-suggested") }}:</span>
+            <ul>{% for a in e.actions %}<li>{% if a.url.is_empty() %}{{ a.text }}{% else %}<a href="{{ a.url }}" target="_blank" rel="noopener noreferrer">{{ a.text }}</a> <span class="muted">({{ a.host }})</span>{% endif %}</li>{% endfor %}</ul>
+          </div>
+          {% endif %}
         {% else if !e.error.is_empty() %}
           <p class="ev-summary bad">{{ e.error }}</p>
         {% endif %}
