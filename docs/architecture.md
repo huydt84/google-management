@@ -158,9 +158,9 @@ flowchart LR
 
 | Module | Responsibility |
 |--------|---------------|
-| [`main.rs`](../crates/gm/src/main.rs) | CLI: `serve`, `migrate`, `gen-key`, `keychain`, `rules`, `eval`. |
+| [`main.rs`](../crates/gm/src/main.rs) | CLI: `serve`, `migrate`, `gen-key`, `keychain`, `rules`, `status`, `eval`. |
 | [`app.rs`](../crates/gm/src/app.rs) | Wiring (`build`), background tasks under `supervise`, tracing, `serve`. |
-| [`config.rs`](../crates/gm/src/config.rs) | `Config::from_env()`: non-secret settings from env/`.env`, secrets via `secrets.rs`; refuses a non-loopback bind. `from_env_for_eval()` needs no secrets. |
+| [`config.rs`](../crates/gm/src/config.rs) | `Config::from_env()`: non-secret settings from env/`.env`, secrets via `secrets.rs`; refuses a non-loopback bind. `from_env_without_secrets()` needs no secrets. |
 | [`secrets.rs`](../crates/gm/src/secrets.rs) | Read secrets from env `GM_SECRET_<NAME>` or the Keychain (service `google-management`); `gm keychain set` stores them without putting the value in argv. |
 | [`crypto.rs`](../crates/gm/src/crypto.rs) | `SecretBox`: AES-256-GCM for refresh tokens, key = Keychain `master-key`. |
 | [`db.rs`](../crates/gm/src/db.rs) | sqlx pool, embedded [`migrations/`](../crates/gm/migrations/), small typed queries, retention, `system_get`/`system_set`. |
@@ -175,6 +175,7 @@ flowchart LR
 | [`health.rs`](../crates/gm/src/health.rs) | Health checks (dead jobs, ingest lag, model `/ready`, reconnect), alerts after 15 min, recovery messages; feeds the dashboard panel, the digest System section and `/metrics`. |
 | [`feedback.rs`](../crates/gm/src/feedback.rs) | 👍/👎 storage (last tap wins) and keyboard redraw. |
 | [`telegram.rs`](../crates/gm/src/telegram.rs) | `getUpdates` long poll for button presses (minimal 3A). |
+| [`status.rs`](../crates/gm/src/status.rs) | `gm status`: launchd agents, running build, endpoints, model name, migrations and queue, read from the live Mac; reuses the health checker's queries. |
 | [`eval.rs`](../crates/gm/src/eval.rs) | Local eval set files and `gm eval` (runs rules → triage → the summary `Pipeline::route` picks). |
 | [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9). |
 | [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (plain text, silent flag, buttons, edits), log, recording (tests); notification formatting. |

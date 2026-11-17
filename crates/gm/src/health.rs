@@ -25,6 +25,33 @@ pub const INGEST_LAG: chrono::Duration = chrono::Duration::minutes(10);
 
 pub const CHECKS: [&str; 4] = ["dead_jobs", "ingest_lag", "model_down", "needs_reconnect"];
 
+/// Number of dead jobs. Shared by the health checker and `gm status`.
+pub async fn dead_jobs(pool: &PgPool) -> sqlx::Result<i64> {
+    sqlx::query_scalar("SELECT count(*) FROM jobs WHERE status = 'dead'")
+        .fetch_one(pool)
+        .await
+}
+
+/// When the least recently synced active mailbox last synced (its connection time if it never
+/// has). Shared by the health checker and `gm status`.
+pub async fn oldest_sync(pool: &PgPool) -> sqlx::Result<Option<DateTime<Utc>>> {
+    sqlx::query_scalar(
+        "SELECT min(COALESCE(s.last_sync_at, a.created_at)) FROM google_accounts a
+         LEFT JOIN gmail_state s ON s.email = a.email WHERE a.status = 'active'",
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// Ingest lag that counts as a failure. While Pub/Sub works, a quiet mailbox is only polled every
+/// safety interval, so the limit is that interval + [`INGEST_LAG`]; otherwise [`INGEST_LAG`].
+pub fn lag_limit(pubsub_safety_poll_s: Option<u64>, pubsub_ok: bool) -> chrono::Duration {
+    match pubsub_safety_poll_s {
+        Some(s) if pubsub_ok => chrono::Duration::seconds(s as i64) + INGEST_LAG,
+        _ => INGEST_LAG,
+    }
+}
+
 /// Whether the model server answers its readiness probe (2xx within 5 s).
 pub async fn model_ready(http: &reqwest::Client, ready_url: &str) -> bool {
     matches!(
@@ -71,29 +98,15 @@ impl Health {
         self.clock.now().with_timezone(&Utc)
     }
 
-    /// While Pub/Sub works, a quiet mailbox is only polled every safety interval (15 min), so the
-    /// limit is that interval + 10 min; otherwise 10 min.
     fn lag_limit(&self) -> chrono::Duration {
-        match self.pubsub_safety_poll_s {
-            Some(s) if self.ingestor.pubsub_ok() => {
-                chrono::Duration::seconds(s as i64) + INGEST_LAG
-            }
-            _ => INGEST_LAG,
-        }
+        lag_limit(self.pubsub_safety_poll_s, self.ingestor.pubsub_ok())
     }
 
     /// Run every check once.
     pub async fn evaluate(&self) -> anyhow::Result<Vec<CheckResult>> {
         let now = self.now();
-        let dead: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs WHERE status = 'dead'")
-            .fetch_one(&self.pool)
-            .await?;
-        let lagging: Option<DateTime<Utc>> = sqlx::query_scalar(
-            "SELECT min(COALESCE(s.last_sync_at, a.created_at)) FROM google_accounts a
-             LEFT JOIN gmail_state s ON s.email = a.email WHERE a.status = 'active'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let dead = dead_jobs(&self.pool).await?;
+        let lagging = oldest_sync(&self.pool).await?;
         let reconnect: Vec<String> = sqlx::query_scalar(
             "SELECT email FROM google_accounts WHERE status = 'needs_reconnect' ORDER BY email",
         )

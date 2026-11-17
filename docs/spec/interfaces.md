@@ -160,6 +160,7 @@ Code: [`src/main.rs`](../../crates/gm/src/main.rs).
 | `gm keychain set <name>` | Store a secret in the Keychain (macOS prompts for the value) |
 | `gm keychain list` | Show which known secrets are present (never the values) |
 | `gm rules [path]` | Validate a rules file and check every rule's examples |
+| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary, `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
 | `gm eval [--dir DIR] [--language LANG]` | Run rules → model triage → summary on every case in the eval set against the **local** model (refuses a non-loopback `GM_LLM_BASE_URL`) and print accuracy per expected action, the confusion matrix, the JSON parse rate per task, misclassified ids, and calls, latency p50/p95 and tokens per model task. Needs no database, Keychain or Google access |
 
 ## Configuration

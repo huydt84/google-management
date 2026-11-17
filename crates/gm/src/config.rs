@@ -154,9 +154,9 @@ impl Config {
         Self::load(true)
     }
 
-    /// For `gm eval`: the same settings, but nothing required for the server (Google client,
+    /// For `gm eval` and `gm status`: the same settings, but nothing required for the server (Google client,
     /// secrets) is needed; those fields are empty and no Keychain item is read.
-    pub fn from_env_for_eval() -> anyhow::Result<Self> {
+    pub fn from_env_without_secrets() -> anyhow::Result<Self> {
         Self::load(false)
     }
 

@@ -20,15 +20,15 @@ async fn dead_job(t: &TestApp) -> i64 {
     .unwrap()
 }
 
-async fn age_incident(t: &TestApp, check: &str, minutes: i32) {
-    sqlx::query(
-        "UPDATE health_state SET failing_since = now() - make_interval(mins => $2) WHERE check_name = $1",
-    )
-    .bind(check)
-    .bind(minutes)
-    .execute(&t.app.pool)
-    .await
-    .unwrap();
+/// Ages an incident from the host clock that `Health` reads, not from Postgres' `now()`: the Docker
+/// VM's clock can run a millisecond ahead, which turned "16 min" into 15 min 59.999 s.
+async fn age_incident(t: &TestApp, check: &str, minutes: i64) {
+    sqlx::query("UPDATE health_state SET failing_since = $2 WHERE check_name = $1")
+        .bind(check)
+        .bind(chrono::Utc::now() - chrono::Duration::minutes(minutes))
+        .execute(&t.app.pool)
+        .await
+        .unwrap();
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]

@@ -40,6 +40,8 @@ for name in com.gm.server com.gm.backup; do
 done
 ```
 
+- Check what is installed and running: `./target/release/gm status` (launchd agents, running build,
+  web, model, migrations, queue; exit code 1 on a failure).
 - Restart after an upgrade: `cargo build --release && launchctl kickstart -k gui/$(id -u)/com.gm.server`
 - Stop: `launchctl bootout gui/$(id -u)/com.gm.server`
 - Logs: `~/Library/Logs/gm/` (JSON, rotated daily, 7 kept).

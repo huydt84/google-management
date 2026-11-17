@@ -20,6 +20,7 @@ pub mod pipeline;
 pub mod rules;
 pub mod scheduler;
 pub mod secrets;
+pub mod status;
 pub mod telegram;
 pub mod triage_model;
 pub mod user_settings;

@@ -27,6 +27,9 @@ enum Cmd {
         #[arg(default_value = "rules.yaml")]
         path: std::path::PathBuf,
     },
+    /// Show what is installed and running: launchd agents, the running build, web, model,
+    /// migrations and the queue. Exit code 1 when something is broken.
+    Status,
     /// Run rules, model triage and summaries on the local eval set against the local model.
     Eval {
         /// Eval set folder (default: GM_EVAL_DIR or ~/.local/share/gm/eval).
@@ -112,8 +115,17 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("{} example(s) failed", errors.len())
             }
         }
+        Cmd::Status => {
+            let cfg = Config::from_env_without_secrets()?;
+            let checks = gm::status::collect(&cfg).await;
+            print!("{}", gm::status::format(&checks));
+            if checks.iter().any(|c| c.state == gm::status::State::Fail) {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Cmd::Eval { dir, language } => {
-            let cfg = Config::from_env_for_eval()?;
+            let cfg = Config::from_env_without_secrets()?;
             gm::eval::ensure_local(&cfg.llm_base_url)?;
             let dir = dir.unwrap_or_else(|| cfg.eval_dir.clone());
             let cases = gm::eval::load(&dir)?;

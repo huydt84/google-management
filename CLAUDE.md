@@ -72,7 +72,7 @@ and look at the result: page content, DB rows, logs. In the final report, separa
 and why. If you can't run something, report the blocker; don't call it verified.
 
 **Check before you claim or build.** Never state what is installed, running or deployed from the repo
-alone: check the machine (`launchctl list`, `ps`, `lsof -iTCP -sTCP:LISTEN`, `curl` the endpoints,
+alone: run `gm status`, and check the machine (`launchctl list`, `ps`, `lsof -iTCP -sTCP:LISTEN`, `curl` the endpoints,
 `_sqlx_migrations` in the DB). Before building anything that manages processes, schedules or
 infrastructure, list what already runs there and reuse it.
 
@@ -98,7 +98,9 @@ the same premise fail, stop and question the premise instead of trying a third.
 | A `rules.yaml` edit that stops matching its intended mail | rule examples, checked by `gm rules` and `cargo test` |
 | A fixed test clock fell in the past and deferred jobs looped | structural: `test_day()` is always a week ahead |
 | Built gm-side model start/stop that duplicated mlx-air | rule only: "Check before you claim or build" (no check possible inside this repo) |
-| Claimed the services weren't installed without looking at the Mac | rule only, for now; lever to build: a status command that reports launchd agents, model `/ready`, migrations and the running binary |
+| Claimed the services weren't installed without looking at the Mac | lever: `gm status` reads launchd, the running build, `/healthz`, model `/ready`, migrations and the queue from the live Mac |
+| A docs fix edited an already-applied migration (sqlx refuses to start on a changed checksum) | `gm status` fails on an applied migration whose file changed |
+| A test set a time with Postgres `now()` and checked it with the host clock; the Docker VM clock runs ~1 ms ahead, so "16 min" read as 15 | rule only: in tests, take times that gm compares from the clock gm reads (`Utc::now()` or the `FixedClock`), not from `now()` in SQL |
 | Called Phase 2 done on tests alone, never run against the real model or Gmail | rule only, for now: "Prove it works on the real system" |
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
