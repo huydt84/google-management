@@ -62,14 +62,44 @@ against it. `cargo test` checks this (`crates/gm/tests/docs.rs`): every route, `
 topic, table and CLI command in the code must appear in `docs/spec/`, and every relative doc link must
 resolve.
 
-**Turn every mistake into a hard check.** When an error is found, by the owner or by you, in code,
-docs or process, fix it, then ask whether a machine could have caught it. If a lint, clippy setting,
-test, CI step or startup check could prevent it, add that check in the same change so the mistake
-can't come back. Prefer checks that fail `cargo test` / `cargo clippy` over written rules agents must
-remember. Only fall back to a rule in this file when no automatic check is practical, and say why.
-Examples already in place: `tests/docs.rs` (docs drifting from code, decision IDs in docs), the locale
-key-parity test (a string missing in one language), `gm rules` and the rule examples (a rules edit
-that stops matching), and the config refusing a non-loopback bind.
+## Verification and mistakes
+
+**Prove it works on the real system.** Passing `cargo test` is not "done". Before you report a change
+as working, run it the way the owner will: start `gm serve` (or the CLI command), drive the changed
+flow (dashboard over `curl` or a browser, a real `gm` command, the local model at `GM_LLM_BASE_URL`),
+and look at the result: page content, DB rows, logs. In the final report, separate what you
+**verified** (with the command and its output), what you **inferred**, and what you **did not check**
+and why. If you can't run something, report the blocker; don't call it verified.
+
+**Check before you claim or build.** Never state what is installed, running or deployed from the repo
+alone: check the machine (`launchctl list`, `ps`, `lsof -iTCP -sTCP:LISTEN`, `curl` the endpoints,
+`_sqlx_migrations` in the DB). Before building anything that manages processes, schedules or
+infrastructure, list what already runs there and reuse it.
+
+**Turn mistakes into structure.** When the owner or you find a mistake (in the workflow or the
+process, not only in code), fix the instance, then fix the class at the highest layer that works:
+
+1. architecture (make the mistake impossible),
+2. types,
+3. lint / clippy / CI,
+4. tests (`cargo test`),
+5. a script or `gm` command the agent runs (a lever, not a memory),
+6. a written rule in this file, last, because nothing fails when an agent skips a rule.
+
+Show that a new check fails on the real past mistake. Add the lesson to the table below in the same
+change. If a lesson with only a written rule happens again, move it up a layer. If two fixes built on
+the same premise fail, stop and question the premise instead of trying a third.
+
+| Mistake that happened | Enforcement |
+|-----------------------|-------------|
+| Docs drifted from the code (stale ADR, module table, routes, settings) | `crates/gm/tests/docs.rs` fails `cargo test` |
+| Docs cited decision IDs that only made sense next to a conversation | `crates/gm/tests/docs.rs` |
+| A string present in one language only | locale key-parity test |
+| A `rules.yaml` edit that stops matching its intended mail | rule examples, checked by `gm rules` and `cargo test` |
+| A fixed test clock fell in the past and deferred jobs looped | structural: `test_day()` is always a week ahead |
+| Built gm-side model start/stop that duplicated mlx-air | rule only: "Check before you claim or build" (no check possible inside this repo) |
+| Claimed the services weren't installed without looking at the Mac | rule only, for now; lever to build: a status command that reports launchd agents, model `/ready`, migrations and the running binary |
+| Called Phase 2 done on tests alone, never run against the real model or Gmail | rule only, for now: "Prove it works on the real system" |
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and
