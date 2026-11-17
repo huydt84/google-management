@@ -74,12 +74,12 @@ pub struct Config {
     pub llm_summary_max_tokens: u32,
     /// Appended to prompts of non-thinking tasks (Qwen3: `/no_think`). Empty disables.
     pub llm_no_think_tag: String,
-    /// While the model is unavailable, queued summaries try again after this many seconds (L12).
+    /// While the model is unavailable, queued summaries try again after this many seconds.
     pub llm_unavailable_retry_s: u64,
     /// Model hours in local time (ADR-0010): model work runs only inside them. Equal values mean "always on".
     pub model_on: NaiveTime,
     pub model_off: NaiveTime,
-    /// Default morning digest time; each user can change it in Settings (decision N4).
+    /// Default morning digest time; each user can change it in Settings.
     pub digest_at: NaiveTime,
 
     // Defaults for users who have not saved settings

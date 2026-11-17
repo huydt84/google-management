@@ -8,7 +8,7 @@ from the mail analysis (rules engine v2), and give the system what it needs to r
 `gm keychain set`, install the launchd agents ([deploy/README.md](../../deploy/README.md)), push to a
 private GitHub repository so CI runs, and set up `tailscale serve`.
 
-Decisions: [decision log](../decisions.md) A1–A10, R1, O1–O5, L1–L9; ADRs
+Decisions: ADRs
 [0009](../adr/0009-rust-single-binary.md), [0010](../adr/0010-llm-client-lanes-residency.md),
 [0012](../adr/0012-rules-engine-v2.md), [0013](../adr/0013-ops-launchd-keychain-tailscale.md),
 [0014](../adr/0014-web-ui-askama-htmx-fluent.md), [0015](../adr/0015-notification-policy-and-digest.md),
@@ -18,11 +18,11 @@ Decisions: [decision log](../decisions.md) A1–A10, R1, O1–O5, L1–L9; ADRs
 
 | Area | Code | Notes |
 |------|------|-------|
-| Core | `config.rs`, `secrets.rs`, `crypto.rs`, `db.rs`, `migrations/0001_init.sql`, `clock.rs` | Keychain secrets with env fallback for tests; AES-256-GCM token encryption; runtime-checked sqlx queries (decision A3); model hours. |
+| Core | `config.rs`, `secrets.rs`, `crypto.rs`, `db.rs`, `migrations/0001_init.sql`, `clock.rs` | Keychain secrets with env fallback for tests; AES-256-GCM token encryption; runtime-checked sqlx queries ([ADR-0009](../adr/0009-rust-single-binary.md)); model hours. |
 | Bus | `bus.rs` | Outbox + `jobs`, SKIP LOCKED claim in one statement, backoff, `Outcome::Defer`, stale requeue. |
 | Google | `google/oauth.rs`, `google/accounts.rs`, `google/gmail.rs` | Manual PKCE flow; id_token checks; access-token cache; `invalid_grant` → `needs_reconnect`; 401 retry; 404 → `NotFound`. |
 | Gmail | `gmail/ingest.rs`, `gmail/pubsub.rs`, `google/pubsub.rs`, `gmail/message.rs` | History paging, label filter, 2-day recovery, per-account lock; Pub/Sub pull with self-provisioning and watch renewal, safety poll; MIME with encoding_rs charsets, HTML → text. |
-| Rules v2 | `rules.rs`, `rules.yaml` | Matchers, extractors, message templates, priorities, sections, examples, hot reload; 22 rules from the mail analysis (T1–T16). |
+| Rules v2 | `rules.rs`, `rules.yaml` | Matchers, extractors, message templates, priorities, sections, examples, hot reload; 22 rules from the mail analysis. |
 | LLM | `llm/mod.rs`, `llm/clean.rs`, `prompts/` | Lanes with admission control, `llm_calls` accounting, stable prefix, body cleaning and token cap, one JSON retry. |
 | Pipeline | `pipeline.rs` | `triage` → `summarize` → `notify` with the night policy; unmatched mail = notify with summary until Phase 2. |
 | Notifications | `notify.rs`, `locales/` | Telegram plain text, silent flag, icons by priority, localized strings. |
@@ -33,12 +33,12 @@ Decisions: [decision log](../decisions.md) A1–A10, R1, O1–O5, L1–L9; ADRs
 
 ## Changes confirmed by the owner after the port
 
-- **Pub/Sub pull** added (decision A7): `src/google/pubsub.rs` (provisioning, pull, ack),
+- **Pub/Sub pull** added ([ADR-0002](../adr/0002-gmail-ingestion-by-pull.md)): `src/google/pubsub.rs` (provisioning, pull, ack),
   `src/gmail/pubsub.rs` (watch renewal, pull loop), safety poll in `GmailIngestor::poll_loop`,
   migration `0002_gmail_watch.sql`, `tests/pubsub.rs`.
-- **No install command** (O1): the launchd agents are registered once.
-- **Health panel and Telegram health alert** (O3) are built in Phase 2 (workstream 2E).
-- **Unmatched mail** is notified with a summary until model triage (T16).
+- **No install command**: the launchd agents are registered once ([deploy/README.md](../../deploy/README.md)).
+- **Health panel and Telegram health alert** are built in Phase 2 (workstream 2E).
+- **Unmatched mail** was notified with a summary until model triage (Phase 2, 2B) replaced that.
 
 ## Defaults chosen during the port (not covered by the interview)
 

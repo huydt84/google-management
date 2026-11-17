@@ -27,7 +27,7 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
   [`pipeline.rs`](../../crates/gm/src/pipeline.rs) `Pipeline::model_step`).
 - **Model process:** owned by mlx-air (instance `gm`, its own launchd agent with KeepAlive). gm
   never starts or stops it; it only probes `GM_LLM_READY_URL` for the health check.
-  *Amended 2026-11-17 (decision N20):* the Phase 2 residency controller that started and stopped
+  *Amended 2026-11-17:* the Phase 2 residency controller that started and stopped
   the model with `launchctl` duplicated mlx-air and was removed. Whether the model is unloaded at
   night is now an mlx-air setting.
 - **Prompt shape:** a shared, stable system prefix (role, untrusted-content rules, output rules),
@@ -36,10 +36,15 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
   reuse across tasks.
 - **Output:** one JSON object requested in the prompt; tolerant parse (strip `<think>`, code fences,
   take the outermost object, validate). On failure, retry once with a format reminder, then keep the
-  raw text as the summary (`parse_ok: false`). An unavailable model queues the job (decision L12).
+  raw text as the summary (`parse_ok: false`). An unavailable model (not running, timeout, 429/502/503/504) queues the job: it retries every
+  `GM_LLM_UNAVAILABLE_RETRY_S` (5 min) without using an attempt and waits indefinitely; other LLM
+  errors retry with backoff and then leave the job `dead`.
 - **Thinking** is disabled (`/no_think`) except for reply drafting and analysis.
 - **Input:** the mail is cleaned (HTML to text, quoted replies, signatures and footers removed), then
   truncated to `GM_LLM_MAX_INPUT_TOKENS` (≈2,000). Outputs are capped per task (`max_tokens`).
+
+- **Later, in mlx-server-runtime (not in gm):** constrained JSON decoding and native tool calling.
+  Until then gm relies on neither.
 
 ## Consequences
 
@@ -53,7 +58,7 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
 - **LiteLLM proxy:** budgets, keys and fallbacks for many models and teams; unnecessary for one model
   and one user.
 - **gm starting and stopping the model (built in Phase 2, removed):** duplicated mlx-air's
-  process management (N20).
+  process management.
 - **Always-resident model:** simpler, but holds ~8 GB of RAM around the clock (the current mlx-air
   setup).
 - **Load on demand:** frees the most RAM, but adds a 20–30 s cold start to every first request.

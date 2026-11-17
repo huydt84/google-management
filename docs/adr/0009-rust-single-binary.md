@@ -6,7 +6,7 @@
 
 ## Context
 
-Phase 0 was written in Python (FastAPI, SQLAlchemy, Authlib). The owner chose Rust for the long-lived
+Phase 0 was written in Python (FastAPI, SQLAlchemy, Authlib). The owner chose Rust (stable toolchain, edition 2024) for the long-lived
 system: one compiled binary, strong typing across the bus payloads and the database, and low idle
 resource use on a Mac that also runs the LLM.
 

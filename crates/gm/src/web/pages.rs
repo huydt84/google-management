@@ -601,7 +601,7 @@ pub struct JobsQuery {
     status: Option<String>,
 }
 
-/// Jobs by status, dead letters by default, with Retry (2E, decision N18).
+/// Jobs by status, dead letters by default, with Retry (2E).
 pub async fn jobs_page(
     State(state): State<SharedState>,
     jar: CookieJar,
@@ -694,7 +694,7 @@ struct SendersPage {
     senders: Vec<SenderRow>,
 }
 
-/// Ignored mail of the last 30 days by sender (T15, decision N17).
+/// Ignored mail of the last 30 days by sender (2E): shows whom to move into a rule.
 pub async fn senders_page(
     State(state): State<SharedState>,
     jar: CookieJar,
@@ -755,7 +755,7 @@ pub struct EvalForm {
     expected: String,
 }
 
-/// Add the event's mail to the local eval set with the action it should have had (decision N15).
+/// Add the event's mail to the local eval set with the action it should have had.
 /// The raw message is fetched from Gmail once and written to `GM_EVAL_DIR` (never to the database).
 pub async fn event_eval(
     State(state): State<SharedState>,

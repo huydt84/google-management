@@ -1,6 +1,6 @@
 //! Scheduler (workstream 2A): publishes `schedule.due {kind, at, owner?}` at fixed local times.
 //!
-//! - `digest`: per user at their `digest_at` (decision N4).
+//! - `digest`: per user at their `digest_at`.
 //!
 //! `schedule_runs` keeps the last occurrence fired per schedule: a time missed while the Mac slept
 //! fires once on wake, never twice. A schedule seen for the first time is recorded without firing

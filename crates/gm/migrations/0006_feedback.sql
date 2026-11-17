@@ -1,4 +1,4 @@
--- Triage feedback (workstream 2C, decisions N3, N8, N9): the owner's 👍 / 👎 per event, last tap
+-- Triage feedback (workstream 2C): the owner's 👍 / 👎 per event, last tap
 -- wins (by tap time, so redelivered or reordered jobs can't overwrite a newer answer).
 CREATE TABLE triage_feedback (
     event_id   BIGINT PRIMARY KEY REFERENCES events (id) ON DELETE CASCADE,

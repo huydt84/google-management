@@ -83,7 +83,7 @@ async fn model_check_only_in_model_hours_and_alerts_are_silent_at_night(pool: Pg
     t.app.health.tick().await.unwrap();
     age_incident(&t, "dead_jobs", 20).await;
     t.app.health.tick().await.unwrap();
-    assert!(t.sent()[0].silent, "silent at night (N12)");
+    assert!(t.sent()[0].silent, "silent at night");
 
     let t = test_app(t.app.pool.clone(), day_hours, Some(local(10, 0))).await;
     mock_ready(&t.server, false).await;
@@ -122,7 +122,7 @@ async fn lag_and_reconnect_show_in_the_digest_system_section(pool: PgPool) {
         .collect();
     assert_eq!(failing, vec!["ingest_lag", "needs_reconnect"]);
 
-    // No digest items, but open problems: the digest still goes out with a System section (N13).
+    // No digest items, but open problems: the digest still goes out with a System section.
     t.app
         .digest
         .build(OWNER, local(9, 5).with_timezone(&chrono::Utc))

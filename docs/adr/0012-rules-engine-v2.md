@@ -24,7 +24,7 @@ these apart or extract card amounts without the LLM.
   triage). The default for unmatched mail is `triage`.
 - Rule-only notifications (`summarize: false`, no LLM needed) are delivered at any hour with their
   priority (`silent` without sound); notifications that need a summary wait for the model
-  (amended 2026-11-16, decision P4).
+  (amended 2026-11-16: a ping without its summary only repeats the Gmail app notification).
 - Each rule may list `examples` (redacted header fixtures). A test loads `rules.yaml` and checks every
   example lands on its rule, so CI catches regressions.
 

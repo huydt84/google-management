@@ -224,7 +224,7 @@ impl Notifier for RecordingNotifier {
     }
 }
 
-/// Callback data of a feedback button: `f:<event_id>:up|down` (decision N9).
+/// Callback data of a feedback button: `f:<event_id>:up|down`.
 pub fn feedback_data(event_id: i64, label: &str) -> String {
     format!("f:{event_id}:{label}")
 }

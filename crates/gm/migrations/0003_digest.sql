@@ -1,4 +1,4 @@
--- Morning digest (workstream 2A, ADR-0015, decisions N2, N4, N5, N14). See docs/spec/data-model.md.
+-- Morning digest (workstream 2A, ADR-0015). See docs/spec/data-model.md.
 
 -- One row per user and local date: idempotent by (owner_email, digest_date).
 CREATE TABLE digests (

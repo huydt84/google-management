@@ -1,4 +1,4 @@
-//! Summaries while the model is unavailable or failing (decision L12): queued, never a ping
+//! Summaries while the model is unavailable or failing (ADR-0010): queued, never a ping
 //! without a summary. Kept apart from pipeline.rs because the sqlx 0.8 test harness stalls for 30 s
 //! at cleanup when one test binary runs 10 or more `#[sqlx::test]`s (each leaks two of its 20
 //! master-pool permits); keep every test file below 10 tests.

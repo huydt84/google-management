@@ -56,7 +56,7 @@ Code for the main controls: host/origin guard and session in [`web/`](../../crat
 |-------|-----|-------|
 | `openid`, `email` | Sign-in identity | 1 |
 | `gmail.readonly` | Read history and messages; `users.watch` | 1 |
-| `pubsub` | Pub/Sub mode only: create gm's topic and subscription, grant Gmail publish rights, pull and acknowledge. Broad (any Cloud project the account can access), accepted to avoid a second, plaintext credential (decision A7) | 1 |
+| `pubsub` | Pub/Sub mode only: create gm's topic and subscription, grant Gmail publish rights, pull and acknowledge. Broad (any Cloud project the account can access), accepted to avoid a second, plaintext credential ([ADR-0002](../adr/0002-gmail-ingestion-by-pull.md)) | 1 |
 | `gmail.compose` | Create and send drafts, only through an approved executor (`messages.send` is never called) | 3 |
 | `calendar.readonly` | Calendar notifications | 4 |
 

@@ -1,4 +1,4 @@
--- Health incidents (workstream 2E, decisions O3, N12). One row per failing check; deleted on
+-- Health incidents (workstream 2E, ADR-0016). One row per failing check; deleted on
 -- recovery. An alert goes out once a check has failed for 15 minutes (alerted_at set), and a
 -- recovery message when it passes again.
 CREATE TABLE health_state (

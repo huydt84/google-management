@@ -1,4 +1,4 @@
-//! Telegram updates (the minimal part of workstream 3A, decision N1): a `getUpdates` long-poll loop
+//! Telegram updates (the minimal part of workstream 3A, built in Phase 2 for the feedback buttons): a `getUpdates` long-poll loop
 //! that only handles button presses (`callback_query`). No webhook, so gm stays bound to loopback
 //! (invariant 6). Presses from any chat but `GM_TELEGRAM_CHAT_ID` are ignored. Each press is
 //! answered right away (Telegram shows a spinner until then) and handed to the bus; the offset is

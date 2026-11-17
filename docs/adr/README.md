@@ -1,6 +1,7 @@
 # Architecture Decision Records
 
-All decisions, including small ones, are listed in the [decision log](../decisions.md).
+Smaller choices are written directly into the spec or doc they govern; open defaults are listed in
+[plan/README.md](../plan/README.md#open-questions).
 
 Each record captures one significant decision: the context, what was decided, and the consequences.
 Records are immutable once accepted; a later decision that changes one supersedes it with a new

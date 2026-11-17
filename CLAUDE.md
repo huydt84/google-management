@@ -37,26 +37,30 @@ The full module map, one row per file, is in [docs/architecture.md §4](docs/arc
 
 ## Before you change anything
 
-**Never decide silently.** Any product or technical choice not already in
-[docs/decisions.md](docs/decisions.md) is asked first, with explained options and a recommendation,
-then recorded there.
+**Never decide silently.** Any product or technical choice the docs don't already settle is asked
+first, with explained options and a recommendation. Record the answer as plain wording in the doc it
+governs: the spec for behavior and contracts, an ADR (in `docs/adr/`) for choices that are expensive
+to reverse, the PRD for scope. No decision IDs or conversation references: a reader must understand
+the doc without having seen the conversation. History goes in commit messages, not in docs. A
+default you pick without asking goes under "Open questions" in
+[docs/plan/README.md](docs/plan/README.md#open-questions) until the owner confirms it.
 
-For the big picture, see [docs/README.md](docs/README.md): decision log, PRD, architecture, specs and
-ADRs.
+For the big picture, see [docs/README.md](docs/README.md): PRD, architecture, ADRs, specs and plan.
 
 **No duplication.** Before writing code, search for something that already does the job and reuse
 it: a module or helper in this repo (e.g. `Pipeline::model_step`, `Pipeline::route`,
 `Action::as_str`/`parse_final`, `UserSettingsStore::tr`) or an external tool the owner already runs
 (mlx-air owns the model process, launchd owns restarts, Postgres owns scheduling state). Don't build
 a parallel implementation, a second copy of a mapping, or a workaround around an existing component;
-extend or fix the original instead. When you find duplication, remove it. (Decisions N20, N21.)
+extend or fix the original instead. When you find duplication, remove it.
 
 **Docs follow the code.** Any change to behavior, data model, topics, config, routes, CLI or modules
 updates the docs in the same commit, and deletes docs for removed code. Docs point to the files that
 implement them (Hugging Face style: a `Code:` line or a link per section, e.g.
 [`pipeline.rs`](crates/gm/src/pipeline.rs)), so the next agent can open the code and check the doc
-against it. Before finishing, check that every route, `GM_*` variable, topic and table in the code
-appears in `docs/spec/` and that every doc link resolves.
+against it. `cargo test` checks this (`crates/gm/tests/docs.rs`): every route, `GM_*` variable,
+topic, table and CLI command in the code must appear in `docs/spec/`, and every relative doc link must
+resolve.
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and

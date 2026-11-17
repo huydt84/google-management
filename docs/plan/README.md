@@ -2,11 +2,13 @@
 
 For sessions (people or agents) that pick up a piece of work and do it independently. Read this file,
 then the file for your phase. For *what* and *why*, read the [PRD](../prd.md), the
-[decision log](../decisions.md) and the [architecture](../architecture.md) first.
+[ADRs](../adr/README.md) and the [architecture](../architecture.md) first.
 
-**Never decide silently.** If your workstream needs a choice the decision log doesn't cover (a new
+**Never decide silently.** If your workstream needs a choice the docs don't already settle (a new
 setting, a default, a library, a behavior the owner will see), stop and ask the owner with explained
-options and a recommendation, then record the answer in `docs/decisions.md`.
+options and a recommendation. Then write the answer as plain wording into the spec, ADR or doc it
+governs (a new ADR if it is expensive to reverse). A default you had to pick without asking goes
+under [Open questions](#open-questions) until the owner confirms it.
 
 | Phase | File | Goal |
 |-------|------|------|
@@ -33,7 +35,7 @@ Update this table in the same commit that completes the workstream.
 | 2A | Digest builder + scheduler + digest lane | Phase 1 | done |
 | 2B | Model triage | Phase 1 | done |
 | 2C | Feedback buttons (needs Telegram callbacks from 3A) | 2B, 3A-min | done |
-| 2D | Residency controller | Phase 1 | removed (N20: mlx-air owns the model process) |
+| 2D | Residency controller | Phase 1 | removed: mlx-air owns the model process |
 | 2E | Health alerts, health panel, dead-letter page, ignored-sender counts | Phase 1 | done |
 | 2F | `gm eval` and the local eval set | 2B | done |
 | 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | partial: `getUpdates` loop for button presses (`src/telegram.rs`) built in Phase 2 |
@@ -67,8 +69,9 @@ Workstreams in the same phase run in parallel when they own different files (lis
 - New config is in `.env.example` and `docs/spec/interfaces.md`; new user-visible strings are in all
   three locale files (a test checks key parity).
 - Specs in `docs/spec/` match the code and link to the files that implement them; docs for removed
-  code are deleted; new decisions are in `docs/decisions.md`.
-- No duplicated logic: existing helpers and external tools are reused, not re-implemented (N21).
+  code are deleted; choices made with the owner are written into the spec or ADR they govern.
+- No duplicated logic: existing helpers and external tools are reused, not re-implemented.
+- Defaults picked without the owner are listed under [Open questions](#open-questions).
 - None of the invariants below is broken.
 
 ## Architecture invariants (must not break)
@@ -111,3 +114,18 @@ Workstreams in the same phase run in parallel when they own different files (lis
   cargo clippy --all-targets -- -D warnings
   cargo run -- rules rules.yaml
   ```
+
+## Open questions
+
+Defaults chosen while building, not yet confirmed by the owner. When the owner confirms or changes
+one, write the answer into the doc it governs and delete the line here.
+
+- LLM: `GM_LLM_MAX_INFLIGHT=2`; output caps of 400 tokens (summary), 80 (model triage), 150 (digest
+  line), 600 (job list); model-triage input cap 1,500 tokens.
+- Housekeeping: retention sweep every 6 h; stale running jobs requeued after 10 min; 7 days of log
+  files; backup at 03:30.
+- Names and paths: launchd labels `com.gm.*`; eval folder `~/.local/share/gm/eval/`.
+- Health: the `model_down` check is skipped outside model hours (an open incident stays open, with no
+  recovery message at 19:00); in Pub/Sub mode the ingest-lag limit is the safety-poll interval +
+  10 min, so a quiet mailbox doesn't alarm every 15 min.
+- Telegram: `getUpdates` long poll of 25 s.

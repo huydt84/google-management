@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-11-16
 - Note (2026-11-16): in the Rust port ([0009](0009-rust-single-binary.md)) the owner chose Pub/Sub
-  mode as the default setup (decision A7). gm creates the topic, subscription and the publisher
+  mode as the default setup. gm creates the topic, subscription and the publisher
   permission for `gmail-api-push@system.gserviceaccount.com` itself, using the Gmail consent with the
   added `pubsub` scope (no gcloud, no Application Default Credentials). The safety poll runs every
   15 minutes while Pub/Sub is healthy and every 60 s while it isn't. Watches are renewed when less

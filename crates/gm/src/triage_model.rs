@@ -1,4 +1,4 @@
-//! Model triage (workstream 2B, decision T16): mail no rule covers is classified by the model as
+//! Model triage (workstream 2B): mail no rule covers is classified by the model as
 //! notify / digest / ignore with a short reason. Notify lane, `/no_think`, short output. Invalid
 //! output after the retry fails open to `notify`, so nothing important is lost.
 
@@ -18,7 +18,7 @@ pub const MAX_OUTPUT_TOKENS: u32 = 80;
 pub const MAX_INPUT_TOKENS: usize = 1500;
 /// Rule name recorded for decisions made by the model.
 pub const MODEL_RULE: &str = "model";
-/// Digest section for model-triaged mail (decision N6): rendered last, as "Other mail".
+/// Digest section for model-triaged mail, so the model's decisions are easy to check: rendered last, as "Other mail".
 pub const MODEL_SECTION: &str = "model";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

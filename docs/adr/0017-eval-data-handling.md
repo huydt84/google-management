@@ -19,7 +19,7 @@ data (name, amounts, order numbers, login IPs). Data retention is 60 days.
   summary JSON validity/length against the local model only.
 - Eval data is never sent to any external service and never committed.
 
-## Amendment (2026-11-17, Phase 2, decisions N15, N16)
+## Amendment (2026-11-17, Phase 2)
 
 - Cases are added from the dashboard ("Add to eval" with an expected-action picker on each event
   row, highlighted when the owner gave 👎 to a model decision), not with `gm eval add`. Each case is a

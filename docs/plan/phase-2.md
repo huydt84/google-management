@@ -7,8 +7,7 @@ model and prompt changes are measured; the owner hears about problems without wa
 Prerequisite: Phase 1. 2A, 2B, 2D, 2E run in parallel. 2C needs Telegram callbacks (the minimal part
 of 3A: client + poller for `callback_query`) and 2B. 2F needs 2B.
 
-Decisions: [decision log](../decisions.md) P3, P4, T1–T16, L3–L5, L10, L11, O3;
-[ADR-0010](../adr/0010-llm-client-lanes-residency.md), [ADR-0015](../adr/0015-notification-policy-and-digest.md),
+Decisions: [ADR-0010](../adr/0010-llm-client-lanes-residency.md), [ADR-0015](../adr/0015-notification-policy-and-digest.md),
 [ADR-0017](../adr/0017-eval-data-handling.md).
 
 Before starting, confirm with the owner anything this plan leaves open (marked **ask**).
@@ -23,7 +22,7 @@ migration `0003_digest.sql`, digest strings in `locales/*/main.ftl`, `templates/
    (sleep) fire once on wake. Times come from config (`GM_DIGEST_AT`, default `09:05`).
 2. **Per-item summaries** (`digest.item.summarize`, batch lane): `triage` publishes it for `digest`
    events whose verdict has `summarize: true`. During model hours it runs on arrival; at night it
-   defers to 09:00 (L10). Output: `{line}` (1–2 sentences, summary language); for the `jobs` section
+   defers to 09:00. Output: `{line}` (1–2 sentences, summary language); for the `jobs` section
    `{jobs: [{title, company, location, link}]}`. Stored in `events.summary`.
 3. **Digest build** on `schedule.due{digest}`: collect `digest` events since the last digest, group by
    `verdict.section` in rule order, render with rule-extracted values where present (card usage,
@@ -60,12 +59,12 @@ poller.
 1. Notifications and model-triaged digest items carry 👍 / 👎 (`f:<event_id>:up|down`).
 2. Feedback is stored in `triage_feedback` and shown on the dashboard.
 3. 👎 on a rule-matched mail suggests editing that rule (link to the rule name); 👎 on a
-   model-triaged mail is an eval case for 2F. **Ask** whether 👎 should also offer "mute this sender"
-   (which would write rules from the app; rules are currently a file under version control).
+   model-triaged mail is an eval case for 2F. There is no "mute this sender": rules stay in the one
+   reviewed, tested file.
 
 ## 2D Residency controller (removed)
 
-Built, then removed on 2026-11-17 (decision N20): starting and stopping the model with `launchctl`
+Built, then removed on 2026-11-17: starting and stopping the model with `launchctl`
 duplicated mlx-air, which owns the model process. gm keeps only model hours (deferring model work)
 and the `/ready` health check ([`health.rs`](../../crates/gm/src/health.rs)).
 
@@ -79,7 +78,7 @@ panel.
    incident, and a recovery message.
 2. Dashboard health panel with the same checks.
 3. `/jobs?status=dead` with Retry (back to `pending`, attempts reset).
-4. `/senders`: counts of ignored mail by sender over 30 days (T15), so a sender can be promoted to the
+4. `/senders`: counts of ignored mail by sender over 30 days, so a sender can be promoted to the
    newsletter list by editing `rules.yaml`.
 
 ## 2F `gm eval`

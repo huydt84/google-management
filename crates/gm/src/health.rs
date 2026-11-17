@@ -1,4 +1,4 @@
-//! Health checks and alerts (workstream 2E, decisions O3, N12, N13).
+//! Health checks and alerts (workstream 2E, ADR-0016).
 //!
 //! Every minute: dead jobs, ingest lag, model down during model hours, accounts needing a
 //! reconnect. A check failing for 15 minutes sends one Telegram alert per incident (silent at
@@ -18,7 +18,7 @@ use crate::i18n::Tr;
 use crate::notify::{Notifier, OutgoingMessage};
 use crate::user_settings::UserSettingsStore;
 
-/// How long a check must fail before the alert (decision O3).
+/// How long a check must fail before the alert.
 pub const ALERT_AFTER: chrono::Duration = chrono::Duration::minutes(15);
 /// Ingest lag that counts as a failure (Pub/Sub mode adds the safety-poll interval, see `lag_limit`).
 pub const INGEST_LAG: chrono::Duration = chrono::Duration::minutes(10);
@@ -133,7 +133,7 @@ impl Health {
     }
 
     async fn send(&self, text: String) -> bool {
-        // Silent at night (decision N12).
+        // Silent at night: nothing gm watches needs the owner then; mail is queued, not lost.
         let silent = !self.hours.is_on(self.clock.now());
         match self
             .notifier

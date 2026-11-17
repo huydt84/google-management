@@ -1,4 +1,4 @@
-//! Local eval set and `gm eval` (workstream 2F, ADR-0017, decisions L11, N15, N16).
+//! Local eval set and `gm eval` (workstream 2F, ADR-0017).
 //!
 //! Cases are plain JSON files `<gmail id>.json` in `GM_EVAL_DIR` (default
 //! `~/.local/share/gm/eval/`, mode 0700, files 0600), at most 200: the raw Gmail message, the

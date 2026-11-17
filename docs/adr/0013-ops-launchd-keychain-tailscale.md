@@ -13,9 +13,9 @@ their phone without public hosting.
 
 - **launchd** user agents: `com.gm.server` (`gm serve`, KeepAlive) and `com.gm.backup` (nightly).
   The model runs under mlx-air's own agent (`com.mlx-air.instance.gm`), which gm does not manage
-  (amended 2026-11-17, decision N20). Postgres keeps running in Docker with `restart: unless-stopped`.
+  (amended 2026-11-17: gm managing the model duplicated mlx-air). Postgres keeps running in Docker with `restart: unless-stopped`.
   Plists live in `deploy/launchd/`, registered once with the steps in `deploy/README.md`; there is
-  no install command (decision O1).
+  no install command: a one-time step needs no tooling.
 - **Secrets in the macOS Keychain** (service `google-management`): `master-key` (encrypts refresh
   tokens), `telegram-bot-token`, `google-client-secret`, `session-secret`, `metrics-token`.
   `gm keychain set <name>` stores them. `.env` holds non-secret config only. In tests and CI, the

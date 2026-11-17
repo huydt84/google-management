@@ -4,7 +4,6 @@ This document explains how Google Management is put together, at increasing leve
 diagrams use [Mermaid](https://mermaid.js.org/) and render on GitHub and in most Markdown viewers.
 
 Legend used throughout: **solid** = exists today (Phase 1, Rust), **dashed** = planned (phase noted).
-Every decision referenced here is in the [decision log](decisions.md).
 
 - [1. Scope and quality goals](#1-scope-and-quality-goals)
 - [2. System context](#2-system-context)
@@ -103,7 +102,7 @@ flowchart TB
 |---------|------|------------|
 | `gm serve` (web + workers + poller + housekeeping) | 127.0.0.1:8080 | launchd `com.gm.server` (KeepAlive) |
 | Postgres 17 | 127.0.0.1:5433 | Docker, `restart: unless-stopped` |
-| mlx-server-runtime | 127.0.0.1:8000 | mlx-air (launchd `com.mlx-air.instance.gm`, KeepAlive); not managed by gm (decision N20) |
+| mlx-server-runtime | 127.0.0.1:8000 | mlx-air (launchd `com.mlx-air.instance.gm`, KeepAlive); not managed by gm |
 | Backup (`scripts/backup.sh`) | — | launchd `com.gm.backup`, 03:30 |
 
 gm is one binary ([ADR-0009](adr/0009-rust-single-binary.md)); its background loops are tokio tasks
@@ -259,8 +258,7 @@ sequenceDiagram
     B->>DB: status notified
 ```
 
-Night and outage rules ([ADR-0015](adr/0015-notification-policy-and-digest.md), decisions P4 and
-L12): rule-only notifications go out at any hour; anything that needs the LLM waits for model hours
+Night and outage rules ([ADR-0015](adr/0015-notification-policy-and-digest.md)): rule-only notifications go out at any hour; anything that needs the LLM waits for model hours
 and for the model to answer, urgent included. No ping is sent without its summary; a real LLM error
 leaves the job `dead`. The body is re-fetched in each step rather than stored.
 
@@ -422,7 +420,7 @@ All model calls go through `llm::LlmClient` ([ADR-0010](adr/0010-llm-client-lane
   exposes 24 h totals per lane.
 - **Model hours:** gm runs model work 09:00–19:00 only and defers it otherwise
   (`Pipeline::model_step` in [`pipeline.rs`](../crates/gm/src/pipeline.rs)). The model process is
-  mlx-air's: gm never starts or stops it (decision N20). Model: Qwen3-8B 4-bit now, Bonsai-27B 1-bit later
+  mlx-air's: gm never starts or stops it. Model: Qwen3-8B 4-bit now, Bonsai-27B 1-bit later
   ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md)).
 
 ## 10. Trust boundaries
@@ -499,5 +497,5 @@ Backlog: expense ledger (Sheets), Drive, free-form agent and automations, Bonsai
 
 ## 13. Key decisions
 
-The [decision log](decisions.md) lists every decision; the [ADR index](adr/README.md) lists the
-architecture records (0001–0017).
+Significant decisions are recorded as ADRs ([index](adr/README.md), 0001–0017); smaller choices are
+written into the spec or doc they govern.

@@ -79,7 +79,7 @@ pub async fn count_by(pool: &PgPool, table: &str) -> sqlx::Result<Vec<(String, i
     .await
 }
 
-/// Delete events older than the retention window and finished jobs older than it (ADR, P9).
+/// Delete events older than the retention window and finished jobs older than it (`GM_RETENTION_DAYS`, default 60).
 pub async fn apply_retention(pool: &PgPool, days: i64) -> sqlx::Result<(u64, u64)> {
     let ev =
         sqlx::query("DELETE FROM events WHERE created_at < now() - make_interval(days => $1::int)")

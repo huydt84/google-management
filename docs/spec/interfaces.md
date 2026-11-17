@@ -93,7 +93,7 @@ https://mail.google.com/…
 - Rule-only notifications (`summarize: false`) go out at any hour; their text is the rule `message`
   or the subject, sender and link.
 - A notification that needs a summary is never sent without it: it waits for model hours and for the
-  model to answer (decisions P4, L12).
+  model to answer ([ADR-0015](../adr/0015-notification-policy-and-digest.md)).
 - Phase 2: every notification carries a `👍` `👎` row (callback data `f:<event_id>:up|down`).
 
 ### Button presses (Phase 2: feedback; minimal part of 3A)
@@ -105,7 +105,8 @@ gets "This button is no longer supported". A feedback press is answered at once 
 and published as `feedback.received`; its handler stores the label (last tap wins by tap time) and
 redraws the message's keyboard with ✅ on the current choice (`editMessageReplyMarkup`). 👎 on a
 rule-matched mail shows a hint on the dashboard to edit that rule in `rules.yaml`; on a model-triaged
-mail, to add it to the eval set (decision N3: no mute button).
+mail, to add it to the eval set. There is no "mute this sender" button: rules stay in the one
+reviewed, tested file.
 
 ### Digest (Phase 2)
 
@@ -121,8 +122,10 @@ first appearance (titles from `digest-section-<name>` in the locale files, else 
 - model items: `[n] <sender>: <line>` and `↳ <reason>`, with a `👍 n` / `👎 n` row each (at most 8);
 - `⚠️ System` with the current health problems, only when there are any.
 
-Nothing is sent when there is nothing to say. While model hours last that day, the message is edited
-(`editMessageText`) when pending summaries arrive.
+Nothing is sent when there is nothing to say (the run is still recorded on `/digest`). The digest
+covers digest mail not yet in a digest; the first one only takes the last 24 hours. Until model hours
+end that day, the message is edited (`editMessageText`) when pending summaries arrive; after that,
+leftovers stay as subject lines. Mail arriving after the digest goes into the next one.
 
 ### Health alerts (Phase 2)
 
@@ -184,7 +187,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_ALLOWED_EMAIL` | required | The only account that can sign in |
 | `GM_DATABASE_URL` | `postgres://gm:gm@127.0.0.1:5433/gm` | Database |
 | `GM_GOOGLE_CLIENT_ID` | required | OAuth client (Web application) |
-| `GM_GOOGLE_AUTH_URL` / `_TOKEN_URL`, `GM_GMAIL_API_BASE`, `GM_TELEGRAM_API_BASE` | Google / Telegram | Overridden in tests |
+| `GM_GOOGLE_AUTH_URL`, `GM_GOOGLE_TOKEN_URL`, `GM_GMAIL_API_BASE`, `GM_TELEGRAM_API_BASE` | Google / Telegram | Overridden in tests |
 | `GM_GMAIL_INGEST_MODE` | `poll` | `poll` or `pubsub` (the owner's setup uses `pubsub`) |
 | `GM_GOOGLE_PROJECT_ID` | required for `pubsub` | Google Cloud project that holds gm's topic and subscription |
 | `GM_GMAIL_PUBSUB_TOPIC` / `GM_GMAIL_PUBSUB_SUBSCRIPTION` | `gm-gmail` / `gm-gmail-pull` | Created by gm if missing |
@@ -235,7 +238,7 @@ is the reference. Summary:
 
 Code: [`src/eval.rs`](../../crates/gm/src/eval.rs).
 
-One file per case, `GM_EVAL_DIR/<gmail id>.json` (decision N16):
+One file per case, `GM_EVAL_DIR/<gmail id>.json`, plain JSON so it can be read and edited by hand:
 
 ```json
 {"message_id": "18c…", "account": "owner@…", "added_at": "2026-11-17T09:12:00Z",

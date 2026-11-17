@@ -113,7 +113,7 @@ async fn sections_follow_rule_order_jobs_are_deduped_and_model_items_come_last(p
     let sent = t.sent();
     assert_eq!(sent.len(), 1);
     let text = &sent[0].text;
-    assert!(sent[0].silent, "digest is silent (N7)");
+    assert!(sent[0].silent, "digest is silent");
     let pos = |s: &str| {
         text.find(s)
             .unwrap_or_else(|| panic!("{s:?} missing in:\n{text}"))
@@ -159,7 +159,7 @@ async fn empty_digest_sends_nothing_and_items_are_never_repeated(pool: PgPool) {
     let t = test_app(pool, |_| {}, None).await;
     t.connect_owner().await;
     t.app.digest.build(OWNER, at_0905()).await.unwrap();
-    assert!(t.sent().is_empty(), "N2: nothing new, nothing sent");
+    assert!(t.sent().is_empty(), "nothing new, nothing sent");
     let status: String = sqlx::query_scalar("SELECT status FROM digests")
         .fetch_one(&t.app.pool)
         .await
@@ -245,7 +245,7 @@ async fn digest_item_summaries_wait_for_model_hours(pool: PgPool) {
     assert_eq!(
         (l.hour(), l.minute()),
         (9, 0),
-        "overnight backlog runs at 09:00 (L10)"
+        "overnight backlog runs at 09:00"
     );
 }
 

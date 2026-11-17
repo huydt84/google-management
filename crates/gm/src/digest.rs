@@ -1,4 +1,4 @@
-//! Morning digest (workstream 2A, ADR-0015, decisions P3, L10, N2, N4–N8, N13, N14).
+//! Morning digest (workstream 2A, ADR-0015).
 //!
 //! - `digest.item.summarize` (`digest_summarize`, batch lane): one line per digest item, or the job
 //!   list of a job alert, stored in `events.summary`. Needs the model: deferred at night and during
@@ -34,12 +34,12 @@ pub const JOBS_TASK: &str = include_str!("../prompts/jobs.md");
 const LINE_MAX_TOKENS: u32 = 150;
 const JOBS_MAX_TOKENS: u32 = 600;
 const MAX_JOBS_PER_MAIL: usize = 10;
-/// Feedback rows under a digest (decision N8); further model items are rated on the dashboard.
+/// Feedback rows under a digest; further model items are rated on the dashboard.
 pub const MAX_FEEDBACK_ROWS: usize = 8;
 const JOBS_SECTION: &str = "jobs";
 
 /// Current health problems, one localized line each (empty when healthy). Implemented by the health
-/// checker (2E); the digest shows them in a "System" section (decision N13).
+/// checker (2E); the digest shows them in a "System" section, only while a check fails.
 #[async_trait]
 pub trait ProblemSource: Send + Sync {
     async fn problems(&self, tr: &Tr) -> Vec<String>;
@@ -497,7 +497,7 @@ impl Digest {
         let (id, status) = match inserted {
             Some(id) => {
                 // Items since the previous digest; the first digest covers the last 24 hours
-                // (decision N14). Late-classified items of earlier days are still picked up.
+                // (the first digest only takes the last 24 hours). Late-classified items of earlier days are still picked up.
                 sqlx::query(
                     "UPDATE events SET digest_id = $1, updated_at = now()
                      WHERE status = 'digest' AND digest_id IS NULL
@@ -573,7 +573,7 @@ impl Digest {
                 .await?;
         let r = self.render_digest(&owner, date, digest_id).await?;
         if r.items == 0 && r.problems == 0 {
-            // Nothing to say: no message (decision N2); the run is still recorded.
+            // Nothing to say: no message; the run is still recorded.
             sqlx::query(
                 "UPDATE digests SET status = 'empty', updated_at = now() WHERE id = $1 AND status = 'building'",
             )
@@ -589,7 +589,7 @@ impl Digest {
         for (i, part) in parts.into_iter().enumerate() {
             let msg = OutgoingMessage {
                 text: part,
-                silent: true, // decision N7
+                silent: true, // nothing in the digest is urgent
                 buttons: if i == last { r.buttons.clone() } else { vec![] },
             };
             if let Some(id) = self.p.notifier.send(&msg).await? {
@@ -610,7 +610,7 @@ impl Digest {
         Ok(())
     }
 
-    /// Edit a sent digest after late summaries, the same day and only during model hours (N5).
+    /// Edit a sent digest after late summaries, the same day and only during model hours.
     pub async fn refresh(&self, payload: Value, _ctx: JobContext) -> anyhow::Result<Outcome> {
         let r: DigestRef = serde_json::from_value(payload)?;
         let pool = &self.p.pool;

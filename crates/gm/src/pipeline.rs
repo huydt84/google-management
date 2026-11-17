@@ -126,7 +126,7 @@ impl Pipeline {
         }
     }
 
-    /// The steps every model job shares (decisions P4, L12): outside model hours the job waits for
+    /// The steps every model job shares (ADR-0015): outside model hours the job waits for
     /// them; the mail is fetched (deleted → `gone`); `call` runs with the owner's summary language;
     /// while the model is unavailable the job waits `GM_LLM_UNAVAILABLE_RETRY_S` without using an
     /// attempt. `Err(outcome)` means the job stops here with that outcome.
@@ -238,7 +238,7 @@ impl Pipeline {
     }
 
     /// Model triage for mail no rule covers (2B). Like summaries it needs the model: outside model
-    /// hours or while the model is unavailable the job waits (P4, L12).
+    /// hours or while the model is unavailable the job waits (ADR-0015).
     pub async fn classify(&self, payload: Value, _ctx: JobContext) -> anyhow::Result<Outcome> {
         let p: Received = serde_json::from_value(payload.clone())?;
         if self.status(p.event_id).await?.as_deref() != Some("classify") {
@@ -274,7 +274,7 @@ impl Pipeline {
     }
 
     /// Summaries only run in model hours and only when the model answers: otherwise the job waits
-    /// (without using an attempt) and no ping is sent without a summary (decisions P4, L12).
+    /// (without using an attempt) and no ping is sent without a summary (ADR-0015).
     /// Real errors retry with backoff and then leave the job `dead`.
     pub async fn summarize(&self, payload: Value, _ctx: JobContext) -> anyhow::Result<Outcome> {
         let p: Received = serde_json::from_value(payload)?;
@@ -338,7 +338,7 @@ impl Pipeline {
         let needs_llm = verdict.as_ref().is_none_or(|v| v.summarize);
         let now = self.clock.now();
         if needs_llm && !self.hours.is_on(now) {
-            // Only LLM work waits for model hours (decision P4). Rule-only notifications (card
+            // Only LLM work waits for model hours (ADR-0015). Rule-only notifications (card
             // amount, login notice) go out at any hour; a summarized mail whose notification
             // slipped past 19:00 (e.g. Telegram retries) waits for 09:00.
             return Ok(Outcome::Defer(self.hours.next_on(now)));

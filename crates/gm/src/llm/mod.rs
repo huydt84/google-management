@@ -22,7 +22,7 @@ pub const SUMMARY_TASK: &str = include_str!("../../prompts/summary.md");
 
 /// The model server can't take the request right now (not running, timed out, or overloaded:
 /// connection error, timeout, HTTP 429/502/503/504). Callers queue the work instead of failing it
-/// (decision L12).
+/// (ADR-0010).
 #[derive(Debug, thiserror::Error)]
 #[error("LLM unavailable: {0}")]
 pub struct LlmUnavailable(pub String);
@@ -151,7 +151,7 @@ fn yes() -> bool {
 }
 
 /// Strip reasoning and fences and parse the outermost `{...}` as a JSON object. `None` if there is
-/// none. Every task parses model output through this (L6: no JSON mode, tolerant parse).
+/// none. Every task parses model output through this (the runtime has no JSON mode, so parsing is tolerant).
 pub fn parse_json_object(text: &str) -> Option<serde_json::Map<String, Value>> {
     static THINK: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r"(?is)<think>.*?</think>").unwrap());
@@ -370,7 +370,7 @@ impl LlmClient {
     }
 
     /// The mail as the model sees it: headers and the cleaned body capped at `max_tokens`, with
-    /// delimiters neutralized and wrapped in `<email>` (invariant 2, L8).
+    /// delimiters neutralized and wrapped in `<email>` (Google content is untrusted).
     pub fn email_block(&self, m: &ParsedMessage, max_tokens: usize) -> String {
         let body = clean::clean_body(if m.body_text.is_empty() {
             &m.snippet
@@ -398,7 +398,7 @@ impl LlmClient {
     }
 
     /// Shared stable prefix first (system prompt + task + thinking switch), per-user settings and
-    /// the mail last, so the prefix KV cache is reused across mails and tasks (L9).
+    /// the mail last, so the prefix KV cache is reused across mails and tasks.
     pub fn task_messages(&self, task: &str, language: &str, email_block: &str) -> Vec<Value> {
         let mut system = format!("{}\n{}", SYSTEM_PREFIX.trim_end(), task.trim_end());
         if !self.no_think_tag.is_empty() {
@@ -419,7 +419,7 @@ impl LlmClient {
     }
 
     /// Ask for one JSON object; if `parse` rejects the reply, ask once more with a format reminder
-    /// at temperature 0 (L6). Transport errors (including [`LlmUnavailable`]) are returned as is.
+    /// at temperature 0. Transport errors (including [`LlmUnavailable`]) are returned as is.
     pub async fn chat_json<T>(
         &self,
         task: &str,

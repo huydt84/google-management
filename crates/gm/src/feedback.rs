@@ -1,4 +1,4 @@
-//! Triage feedback (workstream 2C, decisions N3, N8, N9). 👍 / 👎 under notifications and
+//! Triage feedback (workstream 2C). 👍 / 👎 under notifications and
 //! model-triaged digest items (`f:<event_id>:up|down`), or on the dashboard. Stored in
 //! `triage_feedback`; last tap wins. After a Telegram tap the keyboard is redrawn with ✅ on the
 //! current choice. 👎 on a rule-matched mail points at the rule to edit; on a model-triaged mail it is

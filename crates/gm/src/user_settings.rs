@@ -68,7 +68,7 @@ pub struct UserSettings {
     /// Web UI and fixed notification text: en | vi | ja.
     #[serde(default = "default_ui")]
     pub ui_language: String,
-    /// Morning digest time, HH:MM local; must fall inside model hours (decision N4).
+    /// Morning digest time, HH:MM local; must fall inside model hours.
     #[serde(default = "default_digest_at")]
     pub digest_at: String,
 }
