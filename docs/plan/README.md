@@ -30,7 +30,7 @@ Update this table in the same commit that completes the workstream.
 | 1F | Ops files: launchd plists, backup script, CI, `.env.example` | — | done (not installed) |
 | 1G | Remove the Python code | 1A–1E | done |
 | 1H | Health panel on the dashboard | 1E | todo (moved to 2E) |
-| 2A | Digest builder + scheduler + digest lane | Phase 1 | todo |
+| 2A | Digest builder + scheduler + digest lane | Phase 1 | done |
 | 2B | Model triage | Phase 1 | done |
 | 2C | Feedback buttons (needs Telegram callbacks from 3A) | 2B, 3A-min | todo |
 | 2D | Residency controller | Phase 1 | todo |

@@ -38,12 +38,9 @@ async fn telegram_sends_plain_text_and_silent_flag() {
         .mount(&server)
         .await;
     let n = TelegramNotifier::new(reqwest::Client::new(), &server.uri(), "TOKEN", "42");
-    n.send(&OutgoingMessage {
-        text: "<b>hi</b>".into(),
-        silent: true,
-    })
-    .await
-    .unwrap();
+    n.send(&OutgoingMessage::text("<b>hi</b>", true))
+        .await
+        .unwrap();
     let body: serde_json::Value =
         serde_json::from_slice(&server.received_requests().await.unwrap()[0].body).unwrap();
     assert!(body.get("parse_mode").is_none(), "never markup");
@@ -55,10 +52,7 @@ async fn telegram_sends_plain_text_and_silent_flag() {
         .await;
     let n = TelegramNotifier::new(reqwest::Client::new(), &failing.uri(), "SECRET", "42");
     let err = n
-        .send(&OutgoingMessage {
-            text: "x".into(),
-            silent: false,
-        })
+        .send(&OutgoingMessage::text("x", false))
         .await
         .unwrap_err()
         .to_string();
@@ -66,4 +60,48 @@ async fn telegram_sends_plain_text_and_silent_flag() {
         !err.contains("SECRET"),
         "bot token must not leak into errors: {err}"
     );
+}
+
+#[tokio::test]
+async fn telegram_returns_ids_edits_and_sends_buttons() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/botT/sendMessage"))
+        .and(body_partial_json(json!({"reply_markup": {"inline_keyboard": [[{"text": "👍", "callback_data": "f:1:up"}]]}})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "result": {"message_id": 77}})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/botT/editMessageText"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(
+            json!({"ok": false, "description": "Bad Request: message is not modified"}),
+        ))
+        .mount(&server)
+        .await;
+    let n = TelegramNotifier::new(reqwest::Client::new(), &server.uri(), "T", "42");
+    let msg = OutgoingMessage {
+        text: "x".into(),
+        silent: false,
+        buttons: vec![vec![gm::notify::Button {
+            text: "👍".into(),
+            data: "f:1:up".into(),
+        }]],
+    };
+    assert_eq!(n.send(&msg).await.unwrap(), Some(77));
+    n.edit(77, &msg).await.expect("not modified is fine");
+}
+
+#[test]
+fn long_text_is_split_at_lines() {
+    let line = "y".repeat(1000);
+    let text = [line.as_str(); 9].join("\n");
+    let parts = gm::notify::split_message(&text);
+    assert_eq!(parts.len(), 3);
+    assert!(
+        parts
+            .iter()
+            .all(|p| p.chars().count() <= gm::notify::TELEGRAM_LIMIT)
+    );
+    assert_eq!(parts.join("\n"), text);
+    assert_eq!(gm::notify::split_message("short"), vec!["short"]);
 }

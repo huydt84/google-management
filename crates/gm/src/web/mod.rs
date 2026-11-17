@@ -110,6 +110,7 @@ pub fn router(state: SharedState) -> Router {
             "/settings",
             get(pages::settings_page).post(pages::save_settings),
         )
+        .route("/digest", get(pages::digest_page))
         .route("/api/gmail/sync", post(pages::sync_now))
         .route("/api/events", get(pages::events_json))
         .route("/healthz", get(pages::healthz))

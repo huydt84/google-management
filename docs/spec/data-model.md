@@ -32,7 +32,7 @@ and by the test suite). Diagram: [architecture §7](../architecture.md#7-data-mo
 | Column | Type | Notes |
 |--------|------|-------|
 | `email` | text PK | the gm user |
-| `settings` | jsonb | `{summary_language, translation_language, ui_language}`; missing keys fall back to `GM_DEFAULT_SUMMARY_LANGUAGE` / `GM_DEFAULT_UI_LANGUAGE` |
+| `settings` | jsonb | `{summary_language, translation_language, ui_language, digest_at}`; missing keys fall back to `GM_DEFAULT_SUMMARY_LANGUAGE` / `GM_DEFAULT_UI_LANGUAGE` |
 
 Validation (`user_settings.rs`): language names are 2–40 characters of letters, marks, spaces,
 `( ) ' -`; `ui_language` is one of `en`, `vi`, `ja`.
@@ -47,9 +47,10 @@ Validation (`user_settings.rs`): language names are 2–40 characters of letters
 | `status` | text | `new`, `ignored`, `digest`, `classify` (waiting for model triage), `triaged`, `ready`, `notified`, `gone` |
 | `rule` | text | name of the matching rule, `model` (model triage), or `default` |
 | `data` | jsonb | headers brief, link and verdict ([events spec](events.md#event-record-events-table)) |
-| `summary` | jsonb | summary JSON (set before the event becomes `ready`) |
+| `summary` | jsonb | summary JSON (set before the event becomes `ready`); digest items: `{line}` or `{jobs}` |
+| `digest_id` | bigint FK → `digests` | the digest the event was sent in (`0003_digest.sql`); NULL = not yet |
 
-Indexes: `created_at`, `status`.
+Indexes: `created_at`, `status`, `digest_id`.
 
 ### `jobs`
 
@@ -96,3 +97,29 @@ database) is exempt ([ADR-0017](../adr/0017-eval-data-handling.md)).
 
 Each comes as a new numbered migration. Parallel sessions must keep one linear migration sequence
 (rename yours to the next free number when rebasing).
+
+## Phase 2
+
+### `digests` (`0003_digest.sql`)
+
+One row per user and local date (unique `(owner_email, digest_date)`), so a digest is built and sent
+once per day.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigserial PK | |
+| `owner_email`, `digest_date` | text, date | |
+| `status` | text | `building` (events claimed, not sent yet), `sent`, `empty` (nothing to say, no message) |
+| `item_count` | int | |
+| `message_ids` | jsonb | Telegram message ids, one per 4096-character part |
+| `text` | text | last rendered text (for `/digest` and to skip no-op edits) |
+| `sent_at`, `edited_at` | timestamptz | |
+
+Deleted after `GM_RETENTION_DAYS` like events.
+
+### `schedule_runs` (`0003_digest.sql`)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `name` | text PK | `digest:<owner>`, `residency` |
+| `last_at` | timestamptz | last occurrence fired (or recorded on first sight) |

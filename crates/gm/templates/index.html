@@ -4,6 +4,7 @@
   <h1>{{ tr.get("app-title") }}</h1>
   <div>
     <span class="muted">{{ email }}</span>
+    <a class="btn" href="/digest">{{ tr.get("digests") }}</a>
     <a class="btn" href="/settings">{{ tr.get("settings") }}</a>
     <form method="post" action="/auth/logout"><button class="btn">{{ tr.get("sign-out") }}</button></form>
   </div>

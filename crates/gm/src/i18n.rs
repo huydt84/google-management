@@ -48,6 +48,13 @@ impl Tr {
         LOCALES.lookup(&self.lang, key)
     }
 
+    /// Like [`Tr::get`], but `fallback` when no locale (not even English) has the key.
+    pub fn get_or(&self, key: &str, fallback: &str) -> String {
+        LOCALES
+            .try_lookup(&self.lang, key)
+            .unwrap_or_else(|| fallback.to_string())
+    }
+
     pub fn args(&self, key: &str, args: &[(&'static str, String)]) -> String {
         let map: HashMap<Cow<'static, str>, FluentValue> = args
             .iter()

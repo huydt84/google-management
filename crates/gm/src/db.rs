@@ -94,6 +94,10 @@ pub async fn apply_retention(pool: &PgPool, days: i64) -> sqlx::Result<(u64, u64
     .execute(pool)
     .await?
     .rows_affected();
+    sqlx::query("DELETE FROM digests WHERE created_at < now() - make_interval(days => $1::int)")
+        .bind(days as i32)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM llm_calls WHERE created_at < now() - make_interval(days => $1::int)")
         .bind(days as i32)
         .execute(pool)

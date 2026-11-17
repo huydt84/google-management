@@ -11,6 +11,7 @@ use crate::bus::Bus;
 use crate::clock::{Clock, ModelHours, SystemClock};
 use crate::config::Config;
 use crate::crypto::SecretBox;
+use crate::digest::Digest;
 use crate::gmail::ingest::GmailIngestor;
 use crate::gmail::pubsub::PubSubIngest;
 use crate::google::accounts::AccountStore;
@@ -20,6 +21,7 @@ use crate::llm::LlmClient;
 use crate::notify::{LogNotifier, Notifier, TelegramNotifier};
 use crate::pipeline::Pipeline;
 use crate::rules::RuleFile;
+use crate::scheduler::Scheduler;
 use crate::user_settings::UserSettingsStore;
 use crate::web::{self, AppState, SharedState, session::Signer};
 
@@ -37,6 +39,8 @@ pub struct App {
     /// Present in Pub/Sub ingest mode.
     pub pubsub: Option<Arc<PubSubIngest>>,
     pub pipeline: Arc<Pipeline>,
+    pub digest: Arc<Digest>,
+    pub scheduler: Arc<Scheduler>,
     pub state: SharedState,
 }
 
@@ -87,6 +91,8 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         pool.clone(),
         &cfg.default_summary_language,
         &cfg.default_ui_language,
+        cfg.digest_at,
+        cfg.model_hours(),
     );
     let pipeline = Arc::new(Pipeline {
         pool: pool.clone(),
@@ -105,6 +111,20 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         llm_unavailable_retry: chrono::Duration::seconds(cfg.llm_unavailable_retry_s as i64),
     });
     pipeline.register();
+    let digest = Arc::new(Digest {
+        p: pipeline.clone(),
+        problems: None,
+        feedback: None,
+    });
+    digest.register();
+    let scheduler = Arc::new(Scheduler {
+        pool: pool.clone(),
+        bus: bus.clone(),
+        clock: pipeline.clock.clone(),
+        hours: pipeline.hours,
+        user_settings: user_settings.clone(),
+        default_digest_at: cfg.digest_at,
+    });
     let state = Arc::new(AppState {
         cfg: cfg.clone(),
         pool: pool.clone(),
@@ -122,6 +142,8 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         ingestor,
         pubsub,
         pipeline,
+        digest,
+        scheduler,
         state,
     })
 }
@@ -175,6 +197,8 @@ pub fn spawn_background(app: &App) {
     if let Some(pubsub) = app.pubsub.clone() {
         supervise("gmail-pubsub", move || pubsub.clone().run());
     }
+    let scheduler = app.scheduler.clone();
+    supervise("scheduler", move || scheduler.clone().run());
     let (pool, days) = (app.pool.clone(), app.cfg.retention_days);
     supervise("retention", move || {
         let pool = pool.clone();

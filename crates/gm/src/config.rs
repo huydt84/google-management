@@ -76,6 +76,8 @@ pub struct Config {
     /// Model residency window in local time (ADR-0010). Equal values mean "always on".
     pub model_on: NaiveTime,
     pub model_off: NaiveTime,
+    /// Default morning digest time; each user can change it in Settings (decision N4).
+    pub digest_at: NaiveTime,
 
     // Defaults for users who have not saved settings
     pub default_summary_language: String,
@@ -204,6 +206,7 @@ impl Config {
             llm_unavailable_retry_s: parse("LLM_UNAVAILABLE_RETRY_S", 300)?,
             model_on: time("MODEL_ON", "09:00")?,
             model_off: time("MODEL_OFF", "19:00")?,
+            digest_at: time("DIGEST_AT", "09:05")?,
             default_summary_language: env_or("DEFAULT_SUMMARY_LANGUAGE", "Vietnamese"),
             default_ui_language: env_or("DEFAULT_UI_LANGUAGE", "en"),
             telegram_bot_token: secrets::get("telegram-bot-token"),
@@ -251,6 +254,7 @@ impl Config {
             llm_unavailable_retry_s: 300,
             model_on: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             model_off: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            digest_at: NaiveTime::from_hms_opt(9, 5, 0).unwrap(),
             default_summary_language: "Vietnamese".into(),
             default_ui_language: "en".into(),
             telegram_bot_token: None,
@@ -274,6 +278,13 @@ impl Config {
             scopes.push(crate::google::PUBSUB);
         }
         scopes
+    }
+
+    pub fn model_hours(&self) -> crate::clock::ModelHours {
+        crate::clock::ModelHours {
+            on: self.model_on,
+            off: self.model_off,
+        }
     }
 
     pub fn telegram_enabled(&self) -> bool {

@@ -90,7 +90,12 @@ impl Pipeline {
         )
     }
 
-    async fn set_status(&self, event_id: i64, expected: &str, new: &str) -> anyhow::Result<()> {
+    pub(crate) async fn set_status(
+        &self,
+        event_id: i64,
+        expected: &str,
+        new: &str,
+    ) -> anyhow::Result<()> {
         sqlx::query(
             "UPDATE events SET status = $3, updated_at = now() WHERE id = $1 AND status = $2",
         )
@@ -102,7 +107,11 @@ impl Pipeline {
         Ok(())
     }
 
-    async fn fetch(&self, account: &str, message_id: &str) -> Result<ParsedMessage, GoogleError> {
+    pub(crate) async fn fetch(
+        &self,
+        account: &str,
+        message_id: &str,
+    ) -> Result<ParsedMessage, GoogleError> {
         Ok(parse_message(
             &self.gmail.get_message(account, message_id).await?,
         ))
@@ -133,6 +142,7 @@ impl Pipeline {
     pub fn route(verdict: &Verdict) -> (&'static str, Option<&'static str>) {
         match verdict.action {
             Action::Ignore => ("ignored", None),
+            Action::Digest if verdict.summarize => ("digest", Some(topics::DIGEST_ITEM_SUMMARIZE)),
             Action::Digest => ("digest", None),
             Action::Triage => ("classify", Some(topics::GMAIL_MESSAGE_CLASSIFY)),
             Action::Notify if verdict.summarize => {
@@ -227,7 +237,7 @@ impl Pipeline {
         Ok(Outcome::Done)
     }
 
-    fn verdict_of(data: &Value) -> Option<Verdict> {
+    pub fn verdict_of(data: &Value) -> Option<Verdict> {
         serde_json::from_value(data["verdict"].clone()).ok()
     }
 
@@ -319,10 +329,7 @@ impl Pipeline {
         let tr = Tr::new(&prefs.ui_language);
         let text = format_email_notification(&tr, &ev.data, ev.summary.as_ref(), priority);
         self.notifier
-            .send(&OutgoingMessage {
-                text,
-                silent: priority == Priority::Silent,
-            })
+            .send(&OutgoingMessage::text(text, priority == Priority::Silent))
             .await?;
         self.set_status(p.event_id, "ready", "notified").await?;
         Ok(Outcome::Done)

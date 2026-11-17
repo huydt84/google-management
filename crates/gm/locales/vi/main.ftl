@@ -50,3 +50,25 @@ invalid-language = Hãy dùng tên ngôn ngữ như "English" hoặc "Vietnamese
 invalid-ui-language = Hãy chọn một ngôn ngữ giao diện trong danh sách.
 notif-from = Từ
 notif-suggested = Gợi ý
+
+# Digest (2A)
+digests = Bản tin
+digest-none = Chưa có bản tin nào. Bản đầu tiên được gửi vào giờ đặt trong Cài đặt.
+digest-nothing-sent = Không gửi gì: không có gì mới.
+col-date = Ngày
+col-items = Mục
+digest-time = Giờ gửi bản tin sáng
+digest-time-help = Thời điểm gửi bản tin sáng (HH:MM). Phải nằm trong giờ chạy mô hình ({ $on }–{ $off }).
+invalid-digest-time = Chọn giờ gửi bản tin trong giờ chạy mô hình, dạng HH:MM.
+digest-title = ☀️ Bản tin sáng · { $date }
+digest-section-card-usage = 💳 Chi tiêu thẻ
+digest-section-account = 🏦 Thông báo tài khoản
+digest-section-orders = 📦 Đơn hàng
+digest-section-coupons = 🎟️ Phiếu giảm giá
+digest-section-points = ⭐ Điểm thưởng
+digest-section-jobs = 💼 Tin tuyển dụng
+digest-section-newsletters = 📰 Bản tin đăng ký
+digest-section-other = 📬 Khác
+digest-section-model = 📨 Thư khác
+digest-system = ⚠️ Hệ thống
+digest-pending-note = ⏳ Tóm tắt đang được viết; tin nhắn này sẽ được cập nhật khi xong.

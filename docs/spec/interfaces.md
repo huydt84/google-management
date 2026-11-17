@@ -25,7 +25,7 @@ Guards on every request (`web::guard`):
 | GET | `/connect/google` | session | Start API consent (`gmail.readonly`, plus `pubsub` in Pub/Sub mode; offline, `prompt=consent`) |
 | GET | `/connect/google/callback` | session | Check owner and scopes, store the encrypted refresh token, bootstrap the Gmail cursor |
 | GET | `/settings` | session (else redirect to `/`) | The user's settings, rendered in their UI language |
-| POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`; 400 with a localized reason, else redirect `/settings?saved=1` |
+| POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`, `digest_at` (HH:MM inside model hours); 400 with a localized reason, else redirect `/settings?saved=1` |
 | POST | `/api/gmail/sync` | session | Sync the owner's mailbox now, redirect to `/` |
 | GET | `/api/events` | session (401 JSON otherwise) | Last 100 events as JSON |
 | GET | `/healthz` | — | `{"ok":true}`, or 503 if the database is unreachable |
@@ -35,11 +35,16 @@ Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 `gm_llm_prompt_tokens_24h`, `gm_llm_completion_tokens_24h`, `gm_llm_latency_ms_sum_24h` (per task and lane),
 `gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode). Counts only, no content.
 
+### Implemented (Phase 2)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/digest[?id=]` | session | The last 60 digests (date, items, status) and the text of the selected one (default: latest) |
+
 ### Planned
 
 | Method | Path | Phase | Purpose |
 |--------|------|-------|---------|
-| GET | `/digest` | 2 | Today's and past digests |
 | GET | `/jobs?status=dead`, POST `/jobs/{id}/retry` | 2 | Dead-letter management |
 | GET | `/senders` | 2 | Ignored-sender counts (promote a sender to the newsletter list) |
 | GET | `/tasks`, POST `/approvals/{id}/approve` · `/reject` | 3 | Tasks and web approvals |
@@ -82,11 +87,27 @@ https://mail.google.com/…
 - A notification that needs a summary is never sent without it: it waits for model hours and for the
   model to answer (decisions P4, L12).
 
+### Digest (Phase 2)
+
+One silent message per user and day at their `digest_at` (default 09:05), split at 4096 characters
+on line boundaries. Header `☀️ Morning digest · <date>`, then the sections in `rules.yaml` order of
+first appearance (titles from `digest-section-<name>` in the locale files, else the raw name), then
+"📨 Other mail" (model triage) last. Lines:
+
+- rule `message` if any, else `• <sender>: <summary line>`, else the extracted values, else
+  `• <sender>: <subject>`; `⏳` marks items whose summary isn't ready (with a note at the end);
+- jobs: one line per posting `• <title> — <company> · <location>` plus the link, deduplicated by
+  (title, company) across the digest;
+- model items: `[n] <sender>: <line>` and `↳ <reason>`, with a `👍 n` / `👎 n` row each (at most 8);
+- `⚠️ System` with the current health problems, only when there are any.
+
+Nothing is sent when there is nothing to say. While model hours last that day, the message is edited
+(`editMessageText`) when pending summaries arrive.
+
 ### Planned
 
 | Feature | Phase |
 |---------|-------|
-| Digest message at 09:05, sections in rule order, edited when late summaries arrive | 2 |
 | Health alert after 15 minutes unhealthy (dead jobs, ingest lag > 10 min, model down in model hours, token invalid) | 2 |
 | Feedback buttons `f:<event_id>:up/down` under notifications and model-triaged items | 2 |
 | **[Translate]**, **[Analyze]**, **[Reply]** buttons (`i:<event_id>:<intent>`); approvals `a:<approval_id>:y/n` | 3 |
@@ -150,6 +171,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_NO_THINK_TAG` | `/no_think` | Appended to the system prompt; empty to disable |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
 | `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on) |
+| `GM_DIGEST_AT` | `09:05` | Default morning digest time; each user can change it in Settings (inside model hours) |
 | `GM_DEFAULT_SUMMARY_LANGUAGE` | `Vietnamese` | Default summary language |
 | `GM_DEFAULT_UI_LANGUAGE` | `en` | Default UI language (`en`, `vi`, `ja`) |
 | `GM_TELEGRAM_CHAT_ID` | — | Owner's chat |
@@ -201,12 +223,25 @@ client retries once with a reminder; then it keeps the raw text (≤ 1,200 chara
 with `importance: medium` and `parse_ok: false`. Connection errors, timeouts and HTTP 429/502/503/504
 are `LlmUnavailable` (the job is queued); other HTTP errors fail the job.
 
+### Model triage (implemented, `prompts/triage.md`)
+
+`{"action": "notify" | "digest" | "ignore", "reason": "at most 12 words"}`. Notify lane, first ~1,500
+body tokens, at most 80 output tokens, one retry; unusable output → `notify` (fail open).
+
+### Digest item (implemented, `prompts/digest.md`, `prompts/jobs.md`)
+
+Batch lane. Stored in `events.summary`.
+
+- Line: `{"line": "1-2 sentences"}` (≤ 150 output tokens) → stored `{line, parse_ok}`; unusable output
+  keeps the raw text (≤ 300 characters) with `parse_ok: false`.
+- Job alerts (section `jobs`): `{"jobs": [{title, company, location, link}]}` (≤ 600 output tokens, at
+  most 10 per mail) → stored `{jobs, parse_ok}`. A `link` is kept only if it is an `https://` URL that
+  appears verbatim in the mail; the model can't introduce links.
+
 ### Planned
 
 | Contract | Phase | Lane | Output |
 |----------|-------|------|--------|
-| Model triage | 2 | notify | `{action: notify|digest|ignore, reason}` |
-| Digest line | 2 | batch | `{line}` (1–2 sentences); job alerts: `{jobs: [{title, company, location, link}]}` |
 | Translate | 3 | interactive | text in `translation_language` |
 | Analyze | 3 | interactive (thinking on) | key points, deadlines, amounts, phishing signs |
 | Intent router | 3 | interactive | `{intent, args}` from the owner's words only |

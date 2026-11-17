@@ -50,3 +50,25 @@ invalid-language = "English" や "Vietnamese" のような言語名を入力し�
 invalid-ui-language = 一覧にある表示言語を選んでください。
 notif-from = 差出人
 notif-suggested = 提案
+
+# Digest (2A)
+digests = ダイジェスト
+digest-none = ダイジェストはまだありません。最初のものは設定の時刻に送信されます。
+digest-nothing-sent = 新着がなかったため送信していません。
+col-date = 日付
+col-items = 件数
+digest-time = 朝のダイジェスト時刻
+digest-time-help = 朝のダイジェストを送る時刻 (HH:MM)。モデル稼働時間 ({ $on }–{ $off }) 内で指定してください。
+invalid-digest-time = モデル稼働時間内の時刻を HH:MM で指定してください。
+digest-title = ☀️ 朝のダイジェスト · { $date }
+digest-section-card-usage = 💳 カード利用
+digest-section-account = 🏦 アカウントのお知らせ
+digest-section-orders = 📦 注文
+digest-section-coupons = 🎟️ クーポン
+digest-section-points = ⭐ ポイント
+digest-section-jobs = 💼 求人アラート
+digest-section-newsletters = 📰 ニュースレター
+digest-section-other = 📬 その他
+digest-section-model = 📨 その他のメール
+digest-system = ⚠️ システム
+digest-pending-note = ⏳ 要約を作成中です。完了するとこのメッセージが更新されます。

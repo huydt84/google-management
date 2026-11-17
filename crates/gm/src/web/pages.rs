@@ -58,6 +58,22 @@ struct IndexPage {
     events: Vec<EventRow>,
 }
 
+/// The summary as one line: a notification summary, a digest line, or a job list.
+fn summary_text(summary: &Value) -> String {
+    if let Some(s) = summary["summary"].as_str().or(summary["line"].as_str()) {
+        return s.to_string();
+    }
+    summary["jobs"]
+        .as_array()
+        .map(|jobs| {
+            jobs.iter()
+                .filter_map(|j| j["title"].as_str())
+                .collect::<Vec<_>>()
+                .join(" · ")
+        })
+        .unwrap_or_default()
+}
+
 fn event_row(e: crate::db::Event) -> EventRow {
     let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
     let summary = e.summary.clone().unwrap_or(Value::Null);
@@ -78,7 +94,7 @@ fn event_row(e: crate::db::Event) -> EventRow {
         rule: e.rule.unwrap_or_default(),
         reason: s(&e.data["verdict"]["reason"]),
         importance: s(&summary["importance"]),
-        summary: s(&summary["summary"]),
+        summary: summary_text(&summary),
         error: s(&summary["error"]),
     }
 }
@@ -176,6 +192,8 @@ struct SettingsPage {
     ui_languages: Vec<(String, String)>,
     languages: Vec<String>,
     default_help: String,
+    digest_at: String,
+    digest_help: String,
     error: String,
     saved: bool,
 }
@@ -193,6 +211,14 @@ fn settings_page_for(
             "summary-language-help",
             &[("default", state.cfg.default_summary_language.clone())],
         ),
+        digest_help: tr.args(
+            "digest-time-help",
+            &[
+                ("on", state.cfg.model_on.format("%H:%M").to_string()),
+                ("off", state.cfg.model_off.format("%H:%M").to_string()),
+            ],
+        ),
+        digest_at: s.digest_at.clone(),
         tr,
         email,
         summary_language: s.summary_language.clone(),
@@ -238,6 +264,8 @@ pub struct SettingsForm {
     translation_language: String,
     #[serde(default)]
     ui_language: String,
+    #[serde(default)]
+    digest_at: String,
 }
 
 pub async fn save_settings(
@@ -255,6 +283,11 @@ pub async fn save_settings(
             state.user_settings.defaults().ui_language.clone()
         } else {
             f.ui_language
+        },
+        digest_at: if f.digest_at.is_empty() {
+            state.user_settings.defaults().digest_at.clone()
+        } else {
+            f.digest_at
         },
     };
     match state.user_settings.save(&email, submitted.clone()).await? {
@@ -376,4 +409,66 @@ pub async fn metrics(
         ));
     }
     Ok(([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], out).into_response())
+}
+
+pub struct DigestRow {
+    pub id: i64,
+    pub date: String,
+    pub items: i32,
+    pub status: String,
+}
+
+#[derive(Template)]
+#[template(path = "digest.html")]
+struct DigestPage {
+    tr: Tr,
+    email: String,
+    digests: Vec<DigestRow>,
+    selected_id: i64,
+    selected_text: String,
+}
+
+#[derive(Deserialize)]
+pub struct IdQuery {
+    id: Option<i64>,
+}
+
+/// Today's and past digests (2A).
+pub async fn digest_page(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    Query(q): Query<IdQuery>,
+) -> Result<Response, AppError> {
+    let Some(email) = current_owner(&state, &jar) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let prefs = state.user_settings.get(&email).await?;
+    let rows: Vec<(i64, chrono::NaiveDate, i32, String, String)> = sqlx::query_as(
+        "SELECT id, digest_date, item_count, status, text FROM digests
+         WHERE owner_email = $1 ORDER BY digest_date DESC LIMIT 60",
+    )
+    .bind(&email)
+    .fetch_all(&state.pool)
+    .await?;
+    let selected =
+        q.id.and_then(|id| rows.iter().find(|r| r.0 == id))
+            .or(rows.first());
+    let (selected_id, selected_text) = selected
+        .map(|r| (r.0, r.4.clone()))
+        .unwrap_or((0, String::new()));
+    render(&DigestPage {
+        tr: Tr::new(&prefs.ui_language),
+        email,
+        digests: rows
+            .iter()
+            .map(|(id, date, items, status, _)| DigestRow {
+                id: *id,
+                date: date.format("%Y-%m-%d").to_string(),
+                items: *items,
+                status: status.clone(),
+            })
+            .collect(),
+        selected_id,
+        selected_text,
+    })
 }

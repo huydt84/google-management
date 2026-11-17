@@ -32,6 +32,11 @@
       <input id="translation_language" name="translation_language" list="languages"
              maxlength="40" value="{{ translation_language }}" class="input">
     </p>
+    <p>
+      <label for="digest_at"><strong>{{ tr.get("digest-time") }}</strong></label><br>
+      <span class="muted">{{ digest_help }}</span><br>
+      <input id="digest_at" name="digest_at" type="time" required value="{{ digest_at }}" class="input">
+    </p>
     <datalist id="languages">
       {% for lang in languages %}<option value="{{ lang }}">{% endfor %}
     </datalist>

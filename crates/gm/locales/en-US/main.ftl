@@ -50,3 +50,25 @@ invalid-language = Use a language name such as "English" or "Vietnamese" (2–40
 invalid-ui-language = Choose one of the listed interface languages.
 notif-from = From
 notif-suggested = Suggested
+
+# Digest (2A)
+digests = Digest
+digest-none = No digest yet. The first one is sent at the digest time set in Settings.
+digest-nothing-sent = Nothing was sent: there was nothing new.
+col-date = Date
+col-items = Items
+digest-time = Morning digest time
+digest-time-help = When the morning digest is sent (HH:MM). Must be within model hours ({ $on }–{ $off }).
+invalid-digest-time = Choose a digest time within model hours, as HH:MM.
+digest-title = ☀️ Morning digest · { $date }
+digest-section-card-usage = 💳 Card usage
+digest-section-account = 🏦 Account notices
+digest-section-orders = 📦 Orders
+digest-section-coupons = 🎟️ Coupons
+digest-section-points = ⭐ Points
+digest-section-jobs = 💼 Job alerts
+digest-section-newsletters = 📰 Newsletters
+digest-section-other = 📬 Other
+digest-section-model = 📨 Other mail
+digest-system = ⚠️ System
+digest-pending-note = ⏳ Summary still being written; this message is updated when it is ready.

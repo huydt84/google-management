@@ -382,6 +382,23 @@ impl RuleSet {
         })
     }
 
+    /// Digest sections in rule order (first appearance), ending with `other`. The digest renders
+    /// sections in this order, then the model's section last.
+    pub fn digest_sections(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for r in &self.rules {
+            if let (Action::Digest, Some(s)) = (r.action, &r.section)
+                && !out.contains(s)
+            {
+                out.push(s.clone());
+            }
+        }
+        if !out.iter().any(|s| s == "other") {
+            out.push("other".into());
+        }
+        out
+    }
+
     pub fn evaluate(&self, m: &ParsedMessage) -> Verdict {
         for r in &self.rules {
             if r.when.matches(m) {

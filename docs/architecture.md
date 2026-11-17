@@ -257,9 +257,13 @@ leaves the job `dead`. The body is re-fetched in each step rather than stored.
 
 ### 5.3 Morning digest (Phase 2)
 
-At 09:00 the model loads, overnight `digest` events are summarized in the `batch` lane, and at 09:05
-the digest is sent, grouped by rule `section` (card-usage, orders, coupons, points, jobs, newsletters,
-account, other). Items not summarized yet go out as titles and the message is edited later.
+At 09:00 the model loads, overnight `digest` events are summarized in the `batch` lane
+(`digest.item.summarize`), and at the user's `digest_at` (09:05) the scheduler publishes
+`schedule.due{digest}`. The builder claims the unsent `digest` events (`events.digest_id`), groups
+them by rule `section` in rule order with the model-triaged ones last, and sends one silent message.
+Items not summarized yet go out as titles; when their summary arrives the same day before 19:00,
+`digest.refresh` edits the message. Nothing is sent on an empty day. Format:
+[interfaces](spec/interfaces.md#digest-phase-2).
 
 ### 5.4 Owner instruction → approval → execution (Phase 3)
 
