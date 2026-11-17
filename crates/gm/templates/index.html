@@ -12,30 +12,28 @@
   .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--faint); margin-right:7px; vertical-align:1px; }
   .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); } .dot.warn { background:var(--warn); }
 
-  /* Sorting diagram: one source branching into the three routes. */
-  .sort { display:grid; grid-template-columns:max-content minmax(0,1fr); align-items:center; }
-  .sort-src { padding:8px 14px; border:1px solid var(--rule); border-radius:var(--radius); background:var(--paper);
-              font-weight:600; position:relative; margin-right:28px; }
-  .sort-src::after { content:""; position:absolute; right:-29px; top:50%; width:28px; border-top:2px solid var(--rule); }
-  .branches { list-style:none; margin:0; padding:0; border-left:2px solid var(--rule); }
-  .branch { position:relative; display:grid; grid-template-columns:170px minmax(0,1fr); gap:4px 20px;
-            padding:12px 0 12px 26px; }
-  .branch::before { content:""; position:absolute; left:0; top:24px; width:18px; border-top:2px solid var(--rule); }
-  .branch:first-child, .branch:last-child { border-left:2px solid var(--sheet); margin-left:-2px; }
-  .branch:first-child::after, .branch:last-child::after { content:""; position:absolute; left:-2px; width:2px; background:var(--rule); }
-  .branch:first-child::after { top:24px; bottom:0; } .branch:last-child::after { top:0; height:25px; }
-  .route-name { display:flex; flex-wrap:wrap; align-items:baseline; gap:0 10px; }
-  .route-name strong { font-size:16px; }
-  .route-name .n { flex-basis:100%; padding-left:20px; font-size:13px; color:var(--graphite); }
-  .branch p { margin:0; color:var(--graphite); max-width:64ch; }
-  .branch .go { font-size:13px; }
-  .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; flex:none; align-self:center; }
+  /* Route key above the mail list: counts every visit, the teaching text only on request. */
+  .list-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 24px; margin-bottom:12px; }
+  .list-head h2 { margin:0; }
+  .legend { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 18px;
+            font-size:14px; color:var(--graphite); }
+  .legend li { display:flex; align-items:baseline; gap:6px; }
+  .legend strong { color:var(--ink); font-weight:600; }
+  .legend .tip { left:0; right:auto; }
+  .swatch { width:9px; height:9px; border-radius:2px; display:inline-block; flex:none; align-self:center; }
   .r-notify .swatch, .ev.r-notify::before { background:var(--notify); }
   .r-digest .swatch, .ev.r-digest::before { background:var(--digest); }
   .r-ignore .swatch, .ev.r-ignore::before { background:var(--ignore); }
-  .r-notify .route-name strong { color:var(--notify); }
-  .r-digest .route-name strong { color:var(--digest); }
-  .r-ignore .route-name strong { color:var(--graphite); }
+  details.howto { margin-left:auto; font-size:13px; }
+  details.howto > summary { cursor:pointer; color:var(--graphite); }
+  details.howto > summary:hover { color:var(--ink); }
+  details.howto[open] { flex-basis:100%; order:3; margin:4px 0 0; padding:14px 16px; background:var(--paper);
+                        border-radius:var(--radius); font-size:14px; }
+  details.howto[open] > summary { margin-bottom:10px; }
+  .howto p { margin:0 0 10px; max-width:72ch; color:var(--graphite); }
+  .howto dl { grid-template-columns:max-content minmax(0,1fr); gap:8px 16px; margin-bottom:12px; }
+  .howto dt { display:flex; align-items:center; align-self:start; gap:6px; color:var(--ink); font-weight:600; }
+  .howto dd { color:var(--graphite); max-width:64ch; }
 
   /* Mail list. Left: the mail. Right: a read-only record of where it went (colour = route).
      Only the row below, under its question, holds buttons. */
@@ -99,12 +97,9 @@
     .pair { grid-template-columns:minmax(0,1fr); gap:0; }
   }
   @media (max-width: 760px) {
-    .sort { grid-template-columns:minmax(0,1fr); }
-    .sort-src { justify-self:start; margin:0 0 0 0; }
-    .sort-src::after { right:auto; left:20px; top:100%; width:0; height:14px; border-top:0; border-left:2px solid var(--rule); }
-    .branches { margin:14px 0 0 20px; }
-    .branch { grid-template-columns:minmax(0,1fr); padding-left:20px; }
-    .branch::before { width:14px; }
+    details.howto { margin-left:0; }
+    .howto dl { grid-template-columns:minmax(0,1fr); gap:2px; }
+    .howto dd { margin-bottom:8px; }
     .ev { grid-template-columns:minmax(0,1fr); }
     .ev-main, .ev-state, .ev-act { grid-column:1; grid-row:auto; }
     .ev-state { margin-top:6px; }
@@ -165,32 +160,28 @@
   </div>
 </div>
 
-<section aria-labelledby="routes-title">
-  <div class="section-head">
-    <div>
-      <h2 id="routes-title">{{ tr.get("routes-title") }}</h2>
-      <p class="muted">{{ tr.get("routes-intro") }}</p>
-    </div>
-  </div>
-  <div class="sort">
-    <div class="sort-src">{{ tr.get("route-source") }}</div>
-    <ul class="branches">
-      {% for r in routes %}
-      <li class="branch r-{{ r.key }}">
-        <div class="route-name"><span class="swatch"></span><strong>{{ r.label }}</strong>{% if mail_total > 0 %}<span class="n">{{ tr.args("routes-count", [("count", r.count.to_string()), ("total", mail_total.to_string())]) }}</span>{% endif %}</div>
-        <p>{{ r.help }}{% if r.key == "digest" %} <a class="go" href="/digest">{{ tr.get("digests") }}</a>{% else if r.key == "ignore" %} <a class="go" href="/senders">{{ tr.get("senders") }}</a>{% endif %}</p>
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
-</section>
-
 <section aria-labelledby="events-title">
-  <div class="section-head">
-    <div>
-      <h2 id="events-title">{{ tr.get("recent-events") }}</h2>
-      <p class="muted small">{{ tr.get("feedback-help") }}</p>
-    </div>
+  <div class="list-head">
+    <h2 id="events-title">{{ tr.get("recent-events") }}</h2>
+    {% if mail_total > 0 %}
+    <ul class="legend">
+      {% for r in routes %}
+      <li class="r-{{ r.key }}"><span class="swatch" aria-hidden="true"></span><span class="has-tip" tabindex="0" aria-describedby="route-tip-{{ r.key }}">{{ r.label }}<span class="tip" role="tooltip" id="route-tip-{{ r.key }}">{{ r.help }}</span></span> <strong>{{ r.count }}</strong></li>
+      {% endfor %}
+      <li>{{ tr.args("routes-total", [("total", mail_total.to_string())]) }}</li>
+    </ul>
+    {% endif %}
+    <details class="howto">
+      <summary>{{ tr.get("routes-title") }}</summary>
+      <p>{{ tr.get("routes-intro") }}</p>
+      <dl>
+        {% for r in routes %}
+        <dt class="r-{{ r.key }}"><span class="swatch" aria-hidden="true"></span>{{ r.label }}</dt>
+        <dd>{{ r.help }}{% if r.key == "digest" %} <a href="/digest">{{ tr.get("digests") }}</a>{% else if r.key == "ignore" %} <a href="/senders">{{ tr.get("senders") }}</a>{% endif %}</dd>
+        {% endfor %}
+      </dl>
+      <p>{{ tr.get("feedback-help") }}</p>
+    </details>
   </div>
   {% if events.is_empty() %}
     <p class="empty">{{ tr.get("no-events") }}</p>

@@ -13,7 +13,7 @@ Every signed-in page shares one layout ([`templates/base.html`](../../crates/gm/
 `web::Nav`): a sidebar (a scrolling top bar on narrow screens) linking Overview, Tasks (with the
 count of pending approvals), Digest, Ignored senders, Jobs and Settings, plus the owner's address and
 Sign out. Colour encodes the route only: notify, digest and ignore each have one hue, used for the
-route explanation on the dashboard and the edge of each mail row. An event's route comes from its
+route key on the dashboard and the edge of each mail row. An event's route comes from its
 status (`Pipeline::status_action` in [`pipeline.rs`](../../crates/gm/src/pipeline.rs)): `triaged`,
 `ready`, `notified` → notify; `digest` → digest; `ignored` → ignore; `new` and `classify` are
 still being sorted. Calendar events are not sorted and show as Calendar. Each mail row shows its
@@ -32,7 +32,7 @@ Guards on every request (`web::guard`):
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model state and hours, queue counts, health panel (Phase 2), the three routes (notify, digest, ignore) with what each does and how many of the recent mails took it, last 50 events with their route |
+| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model state and hours, queue counts, health panel (Phase 2), last 50 events with their route, a key of the three routes (notify, digest, ignore) with how many of those mails took each, and a closed "How mail is sorted" disclosure explaining them |
 | GET | `/auth/login` | — | Start sign-in (OIDC, PKCE, signed `gm_oauth` state cookie) |
 | GET | `/auth/callback` | — | Finish sign-in; 403 on state mismatch or unless the verified email equals `GM_ALLOWED_EMAIL` |
 | POST | `/auth/logout` | — | Clear the session |
