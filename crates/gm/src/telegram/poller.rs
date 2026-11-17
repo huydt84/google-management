@@ -174,10 +174,22 @@ impl TelegramPoller {
         let text = m["text"].as_str().unwrap_or_default().trim().to_string();
         let tr = self.user_settings.tr(&self.owner).await;
         let replied = m["reply_to_message"]["message_id"].as_i64();
-        let refs = match replied {
+        let mut refs = match replied {
             Some(id) => self.chat.lookup(id).await?.unwrap_or_default(),
             None => MessageRefs::default(),
         };
+        if let (Some(id), None, None) = (replied, refs.event_id, refs.task_id) {
+            // Not recorded (sent before the chat log existed): use the mail link in its text.
+            let text = m["reply_to_message"]["text"].as_str().unwrap_or_default();
+            if let Some(event_id) = self.chat.event_from_link(text).await? {
+                refs.event_id = Some(event_id);
+                let known = MessageRefs {
+                    event_id: Some(event_id),
+                    ..Default::default()
+                };
+                self.chat.record_out(id, known, None).await?;
+            }
+        }
         let about_mail = refs.event_id.is_some() || refs.task_id.is_some();
         let mut tx = self.pool.begin().await?;
         if !self.chat.record_in(&mut tx, message_id, refs).await? {
