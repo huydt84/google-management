@@ -62,6 +62,15 @@ against it. `cargo test` checks this (`crates/gm/tests/docs.rs`): every route, `
 topic, table and CLI command in the code must appear in `docs/spec/`, and every relative doc link must
 resolve.
 
+**Turn every mistake into a hard check.** When an error is found, by the owner or by you, in code,
+docs or process, fix it, then ask whether a machine could have caught it. If a lint, clippy setting,
+test, CI step or startup check could prevent it, add that check in the same change so the mistake
+can't come back. Prefer checks that fail `cargo test` / `cargo clippy` over written rules agents must
+remember. Only fall back to a rule in this file when no automatic check is practical, and say why.
+Examples already in place: `tests/docs.rs` (docs drifting from code, decision IDs in docs), the locale
+key-parity test (a string missing in one language), `gm rules` and the rule examples (a rules edit
+that stops matching), and the config refusing a non-loopback bind.
+
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and
 the **architecture invariants** you must not break: idempotent handlers with transactional publish;
