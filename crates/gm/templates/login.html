@@ -1,8 +1,20 @@
 {% extends "base.html" %}
-{% block body %}
-<div class="card" style="max-width:420px;margin:15vh auto;text-align:center">
-  <h1>{{ tr.get("app-title") }}</h1>
-  <p class="muted">{{ tr.get("sign-in-note") }}</p>
-  <a class="btn primary" href="/auth/login">{{ tr.get("sign-in") }}</a>
-</div>
+{% block style %}
+  body { background:var(--paper); }
+  .signin { min-height:100vh; display:grid; place-items:center; padding:24px 16px; }
+  .signin-box { width:100%; max-width:380px; background:var(--sheet); border:1px solid var(--rule);
+                border-radius:10px; padding:28px; }
+  .signin-box h1 { font-size:22px; margin-bottom:8px; }
+  .routes-mark { display:flex; gap:4px; margin-bottom:22px; }
+  .routes-mark span { height:4px; flex:1; border-radius:2px; }
+{% endblock %}
+{% block page %}
+<main class="signin">
+  <div class="signin-box">
+    <div class="routes-mark" aria-hidden="true"><span style="background:var(--notify)"></span><span style="background:var(--digest)"></span><span style="background:var(--ignore)"></span></div>
+    <h1>{{ tr.get("app-title") }}</h1>
+    <p class="muted">{{ tr.get("sign-in-note") }}</p>
+    <a class="btn primary" href="/auth/login">{{ tr.get("sign-in") }}</a>
+  </div>
+</main>
 {% endblock %}

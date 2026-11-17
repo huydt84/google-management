@@ -1,42 +1,53 @@
 {% extends "base.html" %}
+{% block style %}
+  .approval { border:1px solid var(--rule); border-left:3px solid var(--notify); border-radius:var(--radius);
+              padding:14px 16px; margin-bottom:12px; }
+  .approval-meta { display:flex; flex-wrap:wrap; gap:4px 16px; font-size:13px; color:var(--graphite); margin-bottom:10px; }
+  .approval-meta strong { color:var(--ink); }
+  .approval pre.text { background:var(--paper); padding:12px 14px; border-radius:var(--radius); margin-bottom:12px; max-height:420px; overflow:auto; }
+{% endblock %}
 {% block body %}
-<header>
-  <h1><a href="/" style="color:inherit;text-decoration:none">{{ tr.get("app-title") }}</a> · {{ tr.get("tasks") }}</h1>
-  <div><span class="muted">{{ email }}</span> <a class="btn" href="/">{{ tr.get("back") }}</a></div>
-</header>
+<div class="page-head"><h1>{{ tr.get("tasks") }}</h1></div>
 
-<section class="card">
-  <h2>{{ tr.get("approvals-pending") }}</h2>
+<section aria-labelledby="approvals-title">
+  <div class="section-head"><h2 id="approvals-title">{{ tr.get("approvals-pending") }}</h2></div>
   {% if approvals.is_empty() %}
-    <p class="muted">{{ tr.get("approvals-none") }}</p>
+    <p class="empty">{{ tr.get("approvals-none") }}</p>
   {% else %}
     {% for a in approvals %}
-      <div style="margin-bottom:1.2em">
-        <p class="muted">#{{ a.id }} · {{ a.action }} · {{ tr.get("col-task") }} {{ a.task_id }} · {{ tr.get("approval-expires") }} {{ a.expires }}</p>
-        <pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ a.preview }}</pre>
-        <form method="post" action="/approvals/{{ a.id }}/approve"><button class="btn primary">{{ tr.get("button-approve") }}</button></form>
-        <form method="post" action="/approvals/{{ a.id }}/reject"><button class="btn">{{ tr.get("button-reject") }}</button></form>
+      <div class="approval">
+        <div class="approval-meta">
+          <strong>{{ a.action }}</strong>
+          <span>{{ tr.get("col-task") }} {{ a.task_id }}</span>
+          <span>{{ tr.get("approval-expires") }} {{ a.expires }}</span>
+          <span>#{{ a.id }}</span>
+        </div>
+        <pre class="text">{{ a.preview }}</pre>
+        <div class="row">
+          <form method="post" action="/approvals/{{ a.id }}/approve"><button class="btn primary">{{ tr.get("button-approve") }}</button></form>
+          <form method="post" action="/approvals/{{ a.id }}/reject"><button class="btn">{{ tr.get("button-reject") }}</button></form>
+        </div>
       </div>
     {% endfor %}
   {% endif %}
 </section>
 
-<section class="card">
-  <h2>{{ tr.get("tasks-recent") }}</h2>
+<section aria-labelledby="tasks-title">
+  <div class="section-head"><h2 id="tasks-title">{{ tr.get("tasks-recent") }}</h2></div>
   {% if tasks.is_empty() %}
-    <p class="muted">{{ tr.get("tasks-none") }}</p>
+    <p class="empty">{{ tr.get("tasks-none") }}</p>
   {% else %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>#</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("col-intent") }}</th><th>{{ tr.get("col-from-subject") }}</th><th>{{ tr.get("col-status") }}</th></tr></thead>
+    <thead><tr><th class="num">#</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("col-intent") }}</th><th>{{ tr.get("col-from-subject") }}</th><th>{{ tr.get("col-status") }}</th></tr></thead>
     <tbody>
     {% for t in tasks %}
       <tr>
-        <td class="muted">{{ t.id }}</td>
-        <td class="muted" style="white-space:nowrap">{{ t.time }}</td>
+        <td class="num muted">{{ t.id }}</td>
+        <td class="muted nowrap">{{ t.time }}</td>
         <td>{{ t.intent }}</td>
-        <td>{{ t.subject }}{% if !t.instruction.is_empty() %}<br><span class="muted">“{{ t.instruction }}”</span>{% endif %}</td>
-        <td><span class="pill s-{{ t.status }}">{{ t.status }}</span>{% if !t.error.is_empty() %}<br><span class="bad">{{ t.error }}</span>{% endif %}</td>
+        <td class="wrap">{{ t.subject }}{% if !t.instruction.is_empty() %}<br><span class="muted">“{{ t.instruction }}”</span>{% endif %}</td>
+        <td><span class="state s-{{ t.status }}">{{ t.status }}</span>{% if !t.error.is_empty() %}<br><span class="bad small">{{ t.error }}</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -45,10 +56,10 @@
   {% endif %}
 </section>
 
-<section class="card">
-  <h2>{{ tr.get("audit-log") }}</h2>
+<section aria-labelledby="audit-title">
+  <div class="section-head"><h2 id="audit-title">{{ tr.get("audit-log") }}</h2></div>
   {% if audit.is_empty() %}
-    <p class="muted">{{ tr.get("audit-none") }}</p>
+    <p class="empty">{{ tr.get("audit-none") }}</p>
   {% else %}
   <div class="table-wrap">
   <table>
@@ -56,11 +67,11 @@
     <tbody>
     {% for a in audit %}
       <tr>
-        <td class="muted" style="white-space:nowrap">{{ a.time }}</td>
+        <td class="muted nowrap">{{ a.time }}</td>
         <td>{{ a.action }}</td>
-        <td style="overflow-wrap:anywhere">{{ a.target }}</td>
-        <td>{{ a.outcome }}</td>
-        <td class="muted" style="overflow-wrap:anywhere">{{ a.details }}</td>
+        <td class="wrap">{{ a.target }}</td>
+        <td>{% if !a.outcome.is_empty() %}<span class="state s-{{ a.outcome }}">{{ a.outcome }}</span>{% endif %}</td>
+        <td class="muted wrap">{{ a.details }}</td>
       </tr>
     {% endfor %}
     </tbody>

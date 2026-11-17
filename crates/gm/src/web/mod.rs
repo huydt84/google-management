@@ -57,6 +57,22 @@ impl IntoResponse for AppError {
     }
 }
 
+/// The navigation shared by every signed-in page (`templates/base.html`): the current page and the
+/// number of approvals waiting, shown next to Tasks.
+pub struct Nav {
+    pub active: &'static str,
+    pub approvals: usize,
+}
+
+impl Nav {
+    pub async fn load(state: &AppState, active: &'static str) -> Result<Self, AppError> {
+        Ok(Self {
+            active,
+            approvals: crate::tasks::approvals::pending(&state.pool).await?.len(),
+        })
+    }
+}
+
 /// The signed-in owner, if the session cookie is valid and belongs to `GM_ALLOWED_EMAIL`.
 pub fn current_owner(state: &AppState, jar: &CookieJar) -> Option<String> {
     let s: Session = state

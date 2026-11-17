@@ -204,6 +204,9 @@ async fn dashboard_feedback_and_hints(pool: PgPool) {
         "rule hint"
     );
     assert!(body.contains("The model decided this"), "eval hint");
-    assert!(body.contains("✅👎"));
+    assert!(
+        body.contains(r#"aria-pressed="true">👎</button>"#),
+        "the 👎 is shown as pressed"
+    );
     assert_eq!(label(&t, model_ev).await.as_deref(), Some("down"));
 }

@@ -10,7 +10,7 @@ use axum_extra::extract::CookieJar;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{AppError, SharedState, current_owner};
+use super::{AppError, Nav, SharedState, current_owner};
 use crate::i18n::Tr;
 use crate::tasks::ApprovalDecision;
 
@@ -51,6 +51,7 @@ pub struct AuditRow {
 struct TasksPage {
     tr: Tr,
     email: String,
+    nav: Nav,
     approvals: Vec<ApprovalRow>,
     tasks: Vec<TaskRow>,
     audit: Vec<AuditRow>,
@@ -89,6 +90,10 @@ pub async fn tasks_page(
     let page = TasksPage {
         tr: Tr::new(&prefs.ui_language),
         email,
+        nav: Nav {
+            active: "tasks",
+            approvals: approvals.len(),
+        },
         approvals: approvals
             .into_iter()
             .map(|a| ApprovalRow {

@@ -9,6 +9,18 @@ Code: [`src/web/mod.rs`](../../crates/gm/src/web/mod.rs), [`src/web/pages.rs`](.
 
 Served on `127.0.0.1:${GM_PORT}` (8080). Code: `crates/gm/src/web/`.
 
+Every signed-in page shares one layout ([`templates/base.html`](../../crates/gm/templates/base.html),
+`web::Nav`): a sidebar (a scrolling top bar on narrow screens) linking Overview, Tasks (with the
+count of pending approvals), Digest, Ignored senders, Jobs and Settings, plus the owner's address and
+Sign out. Colour encodes the route only: notify, digest and ignore each have one hue, used for the
+route explanation on the dashboard and the edge of each mail row. An event's route comes from its
+status (`Pipeline::status_action` in [`pipeline.rs`](../../crates/gm/src/pipeline.rs)): `triaged`,
+`ready`, `notified` → notify; `digest` → digest; `ignored` → ignore; `new` and `classify` are
+still being sorted. Calendar events are not sorted and show as Calendar. Each mail row shows its
+status as read-only text (hover or focus it for what its route does). The 👍 / 👎 and "Add to eval"
+buttons appear when the row is hovered or focused, and always on touch screens; a given 👍 / 👎
+and eval membership stay visible as notes under the status. Pages use system fonts only and load nothing from outside gm.
+
 Guards on every request (`web::guard`):
 
 - `Host` must be `localhost`, `127.0.0.1`, or the host of `GM_BASE_URL` / `GM_PUBLIC_URL`;
@@ -20,15 +32,15 @@ Guards on every request (`web::guard`):
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model hours, queue counts, health panel (Phase 2), last 50 events |
+| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model state and hours, queue counts, health panel (Phase 2), the three routes (notify, digest, ignore) with what each does and how many of the recent mails took it, last 50 events with their route |
 | GET | `/auth/login` | — | Start sign-in (OIDC, PKCE, signed `gm_oauth` state cookie) |
 | GET | `/auth/callback` | — | Finish sign-in; 403 on state mismatch or unless the verified email equals `GM_ALLOWED_EMAIL` |
 | POST | `/auth/logout` | — | Clear the session |
 | GET | `/connect/google` | session | Start API consent (`gmail.readonly` and `gmail.compose`, plus `pubsub` in Pub/Sub mode; offline, `prompt=consent`). The dashboard warns when the stored grant lacks a required scope |
 | GET | `/connect/google/callback` | session | Check owner and scopes, store the encrypted refresh token, bootstrap the Gmail cursor |
-| GET | `/settings` | session (else redirect to `/`) | The user's settings, rendered in their UI language |
+| GET | `/settings[?saved=1][?model=]` | session (else redirect to `/`) | The user's settings, rendered in their UI language, and the model controls with their save result |
 | POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`, `digest_at` (HH:MM inside model hours); 400 with a localized reason, else redirect `/settings?saved=1` |
-| POST | `/model` | session | Form `on`, `off` (HH:MM), `manage` (checkbox), `idle_min` (1–720), `grace_s` (0–1800), `model` (id, no spaces): the model controls ([ADR-0010](../adr/0010-llm-client-lanes-residency.md)); the new hours must contain the owner's digest time. Redirect `/?model=saved`, or `/?model=<error id>` |
+| POST | `/model` | session | Form `on`, `off` (HH:MM), `manage` (checkbox), `idle_min` (1–720), `grace_s` (0–1800), `model` (id, no spaces): the model controls ([ADR-0010](../adr/0010-llm-client-lanes-residency.md)); the new hours must contain the owner's digest time. Redirect `/settings?model=saved#model`, or `/settings?model=<error id>#model` |
 | POST | `/api/gmail/sync` | session | Sync the owner's mailbox now, redirect to `/` |
 | GET | `/api/events` | session (401 JSON otherwise) | Last 100 events as JSON |
 | GET | `/healthz` | — | `{"ok":true}`, or 503 if the database is unreachable |
@@ -262,10 +274,10 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_SUMMARY_MAX_TOKENS` | 400 | Output cap for summaries |
 | `GM_LLM_NO_THINK_TAG` | `/no_think` | Appended to the system prompt; empty to disable |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
-| `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on). First default: the dashboard value (`system_settings.model_control`) wins once saved |
-| `GM_MODEL_MANAGE` | `true` | gm stops the model outside model hours and starts it for owner requests (first default; dashboard switch) |
-| `GM_MODEL_IDLE_MIN` | 10 | Minutes the model stays up after the last owner request outside model hours (first default; dashboard) |
-| `GM_MODEL_STOP_GRACE_S` | 300 | Seconds to wait for in-flight requests before stopping the model (first default; dashboard) |
+| `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on). First default: the Settings page value (`system_settings.model_control`) wins once saved |
+| `GM_MODEL_MANAGE` | `true` | gm stops the model outside model hours and starts it for owner requests (first default; Settings page switch) |
+| `GM_MODEL_IDLE_MIN` | 10 | Minutes the model stays up after the last owner request outside model hours (first default; Settings page) |
+| `GM_MODEL_STOP_GRACE_S` | 300 | Seconds to wait for in-flight requests before stopping the model (first default; Settings page) |
 | `GM_MODEL_START_TIMEOUT_S` | 120 | Seconds to wait for `/ready` after starting the model |
 | `GM_MLX_AIR_BIN` | `~/.local/bin/mlx-air` if it exists, else `mlx-air` | The executable gm calls to start and stop the model (launchd's PATH lacks `~/.local/bin`) |
 | `GM_MLX_INSTANCE` | `gm` | The mlx-air instance gm starts and stops |

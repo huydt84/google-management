@@ -135,7 +135,7 @@ Machine-wide key-value state (not per user), read and written with `db::system_g
 | Key | Value | Notes |
 |-----|-------|-------|
 | `telegram_offset` | int | next `getUpdates` offset ([`telegram/poller.rs`](../../crates/gm/src/telegram/poller.rs)) |
-| `model_control` | object | the model controls edited on the dashboard: `on`, `off`, `manage`, `idle_min`, `grace_s`, `model` ([`model.rs`](../../crates/gm/src/model.rs)); absent until first saved, then it replaces the `GM_MODEL_*` defaults |
+| `model_control` | object | the model controls edited on the Settings page: `on`, `off`, `manage`, `idle_min`, `grace_s`, `model` ([`model.rs`](../../crates/gm/src/model.rs)); absent until first saved, then it replaces the `GM_MODEL_*` defaults |
 | `notifications_paused` | bool | `true` while `/pause` holds mail notifications ([`telegram/mod.rs`](../../crates/gm/src/telegram/mod.rs)) |
 
 ### `triage_feedback` (`0006_feedback.sql`)

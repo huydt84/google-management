@@ -1,35 +1,44 @@
 {% extends "base.html" %}
+{% block style %}
+  .digest { display:grid; grid-template-columns:220px minmax(0,1fr); gap:32px; align-items:start; }
+  .runs { list-style:none; margin:0; padding:0; border:1px solid var(--rule); border-radius:var(--radius); overflow:hidden; }
+  .runs li + li { border-top:1px solid var(--rule-soft); }
+  .runs a { display:grid; grid-template-columns:1fr auto; gap:2px 8px; padding:9px 12px; text-decoration:none; }
+  .runs a:hover { background:var(--hover); }
+  .runs a[aria-current="true"] { background:var(--digest-tint); box-shadow:inset 3px 0 0 var(--digest); }
+  .runs .date { font-weight:600; }
+  .runs .items { color:var(--graphite); font-size:13px; text-align:right; }
+  .reader { border-left:3px solid var(--digest); padding:4px 0 4px 22px; max-width:72ch; }
+  @media (max-width: 760px) {
+    .digest { grid-template-columns:minmax(0,1fr); gap:20px; }
+    .runs { max-height:220px; overflow-y:auto; }
+  }
+{% endblock %}
 {% block body %}
-<header>
-  <h1><a href="/" style="color:inherit;text-decoration:none">{{ tr.get("app-title") }}</a> · {{ tr.get("digests") }}</h1>
-  <div><span class="muted">{{ email }}</span> <a class="btn" href="/">{{ tr.get("back") }}</a></div>
-</header>
+<div class="page-head"><h1>{{ tr.get("digests") }}</h1></div>
 
 {% if digests.is_empty() %}
-<section class="card"><p class="muted">{{ tr.get("digest-none") }}</p></section>
+<p class="empty">{{ tr.get("digest-none") }}</p>
 {% else %}
-<div class="grid" style="grid-template-columns: minmax(220px, 1fr) 3fr">
-  <section class="card">
-    <table>
-      <thead><tr><th>{{ tr.get("col-date") }}</th><th>{{ tr.get("col-items") }}</th><th>{{ tr.get("col-status") }}</th></tr></thead>
-      <tbody>
-      {% for d in digests %}
-        <tr>
-          <td><a href="/digest?id={{ d.id }}">{{ d.date }}</a>{% if d.id == selected_id %} ◀{% endif %}</td>
-          <td>{{ d.items }}</td>
-          <td><span class="pill s-{{ d.status }}">{{ d.status }}</span></td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </section>
-  <section class="card">
+<div class="digest">
+  <nav aria-label="{{ tr.get("digests") }}">
+    <ul class="runs">
+    {% for d in digests %}
+      <li><a href="/digest?id={{ d.id }}"{% if d.id == selected_id %} aria-current="true"{% endif %}>
+        <span class="date">{{ d.date }}</span>
+        <span class="items" title="{{ tr.get("col-items") }}">{{ d.items }}</span>
+        <span class="state s-{{ d.status }}">{{ d.status }}</span>
+      </a></li>
+    {% endfor %}
+    </ul>
+  </nav>
+  <article class="reader">
     {% if selected_text.is_empty() %}
       <p class="muted">{{ tr.get("digest-nothing-sent") }}</p>
     {% else %}
-      <pre style="white-space:pre-wrap;font:inherit;margin:0">{{ selected_text }}</pre>
+      <pre class="text">{{ selected_text }}</pre>
     {% endif %}
-  </section>
+  </article>
 </div>
 {% endif %}
 {% endblock %}

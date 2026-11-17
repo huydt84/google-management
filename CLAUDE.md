@@ -73,7 +73,9 @@ resolve.
 **Prove it works on the real system.** Passing `cargo test` is not "done". Before you report a change
 as working, run it the way the owner will: start `gm serve` (or the CLI command), drive the changed
 flow (dashboard over `curl` or a browser, a real `gm` command, the local model at `GM_LLM_BASE_URL`),
-and look at the result: page content, DB rows, logs. In the final report, separate what you
+and look at the result: page content, DB rows, logs. Pages behind the Google sign-in are checked in the
+owner's Chrome through the Claude in Chrome extension (`mcp__claude-in-chrome__*`), which has the
+owner's Google session; the app's built-in browser pane has none. In the final report, separate what you
 **verified** (with the command and its output), what you **inferred**, and what you **did not check**
 and why. If you can't run something, report the blocker; don't call it verified.
 

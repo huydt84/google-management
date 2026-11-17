@@ -115,6 +115,41 @@ async fn host_and_origin_guards(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn model_controls_live_on_settings(pool: PgPool) {
+    let t = test_app(pool, |_| {}, None).await;
+    let r = gm::web::router(t.app.state.clone());
+    let c = session_cookie(&t, OWNER);
+    let (_, _, body) = send(&r, get("/settings", Some(&c))).await;
+    assert!(
+        body.contains(r#"action="/model""#),
+        "model form on Settings"
+    );
+    let (_, _, body) = send(&r, get("/", Some(&c))).await;
+    assert!(!body.contains(r#"action="/model""#), "not on the dashboard");
+
+    let (s, h, _) = send(
+        &r,
+        post_form(
+            "/model",
+            &c,
+            "on=9am&off=19:00&idle_min=10&grace_s=300&model=m",
+        ),
+    )
+    .await;
+    let location = h[header::LOCATION].to_str().unwrap().to_string();
+    assert_eq!(
+        (s, location.as_str()),
+        (
+            StatusCode::SEE_OTHER,
+            "/settings?model=model-invalid-time#model"
+        )
+    );
+    let page = location.split('#').next().unwrap();
+    let (_, _, body) = send(&r, get(page, Some(&c))).await;
+    assert!(body.contains("Enter the hours as HH:MM."));
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
 async fn owner_dashboard_and_settings(pool: PgPool) {
     let t = test_app(pool, |_| {}, None).await;
     let r = gm::web::router(t.app.state.clone());

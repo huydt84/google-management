@@ -1,38 +1,42 @@
 {% extends "base.html" %}
+{% block style %}
+  .filters { display:flex; gap:4px; flex-wrap:wrap; padding:3px; background:var(--paper); border-radius:8px; width:max-content; max-width:100%; }
+  .filters a { padding:5px 12px; border-radius:var(--radius); text-decoration:none; color:var(--graphite); font-size:14px; }
+  .filters a:hover { color:var(--ink); }
+  .filters a[aria-current="page"] { background:var(--sheet); color:var(--ink); font-weight:600; box-shadow:0 0 0 1px var(--rule); }
+  .toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+{% endblock %}
 {% block body %}
-<header>
-  <h1><a href="/" style="color:inherit;text-decoration:none">{{ tr.get("app-title") }}</a> · {{ tr.get("jobs") }}</h1>
-  <div><span class="muted">{{ email }}</span> <a class="btn" href="/">{{ tr.get("back") }}</a></div>
-</header>
-<section class="card">
-  <p>
+<div class="page-head"><h1>{{ tr.get("jobs") }}</h1></div>
+<div class="toolbar">
+  <nav class="filters" aria-label="{{ tr.get("col-status") }}">
     {% for s in statuses %}
-      <a class="pill s-{{ s }}" href="/jobs?status={{ s }}">{% if s.as_str() == status.as_str() %}<strong>{{ s }}</strong>{% else %}{{ s }}{% endif %}</a>
+      <a href="/jobs?status={{ s }}"{% if s.as_str() == status.as_str() %} aria-current="page"{% endif %}>{{ s }}</a>
     {% endfor %}
-    {% if status == "dead" && !jobs.is_empty() %}
-      <form method="post" action="/jobs/retry-dead"><button class="btn">{{ tr.get("retry-all") }}</button></form>
-    {% endif %}
-  </p>
-  {% if jobs.is_empty() %}
-    <p class="muted">{{ tr.get("no-jobs") }}</p>
-  {% else %}
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th>#</th><th>{{ tr.get("col-job") }}</th><th>{{ tr.get("col-attempts") }}</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("error") }}</th><th></th></tr></thead>
-    <tbody>
-    {% for j in jobs %}
-      <tr>
-        <td class="muted">{{ j.id }}</td>
-        <td>{{ j.subscriber }}<br><span class="muted">{{ j.topic }}</span></td>
-        <td>{{ j.attempts }}</td>
-        <td class="muted" style="white-space:nowrap">{{ j.updated }}</td>
-        <td class="bad" style="overflow-wrap:anywhere">{{ j.error }}</td>
-        <td>{% if j.status == "dead" %}<form method="post" action="/jobs/{{ j.id }}/retry"><button class="btn">{{ tr.get("retry") }}</button></form>{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
+  </nav>
+  {% if status == "dead" && !jobs.is_empty() %}
+    <form method="post" action="/jobs/retry-dead"><button class="btn">{{ tr.get("retry-all") }}</button></form>
   {% endif %}
-</section>
+</div>
+{% if jobs.is_empty() %}
+  <p class="empty">{{ tr.get("no-jobs") }}</p>
+{% else %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th class="num">#</th><th>{{ tr.get("col-job") }}</th><th class="num">{{ tr.get("col-attempts") }}</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("error") }}</th><th></th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+    <tr>
+      <td class="num muted">{{ j.id }}</td>
+      <td>{{ j.subscriber }}<br><span class="muted small">{{ j.topic }}</span></td>
+      <td class="num">{{ j.attempts }}</td>
+      <td class="muted nowrap">{{ j.updated }}</td>
+      <td class="bad wrap">{{ j.error }}</td>
+      <td>{% if j.status == "dead" %}<form method="post" action="/jobs/{{ j.id }}/retry"><button class="btn">{{ tr.get("retry") }}</button></form>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
 {% endblock %}

@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{AppError, SharedState, current_owner};
+use super::{AppError, Nav, SharedState, current_owner};
 use crate::i18n::{Tr, UI_LANGUAGES};
 use crate::user_settings::{COMMON_LANGUAGES, UserSettings};
 
@@ -36,6 +36,11 @@ pub struct EventRow {
     pub subject: String,
     pub link: String,
     pub status: String,
+    /// The status in words (`event-status-*`).
+    pub status_label: String,
+    /// `notify`, `digest` or `ignore` ([`Pipeline::status_action`]), `sorting` before a route is
+    /// chosen, `gone`, or `calendar` for calendar events (they are not sorted into routes).
+    pub route: &'static str,
     pub rule: String,
     /// Model triage reason (`rule = "model"`).
     pub reason: String,
@@ -48,11 +53,21 @@ pub struct EventRow {
     pub in_eval: bool,
 }
 
+/// One of the three routes on the dashboard: how many recent mails took it, and what it does.
+pub struct RouteRow {
+    /// `notify`, `digest` or `ignore`.
+    pub key: &'static str,
+    pub label: String,
+    pub count: usize,
+    pub help: String,
+}
+
 #[derive(Template)]
 #[template(path = "index.html")]
 struct IndexPage {
     tr: Tr,
     email: String,
+    nav: Nav,
     /// The connected account lacks a scope this build requires (e.g. `gmail.compose`): reconnect.
     missing_scopes: bool,
     account_status: String,
@@ -65,17 +80,16 @@ struct IndexPage {
     llm_base_url: String,
     model_hours: String,
     model_state: String,
-    model_manage: bool,
-    model_on: String,
-    model_off: String,
-    model_idle_min: u32,
-    model_grace_s: u32,
-    model_id: String,
-    model_banner: String,
+    /// `running`, `stopped` or `unmanaged`.
+    model_state_key: &'static str,
     summary_language: String,
     notifier: String,
     job_stats: Vec<(String, i64)>,
     health: Vec<HealthRow>,
+    health_failing: usize,
+    routes: Vec<RouteRow>,
+    /// Mail events among `events`, the base of the route counts.
+    mail_total: usize,
     events: Vec<EventRow>,
     /// Outcome of "Add to eval": message key, or empty.
     banner: String,
@@ -139,7 +153,16 @@ fn event_row(e: crate::db::Event, tr: &Tr) -> EventRow {
     let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
     let summary = e.summary.clone().unwrap_or(Value::Null);
     let is_gmail = e.source == "gmail";
+    let action = crate::pipeline::Pipeline::status_action(&e.status);
+    let route = match action {
+        _ if !is_gmail => "calendar",
+        Some(a) => a.as_str(),
+        None if e.status == "gone" => "gone",
+        None => "sorting",
+    };
     EventRow {
+        status_label: tr.get(&format!("event-status-{}", e.status)),
+        route,
         is_gmail,
         id: e.id,
         time: local_time(&e.created_at, "%m-%d %H:%M"),
@@ -194,13 +217,21 @@ async fn with_feedback(
         .collect())
 }
 
+/// Whether gm manages the model and, if so, whether it is up: `unmanaged`, `running` or `stopped`.
+async fn model_state(state: &SharedState) -> &'static str {
+    if !state.model.managing() {
+        "unmanaged"
+    } else if state.model.ready().await {
+        "running"
+    } else {
+        "stopped"
+    }
+}
+
 #[derive(Deserialize, Default)]
 pub struct IndexQuery {
     #[serde(default)]
     eval: String,
-    /// Result of saving the model controls: `saved` or the Fluent id of the error.
-    #[serde(default)]
-    model: String,
 }
 
 pub async fn index(
@@ -222,15 +253,8 @@ pub async fn index(
     .fetch_optional(&state.pool)
     .await?;
     let tr = Tr::new(&prefs.ui_language);
-    let ms = state.model.settings();
-    let hours = ms.hours().label(&tr.get("always"));
-    let model_state = if !state.model.managing() {
-        tr.get("model-state-unmanaged")
-    } else if state.model.ready().await {
-        tr.get("model-state-running")
-    } else {
-        tr.get("model-state-stopped")
-    };
+    let hours = state.model.settings().hours().label(&tr.get("always"));
+    let model_state_key = model_state(&state).await;
     let poll_s = state.cfg.gmail_poll_interval_s;
     let (ingest, ingest_error) = match &state.cfg.pubsub {
         None => (
@@ -253,8 +277,35 @@ pub async fn index(
     let missing_scopes = account
         .as_ref()
         .is_some_and(|a| required.iter().any(|r| !a.scopes.0.iter().any(|g| g == r)));
+    let events = with_feedback(
+        &state,
+        crate::db::recent_events(&state.pool, 50).await?,
+        &tr,
+    )
+    .await?;
+    let health = health_rows(&state, &tr).await?;
+    let mail_total = events.iter().filter(|e| e.is_gmail).count();
+    let routes = crate::rules::Action::FINAL
+        .iter()
+        .map(|a| {
+            let key = a.as_str();
+            RouteRow {
+                key,
+                label: tr.get(&format!("eval-{key}")),
+                count: events
+                    .iter()
+                    .filter(|e| e.is_gmail && e.route == key)
+                    .count(),
+                help: tr.args(
+                    &format!("route-{key}-help"),
+                    &[("hours", hours.clone()), ("time", prefs.digest_at.clone())],
+                ),
+            }
+        })
+        .collect();
     let page = IndexPage {
         email,
+        nav: Nav::load(&state, "overview").await?,
         missing_scopes,
         account_status: account.map(|a| a.status).unwrap_or_default(),
         history_id: gs
@@ -273,14 +324,8 @@ pub async fn index(
         llm_model: state.model.request_model(),
         llm_base_url: state.cfg.llm_base_url.clone(),
         model_hours: hours,
-        model_state,
-        model_manage: ms.manage,
-        model_on: ms.on.format("%H:%M").to_string(),
-        model_off: ms.off.format("%H:%M").to_string(),
-        model_idle_min: ms.idle_min,
-        model_grace_s: ms.grace_s,
-        model_id: ms.model.clone(),
-        model_banner: q.model.clone(),
+        model_state: tr.get(&format!("model-state-{model_state_key}")),
+        model_state_key,
         summary_language: prefs.summary_language,
         notifier: if state.notifier_name == "telegram" {
             tr.get("telegram")
@@ -288,13 +333,11 @@ pub async fn index(
             tr.get("log-only")
         },
         job_stats: crate::db::count_by(&state.pool, "jobs").await?,
-        health: health_rows(&state, &tr).await?,
-        events: with_feedback(
-            &state,
-            crate::db::recent_events(&state.pool, 50).await?,
-            &tr,
-        )
-        .await?,
+        health_failing: health.iter().filter(|h| h.state == "failing").count(),
+        health,
+        routes,
+        mail_total,
+        events,
         banner: match q.eval.as_str() {
             "added" | "updated" | "full" | "gone" => format!("eval-{}", q.eval),
             _ => String::new(),
@@ -309,6 +352,7 @@ pub async fn index(
 struct SettingsPage {
     tr: Tr,
     email: String,
+    nav: Nav,
     summary_language: String,
     translation_language: String,
     ui_language: String,
@@ -319,17 +363,37 @@ struct SettingsPage {
     digest_help: String,
     error: String,
     saved: bool,
+    model_state: String,
+    model_manage: bool,
+    model_on: String,
+    model_off: String,
+    model_idle_min: u32,
+    model_grace_s: u32,
+    model_id: String,
+    /// Result of saving the model controls: `saved`, the Fluent id of the error, or empty.
+    model_banner: String,
 }
 
-fn settings_page_for(
+async fn settings_page_for(
     state: &SharedState,
     email: String,
     s: &UserSettings,
     error: String,
     saved: bool,
-) -> SettingsPage {
+    model_banner: String,
+) -> Result<SettingsPage, AppError> {
     let tr = Tr::new(&s.ui_language);
-    SettingsPage {
+    let ms = state.model.settings();
+    Ok(SettingsPage {
+        nav: Nav::load(state, "settings").await?,
+        model_state: tr.get(&format!("model-state-{}", model_state(state).await)),
+        model_manage: ms.manage,
+        model_on: ms.on.format("%H:%M").to_string(),
+        model_off: ms.off.format("%H:%M").to_string(),
+        model_idle_min: ms.idle_min,
+        model_grace_s: ms.grace_s,
+        model_id: ms.model.clone(),
+        model_banner,
         default_help: tr.args(
             "summary-language-help",
             &[("default", state.cfg.default_summary_language.clone())],
@@ -354,12 +418,15 @@ fn settings_page_for(
         languages: COMMON_LANGUAGES.iter().map(|s| s.to_string()).collect(),
         error,
         saved,
-    }
+    })
 }
 
 #[derive(Deserialize)]
 pub struct SavedQuery {
     saved: Option<String>,
+    /// Result of saving the model controls: `saved` or the Fluent id of the error.
+    #[serde(default)]
+    model: String,
 }
 
 pub async fn settings_page(
@@ -371,13 +438,17 @@ pub async fn settings_page(
         return Ok(Redirect::to("/").into_response());
     };
     let prefs = state.user_settings.get(&email).await?;
-    render(&settings_page_for(
-        &state,
-        email,
-        &prefs,
-        String::new(),
-        q.saved.as_deref() == Some("1"),
-    ))
+    render(
+        &settings_page_for(
+            &state,
+            email,
+            &prefs,
+            String::new(),
+            q.saved.as_deref() == Some("1"),
+            q.model,
+        )
+        .await?,
+    )
 }
 
 #[derive(Deserialize)]
@@ -421,7 +492,9 @@ pub async fn save_settings(
                 ui_language: current.ui_language,
                 ..submitted
             };
-            let page = settings_page_for(&state, email, &shown, String::new(), false);
+            let page =
+                settings_page_for(&state, email, &shown, String::new(), false, String::new())
+                    .await?;
             let msg = page.tr.get(e.message_id());
             let page = SettingsPage { error: msg, ..page };
             Ok((StatusCode::BAD_REQUEST, Html(page.render()?)).into_response())
@@ -450,7 +523,7 @@ pub async fn save_model(
     let Some(email) = current_owner(&state, &jar) else {
         return Ok(Redirect::to("/").into_response());
     };
-    let back = |what: &str| Redirect::to(&format!("/?model={what}")).into_response();
+    let back = |what: &str| Redirect::to(&format!("/settings?model={what}#model")).into_response();
     let time = |s: &str| chrono::NaiveTime::parse_from_str(s.trim(), "%H:%M").ok();
     let (Some(on), Some(off)) = (time(&f.on), time(&f.off)) else {
         return Ok(back("model-invalid-time"));
@@ -601,6 +674,7 @@ pub struct DigestRow {
 struct DigestPage {
     tr: Tr,
     email: String,
+    nav: Nav,
     digests: Vec<DigestRow>,
     selected_id: i64,
     selected_text: String,
@@ -637,6 +711,7 @@ pub async fn digest_page(
     render(&DigestPage {
         tr: Tr::new(&prefs.ui_language),
         email,
+        nav: Nav::load(&state, "digest").await?,
         digests: rows
             .iter()
             .map(|(id, date, items, status, _)| DigestRow {
@@ -683,6 +758,7 @@ pub struct JobRow {
 struct JobsPage {
     tr: Tr,
     email: String,
+    nav: Nav,
     status: String,
     statuses: Vec<String>,
     jobs: Vec<JobRow>,
@@ -718,6 +794,7 @@ pub async fn jobs_page(
     render(&JobsPage {
         tr: Tr::new(&prefs.ui_language),
         email,
+        nav: Nav::load(&state, "jobs").await?,
         status,
         statuses: statuses.iter().map(|s| s.to_string()).collect(),
         jobs: rows
@@ -783,6 +860,7 @@ pub struct SenderRow {
 struct SendersPage {
     tr: Tr,
     email: String,
+    nav: Nav,
     senders: Vec<SenderRow>,
 }
 
@@ -807,6 +885,7 @@ pub async fn senders_page(
     render(&SendersPage {
         tr: Tr::new(&prefs.ui_language),
         email,
+        nav: Nav::load(&state, "senders").await?,
         senders: rows
             .into_iter()
             .map(|(address, count, subject, last, rules)| SenderRow {

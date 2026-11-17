@@ -183,6 +183,17 @@ impl Pipeline {
         Ok(Outcome::Done)
     }
 
+    /// The final action an event status belongs to, the inverse of [`Pipeline::route`]: `None`
+    /// while the mail is still being sorted (`new`, `classify`) or after it is `gone`.
+    pub fn status_action(status: &str) -> Option<Action> {
+        match status {
+            "ignored" => Some(Action::Ignore),
+            "digest" => Some(Action::Digest),
+            "triaged" | "ready" | "notified" => Some(Action::Notify),
+            _ => None,
+        }
+    }
+
     /// Where a verdict sends an event: its new status and the next topic, if any.
     pub fn route(verdict: &Verdict) -> (&'static str, Option<&'static str>) {
         match verdict.action {
@@ -377,5 +388,34 @@ impl Pipeline {
             self.chat.record_out(id, refs, None).await?;
         }
         Ok(Outcome::Done)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_action_inverts_route() {
+        for action in Action::FINAL {
+            for summarize in [false, true] {
+                let v = Verdict {
+                    rule: "r".into(),
+                    action,
+                    priority: Priority::default(),
+                    summarize,
+                    section: None,
+                    message: None,
+                    extracted: Default::default(),
+                    reason: None,
+                };
+                let (status, _) = Pipeline::route(&v);
+                assert_eq!(Pipeline::status_action(status), Some(action), "{status}");
+            }
+        }
+        assert_eq!(Pipeline::status_action("notified"), Some(Action::Notify));
+        for pending in ["new", "classify", "gone"] {
+            assert_eq!(Pipeline::status_action(pending), None);
+        }
     }
 }
