@@ -8,6 +8,7 @@ use std::time::Duration;
 use sqlx::PgPool;
 
 use crate::bus::Bus;
+use crate::calendar::Calendar;
 use crate::clock::{Clock, ModelHours, SystemClock};
 use crate::config::Config;
 use crate::crypto::SecretBox;
@@ -16,6 +17,7 @@ use crate::feedback::Feedback;
 use crate::gmail::ingest::GmailIngestor;
 use crate::gmail::pubsub::PubSubIngest;
 use crate::google::accounts::AccountStore;
+use crate::google::calendar::CalendarClient;
 use crate::google::gmail::GmailClient;
 use crate::google::pubsub::PubSubClient;
 use crate::health::Health;
@@ -45,6 +47,7 @@ pub struct App {
     pub pubsub: Option<Arc<PubSubIngest>>,
     pub pipeline: Arc<Pipeline>,
     pub digest: Arc<Digest>,
+    pub calendar: Arc<Calendar>,
     pub scheduler: Arc<Scheduler>,
     pub health: Arc<Health>,
     pub feedback: Arc<Feedback>,
@@ -182,7 +185,13 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         })),
         _ => None,
     };
+    let calendar = Arc::new(Calendar {
+        p: pipeline.clone(),
+        api: CalendarClient::new(http.clone(), &cfg.calendar_api_base, accounts.clone()),
+    });
+    calendar.register();
     let digest = Arc::new(Digest {
+        calendar: Some(calendar.clone()),
         p: pipeline.clone(),
         problems: Some(health.clone()),
         feedback: Some(feedback.clone()),
@@ -216,6 +225,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         pubsub,
         pipeline,
         digest,
+        calendar,
         scheduler,
         health,
         feedback,
@@ -291,6 +301,8 @@ pub fn spawn_background(app: &App) {
             }
         }
     });
+    let calendar = app.calendar.clone();
+    supervise("calendar-poll", move || calendar.clone().poll_loop());
     let scheduler = app.scheduler.clone();
     supervise("scheduler", move || scheduler.clone().run());
     let (pool, days) = (app.pool.clone(), app.cfg.retention_days);

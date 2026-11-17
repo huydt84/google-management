@@ -29,6 +29,7 @@ struct LoginPage {
 }
 
 pub struct EventRow {
+    pub is_gmail: bool,
     pub id: i64,
     pub time: String,
     pub from: String,
@@ -126,23 +127,37 @@ fn summary_text(summary: &Value) -> String {
         .unwrap_or_default()
 }
 
-fn event_row(e: crate::db::Event) -> EventRow {
+fn event_row(e: crate::db::Event, tr: &Tr) -> EventRow {
     let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
     let summary = e.summary.clone().unwrap_or(Value::Null);
+    let is_gmail = e.source == "gmail";
     EventRow {
+        is_gmail,
         id: e.id,
         time: local_time(&e.created_at, "%m-%d %H:%M"),
-        from: s(&e.data["from"]),
-        subject: e.data["subject"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or(e.external_id.clone()),
+        from: if is_gmail {
+            s(&e.data["from"])
+        } else {
+            s(&e.data["event"]["organizer"]["email"])
+        },
+        subject: (if is_gmail {
+            &e.data["subject"]
+        } else {
+            &e.data["event"]["summary"]
+        })
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or(e.external_id.clone()),
         link: s(&e.data["link"]),
         status: e.status,
         rule: e.rule.unwrap_or_default(),
         reason: s(&e.data["verdict"]["reason"]),
         importance: s(&summary["importance"]),
-        summary: summary_text(&summary),
+        summary: if is_gmail {
+            summary_text(&summary)
+        } else {
+            crate::calendar::notification(tr, &e.kind, &e.data).text
+        },
         error: s(&summary["error"]),
         feedback: String::new(),
         in_eval: false,
@@ -152,6 +167,7 @@ fn event_row(e: crate::db::Event) -> EventRow {
 async fn with_feedback(
     state: &SharedState,
     events: Vec<crate::db::Event>,
+    tr: &Tr,
 ) -> Result<Vec<EventRow>, AppError> {
     let ids: Vec<i64> = events.iter().map(|e| e.id).collect();
     let labels = crate::feedback::labels(&state.pool, &ids).await?;
@@ -164,7 +180,7 @@ async fn with_feedback(
             EventRow {
                 feedback: fb,
                 in_eval: in_eval.contains(&e.external_id),
-                ..event_row(e)
+                ..event_row(e, tr)
             }
         })
         .collect())
@@ -254,7 +270,12 @@ pub async fn index(
         },
         job_stats: crate::db::count_by(&state.pool, "jobs").await?,
         health: health_rows(&state, &tr).await?,
-        events: with_feedback(&state, crate::db::recent_events(&state.pool, 50).await?).await?,
+        events: with_feedback(
+            &state,
+            crate::db::recent_events(&state.pool, 50).await?,
+            &tr,
+        )
+        .await?,
         banner: match q.eval.as_str() {
             "added" | "updated" | "full" | "gone" => format!("eval-{}", q.eval),
             _ => String::new(),
@@ -713,7 +734,7 @@ pub async fn senders_page(
         "SELECT COALESCE(NULLIF(data->>'from_addr', ''), '?') AS addr, count(*),
                     (array_agg(data->>'subject' ORDER BY id DESC))[1], max(created_at),
                     string_agg(DISTINCT COALESCE(rule, '?'), ', ')
-             FROM events WHERE status = 'ignored' AND created_at > now() - interval '30 days'
+             FROM events WHERE source = 'gmail' AND status = 'ignored' AND created_at > now() - interval '30 days'
              GROUP BY addr ORDER BY count(*) DESC, addr LIMIT 300",
     )
     .fetch_all(&state.pool)
@@ -781,6 +802,9 @@ pub async fn event_eval(
     let Some(ev) = crate::db::event(&state.pool, id).await? else {
         return Ok(back("gone"));
     };
+    if ev.source != "gmail" {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    }
     let message = match state.gmail.get_message(&ev.account, &ev.external_id).await {
         Ok(m) => m,
         Err(crate::google::GoogleError::NotFound) => return Ok(back("gone")),

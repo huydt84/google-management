@@ -295,7 +295,7 @@ impl TaskRuntime {
             Some(id) => crate::db::event(&self.pool, id).await?,
             None => None,
         };
-        let Some(event) = event else {
+        let Some(event) = event.filter(|e| e.source == "gmail") else {
             let e = UserFacing(tr.get("task-mail-gone")).into();
             return self.on_error(&t, e, ctx, &tr).await;
         };
@@ -744,6 +744,7 @@ pub async fn send_parts(
     let last = parts.len() - 1;
     for (i, part) in parts.into_iter().enumerate() {
         let msg = OutgoingMessage {
+            entities: vec![],
             text: part,
             silent: false,
             buttons: if i == last { buttons.clone() } else { vec![] },

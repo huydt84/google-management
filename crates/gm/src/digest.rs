@@ -52,6 +52,7 @@ pub trait FeedbackSource: Send + Sync {
 }
 
 pub struct Digest {
+    pub calendar: Option<Arc<crate::calendar::Calendar>>,
     pub p: Arc<Pipeline>,
     pub problems: Option<Arc<dyn ProblemSource>>,
     pub feedback: Option<Arc<dyn FeedbackSource>>,
@@ -191,6 +192,7 @@ pub struct Rendered {
     pub items: usize,
     pub pending: usize,
     pub problems: usize,
+    pub calendar_items: usize,
 }
 
 fn verdict(e: &Event) -> Option<Verdict> {
@@ -375,6 +377,7 @@ pub fn render(
         items: events.len(),
         pending,
         problems: problems.len(),
+        calendar_items: 0,
     }
 }
 
@@ -561,7 +564,24 @@ impl Digest {
             _ => HashMap::new(),
         };
         let order = self.p.rules.get().digest_sections();
-        Ok(render(&tr, date, &events, &order, &problems, &feedback))
+        let mut rendered = render(&tr, date, &events, &order, &problems, &feedback);
+        if let Some(calendar) = &self.calendar {
+            let agenda = calendar.agenda(owner, date, &tr).await?;
+            rendered.calendar_items = agenda.len();
+            if !agenda.is_empty() {
+                let (heading, rest) = rendered
+                    .text
+                    .split_once('\n')
+                    .unwrap_or((&rendered.text, ""));
+                rendered.text = format!(
+                    "{heading}\n\n{}\n{}{}",
+                    tr.get("calendar-today"),
+                    agenda.join("\n"),
+                    rest
+                );
+            }
+        }
+        Ok(rendered)
     }
 
     async fn send(&self, digest_id: i64) -> anyhow::Result<()> {
@@ -572,7 +592,7 @@ impl Digest {
                 .fetch_one(pool)
                 .await?;
         let r = self.render_digest(&owner, date, digest_id).await?;
-        if r.items == 0 && r.problems == 0 {
+        if r.items == 0 && r.problems == 0 && r.calendar_items == 0 {
             // Nothing to say: no message; the run is still recorded.
             sqlx::query(
                 "UPDATE digests SET status = 'empty', updated_at = now() WHERE id = $1 AND status = 'building'",
@@ -588,6 +608,7 @@ impl Digest {
         let last = parts.len() - 1;
         for (i, part) in parts.into_iter().enumerate() {
             let msg = OutgoingMessage {
+                entities: vec![],
                 text: part,
                 silent: true, // nothing in the digest is urgent
                 buttons: if i == last { r.buttons.clone() } else { vec![] },
@@ -637,6 +658,7 @@ impl Digest {
         let last = parts.len() - 1;
         for (i, part) in parts.iter().enumerate() {
             let msg = OutgoingMessage {
+                entities: vec![],
                 text: part.clone(),
                 silent: true,
                 buttons: if i == last {

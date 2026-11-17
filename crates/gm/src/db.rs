@@ -89,6 +89,12 @@ pub async fn apply_retention(pool: &PgPool, days: i64) -> sqlx::Result<(u64, u64
             .execute(pool)
             .await?
             .rows_affected();
+    sqlx::query(
+        "DELETE FROM calendar_events WHERE updated_at < now() - make_interval(days => $1::int)",
+    )
+    .bind(days as i32)
+    .execute(pool)
+    .await?;
     let jobs = sqlx::query(
         "DELETE FROM jobs WHERE status IN ('done','dead') AND updated_at < now() - make_interval(days => $1::int)",
     )

@@ -1,5 +1,5 @@
 //! Telegram Bot API client: the [`Notifier`] for the owner's chat, plus the raw `call` the poller
-//! uses for `getUpdates`. Plain text only (no `parse_mode`, invariant 9), link previews off. The
+//! uses for `getUpdates`. Literal text with optional app-owned formatting entities (no `parse_mode`); link previews off. The
 //! bot token is part of every URL, so URLs are never logged and are stripped from reqwest errors
 //! (invariant 5).
 
@@ -84,6 +84,9 @@ impl Notifier for TelegramClient {
             "disable_notification": msg.silent,
             "link_preview_options": {"is_disabled": true},
         });
+        if !msg.entities.is_empty() {
+            body["entities"] = json!(msg.entities);
+        }
         if !msg.buttons.is_empty() {
             body["reply_markup"] = keyboard_json(&msg.buttons);
         }
@@ -103,6 +106,7 @@ impl Notifier for TelegramClient {
             "text": msg.text,
             "link_preview_options": {"is_disabled": true},
         });
+        body["entities"] = json!(msg.entities);
         if !msg.buttons.is_empty() {
             body["reply_markup"] = keyboard_json(&msg.buttons);
         }

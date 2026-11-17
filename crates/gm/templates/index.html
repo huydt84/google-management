@@ -89,7 +89,7 @@
         <td>
           {% if !e.summary.is_empty() %}<strong>{{ e.importance }}</strong> · {{ e.summary }}
           {% else if !e.error.is_empty() %}<span class="bad">{{ e.error }}</span>{% endif %}
-          {% if e.status != "new" && e.status != "gone" %}
+          {% if e.is_gmail && e.status != "new" && e.status != "gone" %}
           <div style="margin-top:4px">
             <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="up"><button class="btn" title="{{ tr.get("feedback") }}">{% if e.feedback == "up" %}✅{% endif %}👍</button></form>
             <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="down"><button class="btn" title="{{ tr.get("feedback") }}">{% if e.feedback == "down" %}✅{% endif %}👎</button></form>

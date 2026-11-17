@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod bus;
+pub mod calendar;
 pub mod clock;
 pub mod config;
 pub mod crypto;
@@ -40,5 +41,8 @@ pub mod topics {
     pub const FEEDBACK_RECEIVED: &str = "feedback.received";
     pub const USER_INSTRUCTION: &str = "user.instruction";
     pub const APPROVAL_DECISION: &str = "approval.decision";
+    pub const CALENDAR_EVENT_INVITATION: &str = "calendar.event.invitation";
+    pub const CALENDAR_EVENT_CHANGED: &str = "calendar.event.changed";
+    pub const CALENDAR_EVENT_CANCELLED: &str = "calendar.event.cancelled";
     pub const TASK_REPLY: &str = "task.reply";
 }

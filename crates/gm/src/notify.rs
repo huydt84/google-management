@@ -1,6 +1,6 @@
 //! Outbound notifications behind a channel interface (ADR-0006 as amended): Telegram now
-//! ([`crate::telegram::TelegramClient`]), others later. Messages are plain text (invariant 9):
-//! mail-derived text is never sent as markup.
+//! ([`crate::telegram::TelegramClient`]), others later. Content stays literal text (invariant 9). Trusted formatting uses explicit spans, so Google
+//! content is never parsed as markup.
 
 use std::sync::Mutex;
 
@@ -21,9 +21,28 @@ pub struct Button {
 
 pub type Keyboard = Vec<Vec<Button>>;
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EntityKind {
+    Bold,
+    Strikethrough,
+    TextLink { url: String },
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct MessageEntity {
+    /// Telegram measures both positions in UTF-16 code units, including emoji surrogates.
+    pub offset: usize,
+    pub length: usize,
+    #[serde(flatten)]
+    pub kind: EntityKind,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OutgoingMessage {
     pub text: String,
+    /// App-owned formatting spans. Message content is never parsed as HTML or Markdown.
+    pub entities: Vec<MessageEntity>,
     /// Deliver without sound (Telegram `disable_notification`).
     pub silent: bool,
     /// Inline keyboard rows; empty for none.
@@ -36,6 +55,7 @@ impl OutgoingMessage {
     pub fn text(text: impl Into<String>, silent: bool) -> Self {
         Self {
             text: text.into(),
+            entities: vec![],
             silent,
             buttons: vec![],
             reply_to: None,

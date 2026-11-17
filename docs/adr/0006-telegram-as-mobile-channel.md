@@ -12,7 +12,9 @@ reachable from the internet.
 
 Use a Telegram bot:
 
-- Outbound messages via `sendMessage`, plain text only.
+- Outbound messages via `sendMessage` with literal text. Calendar notices use app-owned formatting
+  entities, as defined in the [Calendar spec](../spec/calendar.md#changes-and-notifications).
+  Google content is never interpreted as HTML or Markdown.
 - Inbound (Phase 1) via **long polling** `getUpdates` — no webhook, so no public endpoint.
 - Inline keyboard buttons for intents, approvals, feedback and undo; `callback_data` carries ids only
   (≤ 64 bytes).

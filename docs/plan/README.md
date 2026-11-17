@@ -6,9 +6,10 @@ then the file for your phase. For *what* and *why*, read the [PRD](../prd.md), t
 
 **Never decide silently.** If your workstream needs a choice the docs don't already settle (a new
 setting, a default, a library, a behavior the owner will see), stop and ask the owner with explained
-options and a recommendation. Then write the answer as plain wording into the spec, ADR or doc it
-governs (a new ADR if it is expensive to reverse). A default you had to pick without asking goes
-under [Open questions](#open-questions) until the owner confirms it.
+options and a recommendation. Document the resulting behavior or contract in the spec, PRD or ADR
+that governs it. Keep conversation history, run results and installation state out of project
+documentation. A default you had to pick without asking goes under
+[Open questions](#open-questions) until the owner confirms it.
 
 | Phase | File | Goal |
 |-------|------|------|
@@ -29,7 +30,7 @@ Update this table in the same commit that completes the workstream.
 | 1C | Rules engine v2 + `rules.yaml` from the mail analysis | 1A | done |
 | 1D | LLM client (lanes, cleaning, prompts) + pipeline + notifier | 1A–1C | done |
 | 1E | Web (askama, Fluent en/vi/ja, guards), settings, metrics | 1A, 1B | done |
-| 1F | Ops files: launchd plists, backup script, CI, `.env.example` | — | done (not installed) |
+| 1F | Ops files: launchd plists, backup script, CI, `.env.example` | — | done |
 | 1G | Remove the Python code | 1A–1E | done |
 | 1H | Health panel on the dashboard | 1E | done (in 2E) |
 | 2A | Digest builder + scheduler + digest lane | Phase 1 | done |
@@ -41,8 +42,8 @@ Update this table in the same commit that completes the workstream.
 | 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | done |
 | 3B | Task runtime, intent router, approvals, audit | 3A | done |
 | 3C | Recipes: translate, analyze, reply (+ `gmail.compose`) | 3B interface | done |
-| 3Z | Phase 3 integration + prompt-injection end-to-end test | 3A–3C | done in tests; the live phone run waits for the owner to reconnect Gmail (`gmail.compose`) |
-| 4A | Calendar source + notifications + digest section | Phase 2 | todo |
+| 3Z | Phase 3 integration + prompt-injection end-to-end test | 3A–3C | implemented; coverage in [`actions_e2e.rs`](../../crates/gm/tests/actions_e2e.rs) |
+| 4A | Calendar source + notifications + digest section | Phase 2 | implemented |
 
 Workstreams in the same phase run in parallel when they own different files (listed in each plan).
 
@@ -94,11 +95,12 @@ Workstreams in the same phase run in parallel when they own different files (lis
    outside 09:00–19:00, and all model work defers while the model is unavailable (`LlmUnavailable`).
    Tasks the owner starts from Telegram are the one exception to model hours: they run at any hour.
    No notification is sent without its summary; rule-only notifications go out at any hour.
-9. **Telegram messages are plain text** (no `parse_mode`).
+9. **Telegram content is literal text** (no `parse_mode`). Calendar messages may use app-owned
+   formatting entities with UTF-16 spans; Google text never supplies markup.
 10. **Rules are tested.** Every rule has redacted examples (no names, real amounts, IPs or order
     numbers); raw mail never goes into git.
 
-## Environment facts (verified)
+## Development environment
 
 - Rust stable (edition 2024), one crate `crates/gm` in a workspace at the repo root.
 - Postgres 17 in Docker at `127.0.0.1:5433` (user/password/db `gm`); `#[sqlx::test]` creates a fresh

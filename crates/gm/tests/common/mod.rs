@@ -31,6 +31,7 @@ pub fn config(server: &MockServer) -> Config {
     let uri = server.uri();
     cfg.google_auth_url = format!("{uri}/auth");
     cfg.google_token_url = format!("{uri}/token");
+    cfg.calendar_api_base = format!("{uri}/calendar/v3");
     cfg.gmail_api_base = format!("{uri}/gmail/v1");
     cfg.llm_base_url = format!("{uri}/v1");
     cfg.llm_ready_url = format!("{uri}/ready");

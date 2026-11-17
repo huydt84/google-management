@@ -86,18 +86,9 @@ One row per model request ([ADR-0010](../adr/0010-llm-client-lanes-residency.md)
 
 Every 6 hours, rows older than `GM_RETENTION_DAYS` (60) are deleted from `events`, from `jobs` in
 `done`/`dead`, from `llm_calls`, from `tasks` (their `approvals` go with them) and from
-`chat_messages`. `audit_log` is kept forever: it holds metadata only (action, recipients, ids, no mail
+`chat_messages`. Calendar snapshots expire by `updated_at`; upcoming snapshots are refreshed by polling. `audit_log` is kept forever: it holds metadata only (action, recipients, ids, no mail
 body). The local eval set (`~/.local/share/gm/eval/`, outside the
 database) is exempt ([ADR-0017](../adr/0017-eval-data-handling.md)).
-
-## Planned
-
-| Phase | Table | Purpose |
-|-------|-------|---------|
-| 4 | `calendar_state` | sync token per calendar |
-
-Each comes as a new numbered migration. Parallel sessions must keep one linear migration sequence
-(rename yours to the next free number when rebasing).
 
 ## Phase 2
 
@@ -220,3 +211,18 @@ Every executed or failed external action. Kept forever.
 | `target` | text | recipients |
 | `task_id` | bigint | (no foreign key, so the row survives task retention) |
 | `details` | jsonb | executed: `{approval_id, via, outcome, draft_id, thread_id, subject, message_id, note}` (`note: "already sent"` when the draft had already gone out); failed: `{approval_id, via, outcome, error}`. Never a mail body |
+
+## Calendar state and snapshots
+
+Code: [`0008_calendar.sql`](../../crates/gm/migrations/0008_calendar.sql),
+[`calendar/mod.rs`](../../crates/gm/src/calendar/mod.rs), [`db.rs`](../../crates/gm/src/db.rs).
+
+- `calendar_state`: primary key `(email, calendar_id)`, foreign key `email` to `google_accounts`,
+  nullable `sync_token`, `last_sync_at`, `last_error`, `updated_at`.
+- `calendar_events`: primary key `(email, calendar_id, event_id)`, `data` JSON, `updated_at`.
+  Its foreign key to `calendar_state` cascades on deletion. `data` contains minimal metadata and a
+  description hash, without raw descriptions or attendee lists. Snapshots without updates expire
+  under `GM_RETENTION_DAYS`; upcoming snapshots are refreshed each poll.
+
+Calendar `events` use `ready → notified`, or `ignored` when no notification is relevant. Their data
+contains `calendar_id`, `event`, `previous`, and `changes`. See the [Calendar spec](calendar.md).

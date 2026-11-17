@@ -55,7 +55,7 @@ pub async fn record(
     anyhow::ensure!(matches!(label, "up" | "down"), "invalid label");
     let r = sqlx::query(
         "INSERT INTO triage_feedback (event_id, label, rule, via, tapped_at)
-         SELECT id, $2, rule, $3, $4 FROM events WHERE id = $1
+         SELECT id, $2, rule, $3, $4 FROM events WHERE id = $1 AND source = 'gmail'
          ON CONFLICT (event_id) DO UPDATE SET label = EXCLUDED.label, via = EXCLUDED.via,
              tapped_at = EXCLUDED.tapped_at, updated_at = now()
          WHERE triage_feedback.tapped_at <= EXCLUDED.tapped_at",
@@ -67,10 +67,12 @@ pub async fn record(
     .execute(pool)
     .await?;
     if r.rows_affected() == 0 {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM events WHERE id = $1)")
-            .bind(event_id)
-            .fetch_one(pool)
-            .await?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM events WHERE id = $1 AND source = 'gmail')",
+        )
+        .bind(event_id)
+        .fetch_one(pool)
+        .await?;
         return Ok(exists);
     }
     Ok(true)

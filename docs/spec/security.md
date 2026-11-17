@@ -39,7 +39,7 @@ Code for the main controls: host/origin guard and session in [`web/`](../../crat
 | T6 | Exposure to the internet | Bind loopback only (config refuses anything else); no inbound webhooks; remote access through Tailscale. | 1 |
 | T7 | Refresh-token theft from the DB or a backup | AES-256-GCM with a random nonce; key in the Keychain, never in the DB, `.env` or backups. Minimal scopes. | 1 |
 | T8 | Secrets in logs, argv or errors | Secrets read from the Keychain at startup; `gm keychain set` lets `security` prompt for the value (never argv); Telegram URLs (which contain the token) are never logged and reqwest errors are stripped of URLs; refresh and access tokens never logged. | 1 |
-| T9 | Markup injection in Telegram | Plain text only (no `parse_mode`); link previews disabled. | 1 |
+| T9 | Markup injection in Telegram | Literal text (no `parse_mode`); formatting uses app-owned entity spans; link previews disabled. | 1 |
 | T10 | Forged session or state cookie | HMAC-SHA256 signed with the Keychain `session-secret`, bound to a purpose (`session` / `oauth`), with expiry; constant-time comparison. | 1 |
 | T11 | Metrics leak data | Bearer token compared in constant time; endpoint disabled (404) without a token; counts only. | 1 |
 | T12 | A settings value injects text into prompts | Settings are writable only by the signed-in owner; language names must match `^\p{L}[\p{L}\p{M} ()'\-]*$`, 2–40 characters; `ui_language` from a fixed list. | 1 |
@@ -97,3 +97,12 @@ configuration. Tests and CI use `GM_SECRET_<NAME>` environment variables with th
 - Mail older than Gmail's history window during a long outage is only recovered for the last 2 days.
 - The OAuth app is the owner's own unverified Google Cloud project; it must be "In production" or
   refresh tokens expire after 7 days.
+
+## Calendar content
+
+Code: [`calendar/mod.rs`](../../crates/gm/src/calendar/mod.rs).
+
+Calendar descriptions are untrusted. Phase 4 never passes Calendar content to a model and never
+modifies a Calendar object. It stores description hashes for change detection, without descriptions
+or full attendee lists. Notifications use literal text with app-owned formatting entities. The required `calendar.readonly` scope needs
+owner reconnection; accounts lacking it continue mail processing without Calendar requests.

@@ -358,6 +358,7 @@ impl Pipeline {
         let message_id = self
             .notifier
             .send(&OutgoingMessage {
+                entities: vec![],
                 text,
                 silent: priority == Priority::Silent,
                 buttons: vec![

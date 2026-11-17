@@ -7,10 +7,14 @@ machine.
 
 A single Rust binary. Gmail → rules engine v2 (+ model triage) → local summary → Telegram, with a
 morning digest, health alerts, a night policy, Keychain secrets, launchd, backups and metrics
-(Phases 1–2). Phase 3 adds two-way Telegram: **Translate**, **Analyze** and **Reply** under every
+(Phases 1–2). Phase 3 adds two-way Telegram: **Translate**, **Analyze** and **Reply** under every mail
 notification, or reply to a notification in your own words ("tell them Tuesday works"). A reply is
 written as a Gmail draft in the thread and sent only after you tap **Approve**; every send is in an
 audit log.
+
+Phase 4 watches the primary calendar for invitations and event changes within 30 days. Declined
+events are excluded; nighttime notifications are silent. Today's live agenda starts the morning
+digest. Reconnect Google to grant `calendar.readonly` after enabling the Calendar API.
 
 Start with the [documentation index](docs/README.md): PRD, architecture, ADRs, specs and the phased
 plan.
@@ -54,7 +58,7 @@ cargo build --release
 
 ### 2. Google Cloud (one time)
 
-1. Create a project at <https://console.cloud.google.com> and enable the **Gmail API** and the
+1. Create a project at <https://console.cloud.google.com> and enable the **Gmail API**, **Google Calendar API** and
    **Cloud Pub/Sub API**. Note the project id for `GM_GOOGLE_PROJECT_ID`.
 2. **OAuth consent screen**: External; add your email as a test user.
 3. **Credentials → Create OAuth client ID → Web application** with redirect URIs
@@ -141,7 +145,7 @@ notification message. Every rule has redacted examples that CI checks.
   HMAC-signed, `HttpOnly`, `SameSite=Lax`; a host allowlist blocks DNS rebinding and foreign-origin
   POSTs are refused.
 - Secrets live in the macOS Keychain. Refresh tokens are AES-256-GCM-encrypted in the database with a
-  key that never leaves the Keychain. Google scopes: `gmail.readonly`, `gmail.compose` (drafts; sent only after your approval), plus
+  key that never leaves the Keychain. Google scopes: `calendar.readonly`, `gmail.readonly`, `gmail.compose` (drafts; sent only after your approval), plus
   `pubsub` in Pub/Sub mode.
 - Mail is untrusted data: it reaches the model only inside delimiters it can't close, the model has no
   tools, and Telegram messages are plain text. Reply recipients and threading come from the mail's
@@ -173,7 +177,7 @@ crates/gm/
   src/config.rs        GM_* settings; secrets.rs Keychain; crypto.rs AES-GCM
   src/bus.rs           durable pub/sub on Postgres
   src/db.rs            pool, queries, retention   (migrations/ holds the schema)
-  src/google/          OAuth (PKCE), encrypted accounts, Gmail REST client
+  src/google/          OAuth (PKCE), encrypted accounts, Gmail and Calendar REST clients
   src/gmail/           ingestion and MIME parsing
   src/rules.rs         rules engine v2
   src/llm/             LlmClient: lanes, prompt building, cleaning, JSON parsing
@@ -195,4 +199,5 @@ See [docs/plan/README.md](docs/plan/README.md).
 - **Phase 2:** morning digest at 09:05, model triage for unmatched mail with 👍/👎 feedback, model
   loaded only 09:00–19:00, `gm eval`, health alerts.
 - **Phase 3 (built):** Translate / Analyze / Reply from Telegram; sending needs your approval.
-- **Phase 4:** Calendar notifications.
+- **Phase 4:** Primary-calendar notifications and today's agenda in the digest. Reconnect Google to
+  grant `calendar.readonly`, with the Calendar API enabled in your Google Cloud project.

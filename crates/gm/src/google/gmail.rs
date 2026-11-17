@@ -47,38 +47,16 @@ impl GmailClient {
         query: &[(&str, String)],
         body: Option<&Value>,
     ) -> Result<Value, GoogleError> {
-        for attempt in 0..2 {
-            let token = self.accounts.access_token(email).await?;
-            let mut req = self
-                .http
-                .request(method.clone(), format!("{}/users/me/{path}", self.base))
-                .bearer_auth(&token)
-                .query(query);
-            if let Some(b) = body {
-                req = req.json(b);
-            }
-            let resp = req.send().await?;
-            let status = resp.status().as_u16();
-            match status {
-                200..=299 => return Ok(resp.json().await?),
-                404 => return Err(GoogleError::NotFound),
-                401 if attempt == 0 => {
-                    self.accounts.invalidate(email).await;
-                    continue;
-                }
-                _ => {
-                    let body: String = resp
-                        .text()
-                        .await
-                        .unwrap_or_default()
-                        .chars()
-                        .take(300)
-                        .collect();
-                    return Err(GoogleError::Http { status, body });
-                }
-            }
-        }
-        unreachable!()
+        super::client::request(
+            &self.http,
+            &self.accounts,
+            email,
+            &format!("{}/users/me/{path}", self.base),
+            method,
+            query,
+            body,
+        )
+        .await
     }
 
     pub async fn profile_history_id(&self, email: &str) -> Result<i64, GoogleError> {
