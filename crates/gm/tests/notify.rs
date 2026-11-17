@@ -1,6 +1,7 @@
 use gm::i18n::Tr;
-use gm::notify::{Notifier, OutgoingMessage, TelegramNotifier, format_email_notification};
+use gm::notify::{Notifier, OutgoingMessage, format_email_notification};
 use gm::rules::Priority;
+use gm::telegram::TelegramClient;
 use serde_json::json;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -37,7 +38,7 @@ async fn telegram_sends_plain_text_and_silent_flag() {
         .expect(1)
         .mount(&server)
         .await;
-    let n = TelegramNotifier::new(reqwest::Client::new(), &server.uri(), "TOKEN", "42");
+    let n = TelegramClient::new(reqwest::Client::new(), &server.uri(), "TOKEN", "42");
     n.send(&OutgoingMessage::text("<b>hi</b>", true))
         .await
         .unwrap();
@@ -50,7 +51,7 @@ async fn telegram_sends_plain_text_and_silent_flag() {
         .respond_with(ResponseTemplate::new(403))
         .mount(&failing)
         .await;
-    let n = TelegramNotifier::new(reqwest::Client::new(), &failing.uri(), "SECRET", "42");
+    let n = TelegramClient::new(reqwest::Client::new(), &failing.uri(), "SECRET", "42");
     let err = n
         .send(&OutgoingMessage::text("x", false))
         .await
@@ -78,7 +79,7 @@ async fn telegram_returns_ids_edits_and_sends_buttons() {
         ))
         .mount(&server)
         .await;
-    let n = TelegramNotifier::new(reqwest::Client::new(), &server.uri(), "T", "42");
+    let n = TelegramClient::new(reqwest::Client::new(), &server.uri(), "T", "42");
     let msg = OutgoingMessage {
         text: "x".into(),
         silent: false,
@@ -86,6 +87,7 @@ async fn telegram_returns_ids_edits_and_sends_buttons() {
             text: "👍".into(),
             data: "f:1:up".into(),
         }]],
+        reply_to: None,
     };
     assert_eq!(n.send(&msg).await.unwrap(), Some(77));
     n.edit(77, &msg).await.expect("not modified is fine");

@@ -79,7 +79,9 @@ pub async fn count_by(pool: &PgPool, table: &str) -> sqlx::Result<Vec<(String, i
     .await
 }
 
-/// Delete events older than the retention window and finished jobs older than it (`GM_RETENTION_DAYS`, default 60).
+/// Delete events, digests, tasks (with their approvals), chat message records and LLM call records
+/// older than the retention window, and finished jobs older than it (`GM_RETENTION_DAYS`, default
+/// 60). `audit_log` is kept.
 pub async fn apply_retention(pool: &PgPool, days: i64) -> sqlx::Result<(u64, u64)> {
     let ev =
         sqlx::query("DELETE FROM events WHERE created_at < now() - make_interval(days => $1::int)")
@@ -98,6 +100,15 @@ pub async fn apply_retention(pool: &PgPool, days: i64) -> sqlx::Result<(u64, u64
         .bind(days as i32)
         .execute(pool)
         .await?;
+    // Tasks hold mail-derived text (approvals go with them); audit_log is kept forever.
+    for table in ["tasks", "chat_messages"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE created_at < now() - make_interval(days => $1::int)"
+        ))
+        .bind(days as i32)
+        .execute(pool)
+        .await?;
+    }
     sqlx::query("DELETE FROM llm_calls WHERE created_at < now() - make_interval(days => $1::int)")
         .bind(days as i32)
         .execute(pool)

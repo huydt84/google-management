@@ -111,11 +111,13 @@ carried over to Phase 1.
 
 | ID | Story | Acceptance |
 |----|-------|------------|
-| US-3.1 | I tap **Translate** and get the full mail in my translation language. | Reply in the same chat. |
+| US-3.1 | I tap **Translate** and get the full mail in my translation language. | Reply in the same chat, at any hour. |
 | US-3.2 | I tap **Analyze** and get key points, deadlines, amounts and phishing warnings. | Structured reply. |
-| US-3.3 | I reply "tell them Tuesday works" and get a draft to approve. | Draft in the right thread to the original sender; sent only after Approve; re-checked before sending. |
-| US-3.4 | `/pause`, `/resume`, `/status`, `/language` work from my chat only. | Other chats ignored. |
+| US-3.3 | I reply "tell them Tuesday works" and get a draft to approve. | Draft in the right thread to the original sender; sent only after Approve; re-checked before sending; I can ask for changes by replying to the preview. |
+| US-3.4 | `/pause`, `/resume`, `/status`, `/language` work from my chat only. | Other chats ignored. `/pause` holds notifications until `/resume`; the digest and alerts still come. |
 | US-3.5 | Approvals I ignore expire. | 24 h. |
+| US-3.6 | A message that isn't about a mail gets help, not a guess. | Usage text, no model call. |
+| US-3.7 | I can approve from the dashboard too and see what was sent. | `/tasks`: pending approvals, recent tasks, audit log. |
 
 ### Phase 4: Calendar
 
@@ -187,7 +189,8 @@ Bonsai-27B 1-bit model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md))
 - **FR-25** Dashboard: connection, cursor, last sync and error, model hours, queue counts, events.
 - **FR-26** Manual sync; `/healthz`; `/metrics` behind a token.
 - **FR-27** Secrets in the Keychain; launchd agents; nightly backups (14 kept); JSON logs (7 days).
-- **FR-28** Data older than 60 days is deleted.
+- **FR-28** Data older than 60 days is deleted (Phase 3: also tasks, approvals and the Telegram
+  message map); the audit log of executed actions is kept.
 
 ### 7.8 Actions (Phase 3)
 
@@ -195,6 +198,8 @@ Bonsai-27B 1-bit model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md))
 - **FR-30** Intents: translate, analyze, reply. Targets come from code, never model output.
 - **FR-31** External actions need an approval with an immutable, hashed payload that expires; every
   executed action is audited.
+- **FR-32** Owner-initiated tasks run whenever the model answers, also outside model hours; background
+  model work keeps to model hours.
 
 ## 8. Non-functional requirements
 

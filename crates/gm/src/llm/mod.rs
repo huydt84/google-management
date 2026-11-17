@@ -150,12 +150,23 @@ fn yes() -> bool {
     true
 }
 
-/// Strip reasoning and fences and parse the outermost `{...}` as a JSON object. `None` if there is
-/// none. Every task parses model output through this (the runtime has no JSON mode, so parsing is tolerant).
-pub fn parse_json_object(text: &str) -> Option<serde_json::Map<String, Value>> {
+/// Remove the model's reasoning: `<think>…</think>` blocks, and an unclosed `<think>` of a reply
+/// cut off by the token cap (nothing after it is an answer). Trimmed.
+pub fn strip_think(text: &str) -> String {
     static THINK: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r"(?is)<think>.*?</think>").unwrap());
     let cleaned = THINK.replace_all(text, "");
+    let cleaned = match cleaned.to_ascii_lowercase().find("<think>") {
+        Some(i) => &cleaned[..i],
+        None => &cleaned[..],
+    };
+    cleaned.trim().to_string()
+}
+
+/// Strip reasoning and fences and parse the outermost `{...}` as a JSON object. `None` if there is
+/// none. Every task parses model output through this (the runtime has no JSON mode, so parsing is tolerant).
+pub fn parse_json_object(text: &str) -> Option<serde_json::Map<String, Value>> {
+    let cleaned = strip_think(text);
     let (start, end) = (cleaned.find('{')?, cleaned.rfind('}')?);
     if end <= start {
         return None;
@@ -400,8 +411,20 @@ impl LlmClient {
     /// Shared stable prefix first (system prompt + task + thinking switch), per-user settings and
     /// the mail last, so the prefix KV cache is reused across mails and tasks.
     pub fn task_messages(&self, task: &str, language: &str, email_block: &str) -> Vec<Value> {
+        self.task_messages_with(task, language, email_block, false)
+    }
+
+    /// [`LlmClient::task_messages`], with the model's thinking left on when `think` (analyze and
+    /// reply): the thinking switch is simply not appended.
+    pub fn task_messages_with(
+        &self,
+        task: &str,
+        language: &str,
+        email_block: &str,
+        think: bool,
+    ) -> Vec<Value> {
         let mut system = format!("{}\n{}", SYSTEM_PREFIX.trim_end(), task.trim_end());
-        if !self.no_think_tag.is_empty() {
+        if !think && !self.no_think_tag.is_empty() {
             system.push_str(&format!("\n{}", self.no_think_tag));
         }
         vec![

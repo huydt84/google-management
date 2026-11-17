@@ -8,7 +8,14 @@ external effect (sending mail) waits for the owner's approval.
 (backlog), Calendar (Phase 4).
 
 Decisions: [ADR-0003](../adr/0003-intent-router-before-agent.md),
-[ADR-0006](../adr/0006-telegram-as-mobile-channel.md).
+[ADR-0006](../adr/0006-telegram-as-mobile-channel.md), model hours for owner tasks in
+[ADR-0010](../adr/0010-llm-client-lanes-residency.md), `/pause` in
+[ADR-0015](../adr/0015-notification-policy-and-digest.md). Behavior as built:
+[interfaces](../spec/interfaces.md#translate-analyze-reply-and-approvals-phase-3),
+[events](../spec/events.md#phase-3-implemented), [data model](../spec/data-model.md#phase-3-0007_actionssql).
+
+Status: built and tested (3A–3Z); the live phone run needs the owner to reconnect Gmail for
+`gmail.compose`.
 
 ## Pinned design
 
@@ -27,16 +34,16 @@ surface there is, and the runtime has no tool calling anyway. So:
 ### Flow
 
 ```
-Telegram update ──► 3A poller ──► user.instruction {event_id, text|intent, chat_message_id}
+Telegram update ──► 3A poller ──► user.instruction {origin_key, event_id, text|intent, reply_to}
                                      ▼
                      3B: task → intent router → recipe (3C)
                     ┌────────────────┴──────────────────┐
                 TextResult                         ProposedAction
                     │                                   │ approval (payload + sha256)
                     ▼                                   ▼
-         task.reply {task_id, text}       task.reply {preview, buttons a:<id>:y / a:<id>:n}
-                                                        │ owner taps Approve
-                                     approval.decision {approval_id, decision}
+         task.reply {task_id, kind}       task.reply {kind: approval, approval_id}
+                                                        │ owner taps Approve (a:<id>:y)
+                                     approval.decision {approval_id, approve, via}
                                                         ▼
                                3B: lock, check hash → executor → audit_log → task.reply
 ```
@@ -44,29 +51,18 @@ Telegram update ──► 3A poller ──► user.instruction {event_id, text|i
 ### States
 
 - `tasks.status`: `pending → running → done | needs_input | awaiting_approval | failed`;
-  `awaiting_approval → executing → done | failed`; `awaiting_approval → rejected | expired`.
+  `awaiting_approval → executing → done | failed`; `awaiting_approval → rejected | expired`;
+  `needs_input | awaiting_approval → pending` when the owner answers or asks for a change.
 - `approvals.status`: `pending → approved → executed | failed`; `pending → rejected | expired`;
   expiry after `GM_APPROVAL_TTL_H` (24).
 
-### Schema (`0004_actions.sql`, created by 3B so 3A and 3C need no migrations)
+### Schema (`0007_actions.sql`)
 
-```sql
-tasks(id bigserial pk, event_id bigint null references events, origin text, instruction text null,
-      intent text null, args jsonb default '{}', status text, result jsonb null, error text null,
-      created_at, updated_at)
-approvals(id bigserial pk, task_id bigint references tasks, action text, payload jsonb,
-          payload_hash text, preview text, status text, expires_at timestamptz,
-          decided_at timestamptz null, decided_via text null, created_at, updated_at)
-chat_messages(id bigserial pk, chat_id text, message_id bigint, event_id bigint null,
-              task_id bigint null, approval_id bigint null, direction text, created_at,
-              unique(chat_id, message_id))
-audit_log(id bigserial pk, ts timestamptz default now(), actor text, action text, target text,
-          task_id bigint null, details jsonb)
-kv_state(key text pk, value jsonb, updated_at)
-```
-
-`tasks`, `approvals` and `audit_log` are exempt from the 60-day event retention: **ask** the owner
-for their retention.
+`tasks`, `approvals`, `chat_messages`, `audit_log`; columns in the
+[data model spec](../spec/data-model.md#phase-3-0007_actionssql). The Telegram offset and the
+`/pause` flag are keys in the existing `system_settings` table, so there is no separate key-value
+table. Retention: tasks, approvals and the message map follow `GM_RETENTION_DAYS` (60); the audit
+log is kept forever (metadata only).
 
 ## 3A Telegram client and poller
 
@@ -76,15 +72,18 @@ for their retention.
    `answer_callback`, `get_updates(offset, timeout)`. Plain text, split at 4096. Never log URLs.
 2. Notifications get buttons: `[Translate] [Analyze] [Reply]`, `data = i:<event_id>:<intent>`
    (≤ 64 bytes). Record `chat_messages(direction=out)`.
-3. Poller (`getUpdates` long poll, offset in `kv_state`): **only** `chat.id == GM_TELEGRAM_CHAT_ID`;
+3. Poller (`getUpdates` long poll, offset in `system_settings`): **only** `chat.id == GM_TELEGRAM_CHAT_ID`;
    other chats are ignored with a log line, never answered.
    - Reply to a bot message → look up `chat_messages` → `user.instruction{text}`; the inbound
      `chat_messages` row and the publish share one transaction (unique key dedupes re-polled updates).
    - `i:` callback → `user.instruction{intent}`; `a:` callback → `approval.decision`, then remove the
      buttons; `f:` callback → feedback (2C).
-   - Commands: `/help`, `/status`, `/pause`, `/resume` (flag in `kv_state`; `notify` respects it),
-     `/language [name]` (same validation as the Settings page).
-4. `task.reply` handler sends text and buttons as a reply to the original notification.
+   - Commands: `/help`, `/status`, `/pause`, `/resume` (flag in `system_settings`; `notify` defers
+     while it is on, `/resume` releases the held jobs), `/language [name]` (same validation as the
+     Settings page).
+   - A message that replies to nothing gets the usage text, without a model call.
+4. `task.reply` handler sends text and buttons as a reply to the owner's message (or the
+   notification, for a button), and records each part in `chat_messages`.
 
 Tests (wiremock Bot API): foreign chats ignored; duplicate updates deduplicated; offset survives a
 restart; callback parsing; pause/resume.
@@ -92,7 +91,7 @@ restart; callback parsing; pause/resume.
 ## 3B Task runtime, router, approvals
 
 **Owns:** `src/tasks/` (new: `runtime.rs`, `router.rs`, `approvals.rs`, `registry.rs`),
-`migrations/0004_actions.sql`, `prompts/router.md`.
+`migrations/0007_actions.sql`, `prompts/router.md`.
 
 Pinned interface (3C codes against this):
 
@@ -100,12 +99,14 @@ Pinned interface (3C codes against this):
 pub struct RecipeContext<'a> {
     pub task_id: i64,
     pub account: &'a str,
-    pub event: Option<&'a db::Event>,
+    pub event: &'a db::Event,
     pub instruction: Option<&'a str>,  // the owner's words, trusted
-    pub args: &'a serde_json::Value,
+    pub args: &'a serde_json::Value,   // router output, `edit` for a draft change
+    pub state: &'a serde_json::Value,  // tasks.result so far (e.g. the draft id)
     pub settings: &'a UserSettings,
     pub gmail: &'a GmailClient,
     pub llm: &'a LlmClient,
+    pub pool: &'a PgPool,
 }
 pub enum RecipeResult {
     Text(String),
@@ -113,12 +114,16 @@ pub enum RecipeResult {
     Propose { action: &'static str, payload: serde_json::Value, preview: String },
 }
 #[async_trait] pub trait Recipe: Send + Sync {
-    fn intent(&self) -> &'static str;
+    fn intent(&self) -> Intent;
     async fn run(&self, cx: RecipeContext<'_>) -> anyhow::Result<RecipeResult>;
 }
 #[async_trait] pub trait Executor: Send + Sync {
     fn action(&self) -> &'static str;
-    async fn execute(&self, cx: ExecContext<'_>, payload: &serde_json::Value) -> anyhow::Result<String>;
+    async fn execute(&self, cx: ExecContext<'_>, payload: &serde_json::Value) -> anyhow::Result<ExecResult>;
+}
+pub enum ExecResult {
+    Done { target: String, details: serde_json::Value, summary: String },  // audit row + reply
+    Changed { payload: serde_json::Value, preview: String },  // never executed; proposed again
 }
 ```
 
@@ -133,6 +138,8 @@ Recipes and executors are idempotent per task (store intermediate ids such as a 
 3. `approval.decision` handler: lock the row, check `pending`, expiry and hash; on approve run the
    executor, write `audit_log`, mark executed / done, reply; on reject mark rejected.
 4. Expiry sweep every 10 minutes.
+5. Owner tasks are not held to model hours; while the model is unavailable the task waits and the
+   owner is told once.
 
 Tests: router fast path and fallback; lifecycle; hash mismatch refused; expiry; double tap.
 
@@ -140,7 +147,7 @@ Tests: router fast path and fallback; lifecycle; hash mismatch refused; expiry; 
 
 **Owns:** `src/recipes/` (new: `translate.rs`, `analyze.rs`, `reply.rs`), `src/google/compose.rs`,
 `prompts/translate.md`, `prompts/analyze.md`, `prompts/reply.md`. Adds `gmail.compose` to
-`REQUIRED_SCOPES` (owner reconnects).
+`Config::required_scopes` (owner reconnects).
 
 Every recipe re-fetches the mail and wraps it in `<email>` like the summary prompt.
 

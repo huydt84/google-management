@@ -90,6 +90,8 @@ pub struct Config {
     pub telegram_bot_token: Option<String>,
     pub telegram_chat_id: Option<String>,
     pub telegram_api_base: String,
+    /// A proposed action not decided within this many hours expires.
+    pub approval_ttl_h: i64,
 
     // Background processing
     pub run_background: bool,
@@ -245,6 +247,7 @@ impl Config {
             },
             telegram_chat_id: env("TELEGRAM_CHAT_ID"),
             telegram_api_base: env_or("TELEGRAM_API_BASE", "https://api.telegram.org"),
+            approval_ttl_h: parse("APPROVAL_TTL_H", 24)?,
             run_background: parse("RUN_BACKGROUND", true)?,
             worker_concurrency: parse("WORKER_CONCURRENCY", 2)?,
             job_max_attempts: parse("JOB_MAX_ATTEMPTS", 5)?,
@@ -302,6 +305,7 @@ impl Config {
             telegram_bot_token: None,
             telegram_chat_id: None,
             telegram_api_base: "http://127.0.0.1:9".into(),
+            approval_ttl_h: 24,
             run_background: false,
             worker_concurrency: 1,
             job_max_attempts: 3,
@@ -316,7 +320,7 @@ impl Config {
 
     /// Google API scopes the Connect flow requests and requires (invariant 4: minimal scopes).
     pub fn required_scopes(&self) -> Vec<&'static str> {
-        let mut scopes = vec![crate::google::GMAIL_READONLY];
+        let mut scopes = vec![crate::google::GMAIL_READONLY, crate::google::GMAIL_COMPOSE];
         if self.pubsub.is_some() {
             scopes.push(crate::google::PUBSUB);
         }

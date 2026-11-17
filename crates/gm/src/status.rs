@@ -140,7 +140,7 @@ fn build_check(pid: u32, program: &str) -> Check {
         .ok()
         .map(DateTime::<chrono::Local>::from);
     match (started, built) {
-        (Some(s), Some(b)) if b > s => Check::new(
+        (Some(s), Some(b)) if rebuilt_after_start(b, s) => Check::new(
             "running build",
             State::Warn,
             format!(
@@ -160,6 +160,16 @@ fn build_check(pid: u32, program: &str) -> Check {
             "could not compare start and build times",
         ),
     }
+}
+
+/// Whether the binary changed after the process started. `ps` gives the start in whole seconds and
+/// the usual upgrade (`cargo build && launchctl kickstart`) starts the server within a second of the
+/// build, so a newer binary only counts when it is more than 2 s newer.
+pub fn rebuilt_after_start<Tz: chrono::TimeZone>(
+    built: DateTime<Tz>,
+    started: DateTime<Tz>,
+) -> bool {
+    built > started + chrono::Duration::seconds(2)
 }
 
 /// Seconds from `ps -o etime` output: `[[dd-]hh:]mm:ss`.
@@ -375,6 +385,21 @@ pub fn format(checks: &[Check]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_in_the_same_second_as_the_start_is_not_stale() {
+        use chrono::TimeZone;
+        // Seen on the Mac: built at :07.875, `ps etime` put the start at :07 (whole seconds).
+        let at = |s: i64, ns: u32| chrono::Utc.timestamp_opt(s, ns).unwrap();
+        assert!(!rebuilt_after_start(
+            at(1_794_919_507, 875_113_114),
+            at(1_794_919_507, 0)
+        ));
+        assert!(rebuilt_after_start(
+            at(1_794_919_600, 0),
+            at(1_794_919_507, 0)
+        ));
+    }
 
     const RUNNING: &str = "gui/501/com.gm.server = {\n\tactive count = 1\n\tpath = /x.plist\n\tstate = running\n\n\tprogram = /repo/target/release/gm\n\targuments = {\n\t\tstate = active\n\t}\n\tpid = 64331\n\tlast exit code = 0\n}\n";
     const EXITED: &str = "gui/501/com.gm.backup = {\n\tstate = not running\n\tprogram = /bin/bash\n\tlast exit code = 126\n\tjob state = exited\n}\n";

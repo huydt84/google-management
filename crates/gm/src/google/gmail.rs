@@ -1,5 +1,6 @@
-//! Gmail REST API (v1): read-only calls used by ingestion and the pipeline, plus `users.watch`
-//! (push notifications to Pub/Sub, allowed by `gmail.readonly`).
+//! Gmail REST API (v1): read-only calls used by ingestion and the pipeline, `users.watch` (push
+//! notifications to Pub/Sub, allowed by `gmail.readonly`), and drafts (`gmail.compose`) for the
+//! reply recipe. Only an approved executor sends a draft; `messages.send` is never called.
 
 use std::sync::Arc;
 
@@ -143,6 +144,81 @@ impl GmailClient {
         )
         .await
     }
+
+    /// Thread with every message (`format=full`).
+    pub async fn get_thread(&self, email: &str, id: &str) -> Result<Value, GoogleError> {
+        self.get(
+            email,
+            &format!("threads/{id}"),
+            &[("format", "full".to_string())],
+        )
+        .await
+    }
+
+    /// `drafts.create` in `thread_id` from a base64url RFC 5322 message; returns the draft id.
+    pub async fn create_draft(
+        &self,
+        email: &str,
+        raw: &str,
+        thread_id: &str,
+    ) -> Result<String, GoogleError> {
+        let body = serde_json::json!({"message": {"raw": raw, "threadId": thread_id}});
+        let v = self
+            .request(email, reqwest::Method::POST, "drafts", &[], Some(&body))
+            .await?;
+        draft_id(&v)
+    }
+
+    /// `drafts.update`: replace the draft's message; returns the draft id.
+    pub async fn update_draft(
+        &self,
+        email: &str,
+        id: &str,
+        raw: &str,
+        thread_id: &str,
+    ) -> Result<String, GoogleError> {
+        let body = serde_json::json!({"id": id, "message": {"raw": raw, "threadId": thread_id}});
+        let v = self
+            .request(
+                email,
+                reqwest::Method::PUT,
+                &format!("drafts/{id}"),
+                &[],
+                Some(&body),
+            )
+            .await?;
+        draft_id(&v)
+    }
+
+    /// `drafts.get` (`format=full`): `{id, message}`.
+    pub async fn get_draft(&self, email: &str, id: &str) -> Result<Value, GoogleError> {
+        self.get(
+            email,
+            &format!("drafts/{id}"),
+            &[("format", "full".to_string())],
+        )
+        .await
+    }
+
+    /// `drafts.send`: returns the sent message (`{id, threadId, labelIds}`).
+    pub async fn send_draft(&self, email: &str, id: &str) -> Result<Value, GoogleError> {
+        let body = serde_json::json!({"id": id});
+        self.request(
+            email,
+            reqwest::Method::POST,
+            "drafts/send",
+            &[],
+            Some(&body),
+        )
+        .await
+    }
+}
+
+fn draft_id(v: &Value) -> Result<String, GoogleError> {
+    v["id"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| GoogleError::Other(anyhow::anyhow!("draft response without id")))
 }
 
 /// Gmail returns 64-bit ids as JSON strings.

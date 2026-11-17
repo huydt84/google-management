@@ -19,7 +19,11 @@ digest material.
   urgent included. *Amended 2026-11-16:* originally urgent rules notified at night with sender and
   subject only; the owner dropped that because such a ping duplicates the Gmail app. The same
   applies while the model is unavailable: summaries are queued (retried every 5 min) and no ping is
-  sent without one.
+  sent without one. Answers to the owner's own requests (translate, analyze, reply) are not
+  notifications and go out at any hour.
+- **Pause:** `/pause` in Telegram holds mail notifications (they wait, nothing is dropped) until
+  `/resume`, which sends what was held at once. The digest, health alerts and answers to the owner's
+  requests are not paused.
 - **Digest at 09:05** by default; each user can move it in Settings (`digest_at`, must fall inside
   model hours). One **silent** Telegram message (nothing in it is urgent), also shown on `/digest`.
   Sections follow `rules.yaml`; mail the model put in the digest comes last as "Other mail" with the

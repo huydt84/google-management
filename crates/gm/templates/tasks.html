@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block body %}
+<header>
+  <h1><a href="/" style="color:inherit;text-decoration:none">{{ tr.get("app-title") }}</a> · {{ tr.get("tasks") }}</h1>
+  <div><span class="muted">{{ email }}</span> <a class="btn" href="/">{{ tr.get("back") }}</a></div>
+</header>
+
+<section class="card">
+  <h2>{{ tr.get("approvals-pending") }}</h2>
+  {% if approvals.is_empty() %}
+    <p class="muted">{{ tr.get("approvals-none") }}</p>
+  {% else %}
+    {% for a in approvals %}
+      <div style="margin-bottom:1.2em">
+        <p class="muted">#{{ a.id }} · {{ a.action }} · {{ tr.get("col-task") }} {{ a.task_id }} · {{ tr.get("approval-expires") }} {{ a.expires }}</p>
+        <pre style="white-space:pre-wrap;overflow-wrap:anywhere">{{ a.preview }}</pre>
+        <form method="post" action="/approvals/{{ a.id }}/approve"><button class="btn primary">{{ tr.get("button-approve") }}</button></form>
+        <form method="post" action="/approvals/{{ a.id }}/reject"><button class="btn">{{ tr.get("button-reject") }}</button></form>
+      </div>
+    {% endfor %}
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>{{ tr.get("tasks-recent") }}</h2>
+  {% if tasks.is_empty() %}
+    <p class="muted">{{ tr.get("tasks-none") }}</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>#</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("col-intent") }}</th><th>{{ tr.get("col-from-subject") }}</th><th>{{ tr.get("col-status") }}</th></tr></thead>
+    <tbody>
+    {% for t in tasks %}
+      <tr>
+        <td class="muted">{{ t.id }}</td>
+        <td class="muted" style="white-space:nowrap">{{ t.time }}</td>
+        <td>{{ t.intent }}</td>
+        <td>{{ t.subject }}{% if !t.instruction.is_empty() %}<br><span class="muted">“{{ t.instruction }}”</span>{% endif %}</td>
+        <td><span class="pill s-{{ t.status }}">{{ t.status }}</span>{% if !t.error.is_empty() %}<br><span class="bad">{{ t.error }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>{{ tr.get("audit-log") }}</h2>
+  {% if audit.is_empty() %}
+    <p class="muted">{{ tr.get("audit-none") }}</p>
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("col-action") }}</th><th>{{ tr.get("col-target") }}</th><th>{{ tr.get("col-status") }}</th><th></th></tr></thead>
+    <tbody>
+    {% for a in audit %}
+      <tr>
+        <td class="muted" style="white-space:nowrap">{{ a.time }}</td>
+        <td>{{ a.action }}</td>
+        <td style="overflow-wrap:anywhere">{{ a.target }}</td>
+        <td>{{ a.outcome }}</td>
+        <td class="muted" style="overflow-wrap:anywhere">{{ a.details }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

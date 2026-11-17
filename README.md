@@ -5,9 +5,12 @@ a tested rules file, summarizes it with a local LLM (mlx-server-runtime, Qwen3-8
 you on Telegram. Exactly one Google account (`GM_ALLOWED_EMAIL`) can sign in. Mail never leaves the
 machine.
 
-**Phase 1 (deployed):** a single Rust binary. Gmail → rules engine v2 → local summary → Telegram, with
-a night policy, Keychain secrets, launchd, backups and metrics. Next: a morning digest and model
-triage (Phase 2), then Translate / Analyze / Reply with approvals (Phase 3).
+A single Rust binary. Gmail → rules engine v2 (+ model triage) → local summary → Telegram, with a
+morning digest, health alerts, a night policy, Keychain secrets, launchd, backups and metrics
+(Phases 1–2). Phase 3 adds two-way Telegram: **Translate**, **Analyze** and **Reply** under every
+notification, or reply to a notification in your own words ("tell them Tuesday works"). A reply is
+written as a Gmail draft in the thread and sent only after you tap **Approve**; every send is in an
+audit log.
 
 Start with the [documentation index](docs/README.md): PRD, architecture, ADRs, specs and the phased
 plan.
@@ -105,12 +108,16 @@ Run the model with mlx-server-runtime (`mlx-air serve --model mlx-community/Qwen
 ```
 
 Open <http://localhost:8080>, sign in, and click **Connect Gmail** (the consent screen asks for Gmail
-read access and Pub/Sub). gm then creates its Pub/Sub topic and subscription and starts the Gmail
+read access, draft access for replies, and Pub/Sub). gm then creates its Pub/Sub topic and subscription and starts the Gmail
 watch by itself; the dashboard shows the ingestion status. Only mail that arrives after you connect
 is processed. Set `GM_GMAIL_INGEST_MODE=poll` to skip Pub/Sub and poll every 60 s instead.
 
 **Settings** sets the summary language, the Translate target and the UI language
 (English, Tiếng Việt, 日本語).
+
+In Telegram: tap a button under a notification, or reply to it in plain words (Vietnamese, English
+or Japanese). Commands: `/status`, `/pause` (hold notifications), `/resume`, `/language [name]`,
+`/help`. Pending approvals, recent tasks and the audit log are also on **Tasks** in the dashboard.
 
 To run it as a service (start on login, nightly backups) and reach it from your phone over Tailscale,
 follow [deploy/README.md](deploy/README.md).
@@ -134,9 +141,11 @@ notification message. Every rule has redacted examples that CI checks.
   HMAC-signed, `HttpOnly`, `SameSite=Lax`; a host allowlist blocks DNS rebinding and foreign-origin
   POSTs are refused.
 - Secrets live in the macOS Keychain. Refresh tokens are AES-256-GCM-encrypted in the database with a
-  key that never leaves the Keychain. Google scopes: `gmail.readonly`, plus `pubsub` in Pub/Sub mode.
+  key that never leaves the Keychain. Google scopes: `gmail.readonly`, `gmail.compose` (drafts; sent only after your approval), plus
+  `pubsub` in Pub/Sub mode.
 - Mail is untrusted data: it reaches the model only inside delimiters it can't close, the model has no
-  tools, and Telegram messages are plain text.
+  tools, and Telegram messages are plain text. Reply recipients and threading come from the mail's
+  headers, never from the model; the bot answers only your chat.
 
 Full threat model: [docs/spec/security.md](docs/spec/security.md).
 
@@ -159,7 +168,7 @@ gets a fresh database. Google, Telegram and the LLM are faked with wiremock.
 
 ```
 crates/gm/
-  src/main.rs          CLI: serve, migrate, gen-key, keychain, rules
+  src/main.rs          CLI: serve, migrate, gen-key, keychain, rules, status, eval
   src/app.rs           wiring, background tasks, tracing
   src/config.rs        GM_* settings; secrets.rs Keychain; crypto.rs AES-GCM
   src/bus.rs           durable pub/sub on Postgres
@@ -169,7 +178,10 @@ crates/gm/
   src/rules.rs         rules engine v2
   src/llm/             LlmClient: lanes, prompt building, cleaning, JSON parsing
   src/pipeline.rs      triage → summarize → notify
-  src/notify.rs        Telegram / log notifier, formatting
+  src/notify.rs        notifier trait, log notifier, formatting
+  src/telegram/        Bot API client, getUpdates poller (taps, replies, commands)
+  src/tasks/           owner tasks: intent router, approvals, audit, runtime
+  src/recipes/         translate, analyze, reply + the send executor
   src/user_settings.rs per-user settings;  i18n.rs + locales/ (en, vi, ja)
   src/web/             axum routes, guards, sessions, pages (templates/)
   prompts/             system and task prompts
@@ -182,5 +194,5 @@ See [docs/plan/README.md](docs/plan/README.md).
 
 - **Phase 2:** morning digest at 09:05, model triage for unmatched mail with 👍/👎 feedback, model
   loaded only 09:00–19:00, `gm eval`, health alerts.
-- **Phase 3:** Translate / Analyze / Reply from Telegram; sending needs your approval.
+- **Phase 3 (built):** Translate / Analyze / Reply from Telegram; sending needs your approval.
 - **Phase 4:** Calendar notifications.

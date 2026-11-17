@@ -38,10 +38,10 @@ Update this table in the same commit that completes the workstream.
 | 2D | Residency controller | Phase 1 | removed: mlx-air owns the model process |
 | 2E | Health alerts, health panel, dead-letter page, ignored-sender counts | Phase 1 | done |
 | 2F | `gm eval` and the local eval set | 2B | done |
-| 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | partial: `getUpdates` loop for button presses (`src/telegram.rs`) built in Phase 2 |
-| 3B | Task runtime, intent router, approvals, audit | 3A | todo |
-| 3C | Recipes: translate, analyze, reply (+ `gmail.compose`) | 3B interface | todo |
-| 3Z | Phase 3 integration + prompt-injection end-to-end test | 3A–3C | todo |
+| 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | done |
+| 3B | Task runtime, intent router, approvals, audit | 3A | done |
+| 3C | Recipes: translate, analyze, reply (+ `gmail.compose`) | 3B interface | done |
+| 3Z | Phase 3 integration + prompt-injection end-to-end test | 3A–3C | done in tests; the live phone run waits for the owner to reconnect Gmail (`gmail.compose`) |
 | 4A | Calendar source + notifications + digest section | Phase 2 | todo |
 
 Workstreams in the same phase run in parallel when they own different files (listed in each plan).
@@ -83,16 +83,17 @@ Workstreams in the same phase run in parallel when they own different files (lis
    actions (addresses, threads, calendars) never come from model output.
 3. **Every external effect goes through an approval** (send mail, change calendar, share, delete):
    immutable payload with a stored hash, re-validated before execution, written to the audit log.
-4. **Minimal scopes.** A new scope goes in `google::REQUIRED_SCOPES`; the owner reconnects.
+4. **Minimal scopes.** A new scope goes in `Config::required_scopes`; the owner reconnects.
 5. **Secrets** live in the Keychain (`secrets::get`), never in `.env`, logs, argv or error messages.
    Telegram URLs contain the bot token: never log them; strip URLs from reqwest errors.
 6. **Bind to loopback only.** Remote access through Tailscale; no public webhooks.
 7. **Every model call goes through `llm::LlmClient`** with a lane. No reliance on `tools` or
    `response_format`; ask for JSON and parse tolerantly. Keep the stable system prefix (system.md +
    task + `/no_think`) and put the mail last.
-8. **Model hours and outages.** Work that needs the model returns `Outcome::Defer` outside
-   09:00–19:00 and while the model is unavailable (`LlmUnavailable`). No notification is sent without
-   its summary; rule-only notifications go out at any hour.
+8. **Model hours and outages.** Background work that needs the model returns `Outcome::Defer`
+   outside 09:00–19:00, and all model work defers while the model is unavailable (`LlmUnavailable`).
+   Tasks the owner starts from Telegram are the one exception to model hours: they run at any hour.
+   No notification is sent without its summary; rule-only notifications go out at any hour.
 9. **Telegram messages are plain text** (no `parse_mode`).
 10. **Rules are tested.** Every rule has redacted examples (no names, real amounts, IPs or order
     numbers); raw mail never goes into git.
@@ -129,3 +130,16 @@ one, write the answer into the doc it governs and delete the line here.
   recovery message at 19:00); in Pub/Sub mode the ingest-lag limit is the safety-poll interval +
   10 min, so a quiet mailbox doesn't alarm every 15 min.
 - Telegram: `getUpdates` long poll of 25 s.
+- Phase 3 caps: router 60 output tokens; translate chunks of ~1,200 input tokens, at most 6 per mail,
+  2,048 output tokens each; analyze 2,048 and reply 1,536 output tokens (thinking included);
+  thinking passes at temperature 0.6.
+- Phase 3 behavior: a second tap on the same mail and intent within 2 minutes (or while the first
+  runs) is ignored; Translate uses the cleaned body (quoted history and signatures dropped); a
+  rejected reply leaves its draft in Gmail; held notifications are deferred a year and released by
+  `/resume`; approvals are swept for expiry every 10 minutes; the `/tasks` page lists the last 50
+  tasks and audit rows.
+- Weekdays: Qwen3-8B often shifts Japanese weekdays by one when writing Vietnamese (火曜日 → "thứ Hai"
+  instead of "thứ Ba"), in translations, analyses and likely summaries. `prompts/system.md` now lists
+  the weekday names; in a local check with a made-up mail, 3 of 6 Translate/Analyze answers were still
+  wrong. To decide: annotate weekdays in the mail block in code, flag a weekday mismatch between mail
+  and answer in code, or accept it until a stronger model.

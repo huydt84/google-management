@@ -284,3 +284,250 @@ pub async fn mock_ready(server: &MockServer, ok: bool) {
         .mount(server)
         .await;
 }
+
+// ------------------------------------------------------------------------- Phase 3 helpers
+
+/// Telegram configured with token `T` and chat `42` (the poller exists).
+pub fn telegram(cfg: &mut Config) {
+    cfg.telegram_bot_token = Some("T".into());
+    cfg.telegram_chat_id = Some("42".into());
+}
+
+/// Telegram message id of the notification made by [`TestApp::notified_event`].
+pub const NOTIFICATION_MSG: i64 = 900;
+
+/// Prompt markers of the Phase 3 tasks.
+pub const ROUTER: &str = "Task: tell what the owner wants";
+pub const TRANSLATE: &str = "Task: translate one part of an email";
+pub const ANALYZE: &str = "Task: analyze one email";
+pub const REPLY: &str = "Task: write the body of the owner's reply";
+
+/// A button press from chat `chat` on message `message_id`.
+pub fn tap_update(update_id: i64, chat: i64, message_id: i64, data: &str) -> Value {
+    json!({"update_id": update_id, "callback_query": {
+        "id": format!("cq{update_id}"), "from": {"id": chat}, "data": data,
+        "message": {"message_id": message_id, "chat": {"id": chat}}}})
+}
+
+/// A text message from chat `chat`, optionally replying to `reply_to`.
+pub fn text_update(update_id: i64, chat: i64, text: &str, reply_to: Option<i64>) -> Value {
+    let mut m = json!({"message_id": 5000 + update_id, "chat": {"id": chat}, "from": {"id": chat}, "text": text});
+    if let Some(r) = reply_to {
+        m["reply_to_message"] = json!({"message_id": r, "chat": {"id": chat}});
+    }
+    json!({"update_id": update_id, "message": m})
+}
+
+/// A Gmail draft as `drafts.get` returns it.
+pub fn draft_json(id: &str, thread: &str, to: &str, subject: &str, body: &str) -> Value {
+    json!({"id": id, "message": {
+        "id": format!("m-{id}"), "threadId": thread, "labelIds": ["DRAFT"],
+        "payload": {"mimeType": "text/plain", "headers": [
+            {"name": "To", "value": to}, {"name": "Subject", "value": subject},
+            {"name": "Content-Type", "value": "text/plain; charset=UTF-8"}],
+            "body": {"data": b64(body)}}}})
+}
+
+/// The decoded RFC 5322 text of every `drafts.create` / `drafts.update` request.
+pub async fn draft_requests(server: &MockServer) -> Vec<(String, Value)> {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path().contains("/drafts") && !r.url.path().ends_with("/send"))
+        .filter(|r| r.method.as_str() != "GET")
+        .map(|r| {
+            let body: Value = serde_json::from_slice(&r.body).unwrap();
+            let raw = body["message"]["raw"].as_str().unwrap_or_default();
+            let text = String::from_utf8(URL_SAFE_NO_PAD.decode(raw).unwrap()).unwrap();
+            (text, body)
+        })
+        .collect()
+}
+
+pub async fn requests_to(server: &MockServer, method_name: &str, suffix: &str) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == method_name && r.url.path().ends_with(suffix))
+        .count()
+}
+
+impl TestApp {
+    pub fn poller(&self) -> Arc<gm::telegram::TelegramPoller> {
+        self.app.telegram.clone().expect("Telegram configured")
+    }
+
+    /// An event for Gmail message `message_id` that was notified as Telegram message
+    /// [`NOTIFICATION_MSG`].
+    pub async fn notified_event(&self, message_id: &str, subject: &str) -> i64 {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO events (account, source, kind, external_id, status, rule, data)
+             VALUES ($1, 'gmail', 'message.received', $2, 'notified', 'model', $3) RETURNING id",
+        )
+        .bind(OWNER)
+        .bind(message_id)
+        .bind(json!({"subject": subject, "from": "Alice <alice@example.com>"}))
+        .fetch_one(&self.app.pool)
+        .await
+        .unwrap();
+        self.app
+            .tasks
+            .chat
+            .record_out(
+                NOTIFICATION_MSG,
+                gm::telegram::MessageRefs {
+                    event_id: Some(id),
+                    ..Default::default()
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        id
+    }
+
+    pub async fn update(&self, u: Value) {
+        self.poller().handle_update(&u).await.unwrap();
+    }
+
+    pub async fn mock_draft_api(&self, get: Value) {
+        Mock::given(method("POST"))
+            .and(path("/gmail/v1/users/me/drafts"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"id": "d1", "message": {"id": "dm1"}})),
+            )
+            .mount(&self.server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/gmail/v1/users/me/drafts/d1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"id": "d1", "message": {"id": "dm2"}})),
+            )
+            .mount(&self.server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/gmail/v1/users/me/drafts/d1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(get))
+            .mount(&self.server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/gmail/v1/users/me/drafts/send"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!({"id": "sent1", "threadId": "t-m1", "labelIds": ["SENT"]}),
+                ),
+            )
+            .mount(&self.server)
+            .await;
+    }
+
+    pub async fn task_row(&self, id: i64) -> (String, Value, Option<String>) {
+        sqlx::query_as("SELECT status, result, error FROM tasks WHERE id = $1")
+            .bind(id)
+            .fetch_one(&self.app.pool)
+            .await
+            .unwrap()
+    }
+
+    pub async fn last_task(&self) -> i64 {
+        sqlx::query_scalar("SELECT max(id) FROM tasks")
+            .fetch_one(&self.app.pool)
+            .await
+            .unwrap()
+    }
+
+    pub async fn approval_status(&self, id: i64) -> String {
+        sqlx::query_scalar("SELECT status FROM approvals WHERE id = $1")
+            .bind(id)
+            .fetch_one(&self.app.pool)
+            .await
+            .unwrap()
+    }
+
+    pub async fn last_approval(&self) -> i64 {
+        sqlx::query_scalar("SELECT max(id) FROM approvals")
+            .fetch_one(&self.app.pool)
+            .await
+            .unwrap()
+    }
+
+    pub async fn audit_count(&self) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM audit_log")
+            .fetch_one(&self.app.pool)
+            .await
+            .unwrap()
+    }
+
+    /// A task awaiting approval of a `gmail.send_draft`, as the reply recipe leaves it.
+    pub async fn proposed_send(&self, event_id: i64) -> i64 {
+        let task_id: i64 = sqlx::query_scalar(
+            "INSERT INTO tasks (origin_key, event_id, origin, instruction, intent, status, result)
+             VALUES ('cb:x', $1, 'telegram', 'ok', 'reply', 'awaiting_approval', '{\"draft_id\": \"d1\"}') RETURNING id",
+        )
+        .bind(event_id)
+        .fetch_one(&self.app.pool)
+        .await
+        .unwrap();
+        let draft = gm::google::compose::ReplyDraft {
+            to: vec!["alice@example.com".into()],
+            subject: "Re: Meeting".into(),
+            in_reply_to: String::new(),
+            references: String::new(),
+            thread_id: "t-m1".into(),
+            body: "Tuesday works.".into(),
+        };
+        let payload = gm::recipes::reply::payload(OWNER, "d1", &draft);
+        let mut conn = self.app.pool.acquire().await.unwrap();
+        let id = gm::tasks::approvals::create(
+            &mut conn,
+            task_id,
+            gm::recipes::reply::SEND_DRAFT,
+            &payload,
+            "preview",
+            chrono::Utc::now() + chrono::Duration::hours(24),
+        )
+        .await
+        .unwrap();
+        self.app
+            .tasks
+            .chat
+            .record_out(
+                300,
+                gm::telegram::MessageRefs {
+                    event_id: Some(event_id),
+                    task_id: Some(task_id),
+                    approval_id: Some(id),
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        id
+    }
+
+    pub fn last_sent(&self) -> gm::notify::OutgoingMessage {
+        self.sent().last().cloned().expect("a message was sent")
+    }
+}
+
+/// A Gmail message with extra headers (e.g. Message-ID, Reply-To).
+pub fn gmail_message_with(
+    id: &str,
+    from: &str,
+    subject: &str,
+    body: &str,
+    extra: &[(&str, &str)],
+) -> Value {
+    let mut m = gmail_message(id, from, subject, &["INBOX"], body);
+    let hs = m["payload"]["headers"].as_array_mut().unwrap();
+    for (k, v) in extra {
+        hs.push(json!({"name": k, "value": v}));
+    }
+    m
+}

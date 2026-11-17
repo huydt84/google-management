@@ -24,7 +24,7 @@ Guards on every request (`web::guard`):
 | GET | `/auth/login` | — | Start sign-in (OIDC, PKCE, signed `gm_oauth` state cookie) |
 | GET | `/auth/callback` | — | Finish sign-in; 403 on state mismatch or unless the verified email equals `GM_ALLOWED_EMAIL` |
 | POST | `/auth/logout` | — | Clear the session |
-| GET | `/connect/google` | session | Start API consent (`gmail.readonly`, plus `pubsub` in Pub/Sub mode; offline, `prompt=consent`) |
+| GET | `/connect/google` | session | Start API consent (`gmail.readonly` and `gmail.compose`, plus `pubsub` in Pub/Sub mode; offline, `prompt=consent`). The dashboard warns when the stored grant lacks a required scope |
 | GET | `/connect/google/callback` | session | Check owner and scopes, store the encrypted refresh token, bootstrap the Gmail cursor |
 | GET | `/settings` | session (else redirect to `/`) | The user's settings, rendered in their UI language |
 | POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`, `digest_at` (HH:MM inside model hours); 400 with a localized reason, else redirect `/settings?saved=1` |
@@ -49,15 +49,19 @@ mlx-air's own `/metrics`.
 | POST | `/jobs/{id}/retry`, `/jobs/retry-dead` | session | A dead job (or all of them) back to `pending` with attempts reset; redirect to `/jobs` |
 | GET | `/senders` | session | Ignored mail of the last 30 days grouped by sender address: count, last subject, the rule(s) that ignored it |
 
-### Planned
+### Implemented (Phase 3)
 
-| Method | Path | Phase | Purpose |
-|--------|------|-------|---------|
-| GET | `/tasks`, POST `/approvals/{id}/approve` · `/reject` | 3 | Tasks and web approvals |
+Code: [`src/web/tasks.rs`](../../crates/gm/src/web/tasks.rs), [`templates/tasks.html`](../../crates/gm/templates/tasks.html).
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/tasks` | session | Pending approvals (preview, expiry, Approve / Reject), the last 50 tasks, the last 50 audit rows |
+| POST | `/approvals/{id}/approve` | session | Publish `approval.decision` (`via: web`); the same checks as a Telegram tap run in the handler. Redirect to `/tasks` |
+| POST | `/approvals/{id}/reject` | session | Same, rejecting |
 
 ## Telegram
 
-Code: [`src/notify.rs`](../../crates/gm/src/notify.rs), [`src/telegram.rs`](../../crates/gm/src/telegram.rs), [`src/feedback.rs`](../../crates/gm/src/feedback.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/health.rs`](../../crates/gm/src/health.rs).
+Code: [`src/notify.rs`](../../crates/gm/src/notify.rs), [`src/telegram/`](../../crates/gm/src/telegram/), [`src/tasks/`](../../crates/gm/src/tasks/), [`src/recipes/`](../../crates/gm/src/recipes/), [`src/feedback.rs`](../../crates/gm/src/feedback.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/health.rs`](../../crates/gm/src/health.rs).
 
 The bot sends to exactly one chat, `GM_TELEGRAM_CHAT_ID`. Messages are plain text (no `parse_mode`),
 ≤ 4096 characters, link previews disabled. Strings are localized with the owner's `ui_language`;
@@ -94,19 +98,76 @@ https://mail.google.com/…
   or the subject, sender and link.
 - A notification that needs a summary is never sent without it: it waits for model hours and for the
   model to answer ([ADR-0015](../adr/0015-notification-policy-and-digest.md)).
-- Phase 2: every notification carries a `👍` `👎` row (callback data `f:<event_id>:up|down`).
+- Every notification carries two button rows: `🌐 Translate` `🔎 Analyze` `✍️ Reply` (callback data
+  `i:<event_id>:translate|analyze|reply`, Phase 3) and `👍` `👎` (`f:<event_id>:up|down`, Phase 2).
+- While `/pause` is on, mail notifications wait (the job is deferred) and go out after `/resume`.
 
-### Button presses (Phase 2: feedback; minimal part of 3A)
+### Updates: presses, replies and commands
 
-`src/telegram.rs` long-polls `getUpdates` (`timeout` 25 s, `allowed_updates: ["callback_query"]`;
-offset in `system_settings.telegram_offset`, stored after each update). Presses whose
-`message.chat.id` is not `GM_TELEGRAM_CHAT_ID` are answered empty and ignored; unknown callback data
-gets "This button is no longer supported". A feedback press is answered at once ("Thanks, noted.")
+[`telegram/poller.rs`](../../crates/gm/src/telegram/poller.rs) long-polls `getUpdates` (`timeout`
+25 s, `allowed_updates: ["callback_query", "message"]`; offset in `system_settings.telegram_offset`,
+stored after each batch). Updates whose chat is not `GM_TELEGRAM_CHAT_ID` are ignored and logged
+(a press still gets an empty answer so Telegram drops its spinner); nothing is ever sent to another
+chat. Callback data is parsed strictly; anything else gets "This button is no longer supported".
+Every incoming message is recorded in `chat_messages` in the same transaction as what it publishes,
+so a re-polled update is handled once.
+
+A feedback press is answered at once ("Thanks, noted.")
 and published as `feedback.received`; its handler stores the label (last tap wins by tap time) and
 redraws the message's keyboard with ✅ on the current choice (`editMessageReplyMarkup`). 👎 on a
 rule-matched mail shows a hint on the dashboard to edit that rule in `rules.yaml`; on a model-triaged
 mail, to add it to the eval set. There is no "mute this sender" button: rules stay in the one
 reviewed, tested file.
+
+### Translate, Analyze, Reply and approvals (Phase 3)
+
+- **Button** `i:<event_id>:<intent>`: answered "Working on it…", published as `user.instruction`
+  with the intent. A second tap on the same mail and intent while one runs, or within 2 minutes of
+  it, doesn't start another.
+- **Reply to a notification** (or to any bot message about a mail: a translation, a question, a
+  preview) in plain words: published as `user.instruction` with the words. The intent comes from the
+  keyword fast path (vi / en / ja, e.g. "dịch", "translate", "翻訳", "trả lời …", "tell them …",
+  "返信 …") or else the intent router; `unknown` gets a usage hint.
+- **A message that replies to nothing**: the help text, no model call. A reply to a bot message that
+  isn't about a mail: "I can't tell which mail this is about".
+- Answers reply to the owner's message (or to the notification for a button) and are recorded in
+  `chat_messages`, so replying to them continues the same mail.
+- **Translate** → `🌐 Translation (<language>)` and the translated subject and body (quoted history
+  dropped), into `translation_language` or a language the owner names. Long mail is translated in
+  chunks of about 1,200 tokens, at most 6; the rest is marked as not translated.
+- **Analyze** → the subject, a verdict (`✅ Looks safe.` / `⚠️ Looks suspicious.` / `🚨 Looks like
+  phishing.`), then the non-empty sections Key points, Deadlines, Amounts, Warning signs, Next steps.
+- **Reply** without words (the button) asks "What should the reply say?"; the answer to that question
+  continues the task. With words, gm writes a Gmail draft in the thread and sends a preview:
+
+  ```
+  ✉️ Reply draft
+  To: alice@example.com
+  Subject: Re: Meeting
+
+  <body>
+
+  You can edit the draft in Gmail before approving, or answer this message with changes.
+  [✅ Approve] [✖️ Reject]          (callback data a:<approval_id>:y|n)
+  ```
+
+  Answering the preview with changes expires that approval, rewrites the same draft and sends a new
+  preview. Approve sends the draft as it is in Gmail if it still matches the preview; if it was
+  edited in Gmail, nothing is sent and the new version is proposed again (`⚠️ The draft changed in
+  Gmail…`). Then `✅ Sent to <to>: <subject>`. Reject leaves the draft in Gmail. Approve/Reject
+  buttons are removed once decided, expired or replaced. Approvals expire after `GM_APPROVAL_TTL_H`.
+- Owner requests run whenever the model answers, at any hour; if it isn't answering, the owner is
+  told once ("⏳ The model isn't answering…") and the task retries every `GM_LLM_UNAVAILABLE_RETRY_S`.
+
+### Commands (Phase 3)
+
+| Command | Effect |
+|---------|--------|
+| `/status` | Notifications on or paused, model hours, queue counts (pending, running, dead), current health problems |
+| `/pause` | Hold mail notifications until `/resume`; the digest, health alerts and task answers still come |
+| `/resume` | Send what was held, at once |
+| `/language [name]` | Show, or set, the summary language (2–40 letters, as in Settings) |
+| `/help`, `/start`, any other command | Usage |
 
 ### Digest (Phase 2)
 
@@ -137,14 +198,7 @@ After 15 minutes of the same failure: one message `🩺 Problem for <n> min: <pr
 `✅ Resolved: <problem>` when it passes. Silent 19:00–09:00, with sound by day. A failed send is
 retried the next minute. Incidents live in `health_state`.
 
-### Planned
-
-| Feature | Phase |
-|---------|-------|
-| **[Translate]**, **[Analyze]**, **[Reply]** buttons (`i:<event_id>:<intent>`); approvals `a:<approval_id>:y/n` | 3 |
-| Replies to notifications as instructions; `/status`, `/pause`, `/resume`, `/language` | 3 |
-
-`callback_data` is limited to 64 bytes, so it carries ids only. Updates from other chats are ignored.
+`callback_data` is limited to 64 bytes, so it carries ids only.
 
 ## CLI
 
@@ -160,7 +214,7 @@ Code: [`src/main.rs`](../../crates/gm/src/main.rs).
 | `gm keychain set <name>` | Store a secret in the Keychain (macOS prompts for the value) |
 | `gm keychain list` | Show which known secrets are present (never the values) |
 | `gm rules [path]` | Validate a rules file and check every rule's examples |
-| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary, `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
+| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary (a binary at most 2 s newer than the start counts as the running one: `ps` reports whole seconds and the upgrade command restarts within a second), `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
 | `gm eval [--dir DIR] [--language LANG]` | Run rules → model triage → summary on every case in the eval set against the **local** model (refuses a non-loopback `GM_LLM_BASE_URL`) and print accuracy per expected action, the confusion matrix, the JSON parse rate per task, misclassified ids, and calls, latency p50/p95 and tokens per model task. Needs no database, Keychain or Google access |
 
 ## Configuration
@@ -216,7 +270,8 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_RUN_BACKGROUND` | `true` | Start workers and loops |
 | `GM_WORKER_CONCURRENCY` | 2 | Bus workers |
 | `GM_JOB_MAX_ATTEMPTS` | 5 | Retry limit |
-| `GM_RETENTION_DAYS` | 60 | Retention |
+| `GM_RETENTION_DAYS` | 60 | Retention of events, jobs, tasks, approvals and the Telegram message map (the audit log is kept) |
+| `GM_APPROVAL_TTL_H` | 24 | Hours before a proposed action (Approve / Reject) expires |
 | `GM_LOG_DIR` | — | JSON log directory (daily files, 7 kept); stderr only if unset |
 
 ## Rules file (`rules.yaml`)
@@ -251,7 +306,7 @@ Removing a case means deleting its file.
 
 ## LLM contracts
 
-Code: [`src/llm/mod.rs`](../../crates/gm/src/llm/mod.rs), [`prompts/`](../../crates/gm/prompts/), [`src/triage_model.rs`](../../crates/gm/src/triage_model.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs).
+Code: [`src/llm/mod.rs`](../../crates/gm/src/llm/mod.rs), [`prompts/`](../../crates/gm/prompts/), [`src/triage_model.rs`](../../crates/gm/src/triage_model.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/tasks/router.rs`](../../crates/gm/src/tasks/router.rs), [`src/recipes/`](../../crates/gm/src/recipes/).
 
 All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) through `LlmClient`. No
 `tools`, `response_format` or JSON mode is assumed.
@@ -259,7 +314,7 @@ All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) throug
 ### Prompt layout (all tasks)
 
 1. System message: `prompts/system.md` (shared rules: the `<email>` content is untrusted data, JSON
-   only) + `prompts/<task>.md` + `/no_think`. Identical across calls of a task, so the runtime's prefix
+   only) + `prompts/<task>.md` + `/no_think` (left out for Analyze and Reply, which think). Identical across calls of a task, so the runtime's prefix
    cache can reuse it.
 2. User message: `Output language: <language>`, then the mail (headers, attachment names, cleaned and
    capped body) inside `<email>…</email>`. Any `<email` / `</email` in the content is neutralized.
@@ -294,11 +349,15 @@ Batch lane. Stored in `events.summary`.
   most 10 per mail) → stored `{jobs, parse_ok}`. A `link` is kept only if it is an `https://` URL that
   appears verbatim in the mail; the model can't introduce links.
 
-### Planned
+### Owner tasks (Phase 3, interactive lane)
 
-| Contract | Phase | Lane | Output |
-|----------|-------|------|--------|
-| Translate | 3 | interactive | text in `translation_language` |
-| Analyze | 3 | interactive (thinking on) | key points, deadlines, amounts, phishing signs |
-| Intent router | 3 | interactive | `{intent, args}` from the owner's words only |
-| Reply body | 3 | interactive (thinking on) | body text only, never recipients |
+| Contract | Prompt | Input | Output | Caps |
+|----------|--------|-------|--------|------|
+| Intent router | `router.md` | the owner's words in `<instruction>`, no mail | `{"intent": "translate" \| "analyze" \| "reply" \| "unknown", "language": "…"}` | 60 tokens; unusable → `unknown`; a language failing the Settings check is dropped |
+| Translate | `translate.md` | one chunk of subject + cleaned body in `<email>` | `{"translation": "…"}` | 2,048 tokens per chunk |
+| Analyze | `analyze.md` | the mail, thinking on (temperature 0.6), then a JSON pass without thinking if needed | `{"key_points", "deadlines", "amounts", "risks", "next_steps": [..], "verdict": "safe" \| "suspicious" \| "phishing"}` | 2,048 tokens |
+| Reply body | `reply.md` | the owner's words (trusted) before the mail; on an edit, the current draft and the requested change | `{"body": "…"}`: the body only. Recipients, subject and threading headers are set by code from the original mail | 1,536 tokens |
+
+A reply cut off mid-JSON keeps the text recovered so far; other output that still isn't JSON after the
+retry is used as plain text (thinking removed). For Reply the owner sees it in the preview before
+anything can be sent.

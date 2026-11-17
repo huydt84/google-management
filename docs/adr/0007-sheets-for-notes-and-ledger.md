@@ -16,7 +16,7 @@ gmail.com accounts. Access to the owner's Drive should be as narrow as possible.
   counterparty, description, category, mail link, event id, recorded at).
 - Use the **`drive.file`** scope, which only grants access to files the app created or the owner
   explicitly opened with it — not the rest of Drive.
-- Store the spreadsheet id in `kv_state`; deduplicate by event id in `ledger_entries`.
+- Store the spreadsheet id in `system_settings`; deduplicate by event id in `ledger_entries`.
 
 ## Consequences
 

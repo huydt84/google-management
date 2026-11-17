@@ -224,6 +224,20 @@ impl Bus {
         Ok(true)
     }
 
+    /// Make a subscriber's waiting jobs runnable now (e.g. notifications held by `/pause`).
+    pub async fn run_now(&self, subscriber: &str) -> anyhow::Result<u64> {
+        let n = sqlx::query(
+            "UPDATE jobs SET run_after = now(), updated_at = now()
+             WHERE subscriber = $1 AND status = 'pending' AND run_after > now()",
+        )
+        .bind(subscriber)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        self.wake.notify_waiters();
+        Ok(n)
+    }
+
     /// Jobs stuck in `running` (process died mid-handler) go back to `pending`. At startup of the
     /// single-process deployment pass zero: anything still running belongs to a dead process.
     pub async fn requeue_stale(&self, older_than: chrono::Duration) -> anyhow::Result<u64> {

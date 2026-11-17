@@ -52,6 +52,8 @@ pub struct EventRow {
 struct IndexPage {
     tr: Tr,
     email: String,
+    /// The connected account lacks a scope this build requires (e.g. `gmail.compose`): reconnect.
+    missing_scopes: bool,
     account_status: String,
     history_id: String,
     last_sync: String,
@@ -220,8 +222,13 @@ pub async fn index(
             state.ingestor.pubsub_error().unwrap_or_default(),
         ),
     };
+    let required = state.cfg.required_scopes();
+    let missing_scopes = account
+        .as_ref()
+        .is_some_and(|a| required.iter().any(|r| !a.scopes.0.iter().any(|g| g == r)));
     let page = IndexPage {
         email,
+        missing_scopes,
         account_status: account.map(|a| a.status).unwrap_or_default(),
         history_id: gs
             .as_ref()

@@ -6,3 +6,5 @@ service-account*.json
 # Raw (unredacted) eval mail never goes in git (ADR-0017); it lives in ~/.local/share/gm/eval/.
 /eval/
 .vercel/
+
+.claude/

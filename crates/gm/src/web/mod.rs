@@ -3,6 +3,7 @@
 mod auth;
 mod pages;
 pub mod session;
+mod tasks;
 
 use std::sync::Arc;
 
@@ -33,6 +34,8 @@ pub struct AppState {
     /// Fetches the raw message when the owner adds a mail to the eval set.
     pub gmail: crate::google::gmail::GmailClient,
     pub notifier_name: &'static str,
+    /// Web approvals publish `approval.decision`.
+    pub bus: Arc<crate::bus::Bus>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -118,6 +121,9 @@ pub fn router(state: SharedState) -> Router {
         .route("/jobs/retry-dead", post(pages::retry_all_dead))
         .route("/jobs/{id}/retry", post(pages::retry_job))
         .route("/senders", get(pages::senders_page))
+        .route("/tasks", get(tasks::tasks_page))
+        .route("/approvals/{id}/approve", post(tasks::approve))
+        .route("/approvals/{id}/reject", post(tasks::reject))
         .route("/events/{id}/feedback", post(pages::event_feedback))
         .route("/events/{id}/eval", post(pages::event_eval))
         .route("/api/gmail/sync", post(pages::sync_now))

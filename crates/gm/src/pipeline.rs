@@ -39,6 +39,8 @@ pub struct Pipeline {
     pub hours: ModelHours,
     /// How long a summary waits before trying again while the model is unavailable.
     pub llm_unavailable_retry: chrono::Duration,
+    /// Records each notification's Telegram message, so a reply to it reaches the right mail.
+    pub chat: crate::telegram::ChatLog,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -336,6 +338,12 @@ impl Pipeline {
         let verdict = Self::verdict_of(&ev.data);
         let priority = verdict.as_ref().map(|v| v.priority).unwrap_or_default();
         let needs_llm = verdict.as_ref().is_none_or(|v| v.summarize);
+        if crate::telegram::paused(&self.pool).await? {
+            // `/pause`: held until `/resume` makes the job runnable again (`Bus::run_now`).
+            return Ok(Outcome::Defer(
+                chrono::Utc::now() + chrono::Duration::days(365),
+            ));
+        }
         let now = self.clock.now();
         if needs_llm && !self.hours.is_on(now) {
             // Only LLM work waits for model hours (ADR-0015). Rule-only notifications (card
@@ -347,14 +355,26 @@ impl Pipeline {
         let prefs = self.user_settings.get(&owner).await?;
         let tr = Tr::new(&prefs.ui_language);
         let text = format_email_notification(&tr, &ev.data, ev.summary.as_ref(), priority);
-        self.notifier
+        let message_id = self
+            .notifier
             .send(&OutgoingMessage {
                 text,
                 silent: priority == Priority::Silent,
-                buttons: vec![crate::notify::feedback_row(p.event_id, "", None)],
+                buttons: vec![
+                    crate::telegram::intent_row(&tr, p.event_id),
+                    crate::notify::feedback_row(p.event_id, "", None),
+                ],
+                reply_to: None,
             })
             .await?;
         self.set_status(p.event_id, "ready", "notified").await?;
+        if let Some(id) = message_id {
+            let refs = crate::telegram::MessageRefs {
+                event_id: Some(p.event_id),
+                ..Default::default()
+            };
+            self.chat.record_out(id, refs, None).await?;
+        }
         Ok(Outcome::Done)
     }
 }

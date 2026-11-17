@@ -25,8 +25,8 @@ Start here to understand Google Management at a high level, then go deeper as ne
 |-------|--------|-------------|
 | 0 | ✅ shipped, replaced | Python: Gmail → rules → local LLM summary → Telegram |
 | 1 | ✅ done | Rust single binary, rules engine v2 from the mail analysis, Keychain, launchd, backups, metrics, CI |
-| 2 | ✅ done on branch `phase2` | Morning digest at 09:05, model triage + feedback, `gm eval`, health alerts |
-| 3 | planned | Telegram buttons and replies: Translate, Analyze, Reply, with approvals and audit |
+| 2 | ✅ done | Morning digest at 09:05, model triage + feedback, `gm eval`, health alerts |
+| 3 | ✅ built and tested; live phone run pending | Telegram buttons and replies: Translate, Analyze, Reply, with approvals and audit |
 | 4 | planned | Calendar notifications; today's calendar in the digest |
 
 Backlog: expense ledger, Drive, free-form agent and automations, Bonsai-27B.

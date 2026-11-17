@@ -591,6 +591,7 @@ impl Digest {
                 text: part,
                 silent: true, // nothing in the digest is urgent
                 buttons: if i == last { r.buttons.clone() } else { vec![] },
+                reply_to: None,
             };
             if let Some(id) = self.p.notifier.send(&msg).await? {
                 ids.push(id);
@@ -643,6 +644,7 @@ impl Digest {
                 } else {
                     vec![]
                 },
+                reply_to: None,
             };
             match ids.get(i) {
                 Some(&id) => self.p.notifier.edit(id, &msg).await?,

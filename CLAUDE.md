@@ -27,9 +27,10 @@ The full module map, one row per file, is in [docs/architecture.md §4](docs/arc
   `model_step` (the shared steps of every model job).
 - `crates/gm/src/rules.rs` + `rules.yaml`: rules engine v2.
 - `crates/gm/src/llm/`: the only way to call a model (lanes, prompt layout, parsing).
-- `crates/gm/src/digest.rs`, `scheduler.rs`, `health.rs`, `feedback.rs`, `telegram.rs`,
-  `triage_model.rs`, `eval.rs`: Phase 2 (digest, schedules, health alerts, 👍/👎, model triage,
-  `gm eval`).
+- `crates/gm/src/digest.rs`, `scheduler.rs`, `health.rs`, `feedback.rs`, `triage_model.rs`,
+  `eval.rs`: Phase 2 (digest, schedules, health alerts, 👍/👎, model triage, `gm eval`).
+- `crates/gm/src/telegram/`, `tasks/`, `recipes/`, `google/compose.rs`, `web/tasks.rs`: Phase 3
+  (Telegram poller and commands, owner tasks, router, approvals, audit, translate / analyze / reply).
 - `crates/gm/src/gmail/`, `crates/gm/src/google/`: ingestion, parsing, OAuth, Gmail client.
 - `crates/gm/migrations/`: schema. `crates/gm/locales/`: UI strings. `crates/gm/prompts/`: prompts.
 - `crates/gm/tests/common/mod.rs`: `test_app`, wiremock helpers, `RecordingNotifier`, `FixedClock`.
@@ -102,6 +103,7 @@ the same premise fail, stop and question the premise instead of trying a third.
 | A docs fix edited an already-applied migration (sqlx refuses to start on a changed checksum) | `gm status` fails on an applied migration whose file changed |
 | A test set a time with Postgres `now()` and checked it with the host clock; the Docker VM clock runs ~1 ms ahead, so "16 min" read as 15 | rule only: in tests, take times that gm compares from the clock gm reads (`Utc::now()` or the `FixedClock`), not from `now()` in SQL |
 | Called Phase 2 done on tests alone, never run against the real model or Gmail | rule only, for now: "Prove it works on the real system" |
+| `gm status` said "restart to run it" right after the documented upgrade, because `ps` start times are whole seconds | unit test `a_build_in_the_same_second_as_the_start_is_not_stale` in `status.rs` |
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and
@@ -115,3 +117,7 @@ Per-phase plans: [phase-1.md](docs/plan/phase-1.md) (done), [phase-2.md](docs/pl
 [phase-3.md](docs/plan/phase-3.md), [phase-4.md](docs/plan/phase-4.md).
 
 Tests must never call real Google, Telegram, or LLM endpoints. Raw mail never goes into git.
+
+## Commit Style
+- Each commit must be able stand standalone - which means take a random commit and the app still run, all the checks are clean, all the verifications are passed
+- Commit message: `<type>[optional scope]: <description>` follow by 3-5 bullet points. description and each bullet points are no more than 20 words each. No "Co-Authored-By..."

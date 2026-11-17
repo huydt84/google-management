@@ -2,6 +2,7 @@
 //! stored refresh tokens, the Gmail REST API and Cloud Pub/Sub.
 
 pub mod accounts;
+pub mod compose;
 pub mod gmail;
 pub mod oauth;
 pub mod pubsub;
@@ -12,6 +13,9 @@ pub const GMAIL_READONLY: &str = "https://www.googleapis.com/auth/gmail.readonly
 /// Only requested in Pub/Sub ingest mode (ADR-0002): lets gm create its topic and subscription
 /// and pull notifications with the same encrypted refresh token.
 pub const PUBSUB: &str = "https://www.googleapis.com/auth/pubsub";
+/// Create, update and send drafts (Phase 3 reply recipe). Sending happens only in the approved
+/// `gmail.send_draft` executor.
+pub const GMAIL_COMPOSE: &str = "https://www.googleapis.com/auth/gmail.compose";
 
 #[derive(Debug, thiserror::Error)]
 pub enum GoogleError {

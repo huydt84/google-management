@@ -24,7 +24,11 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
 - **Model hours:** gm runs model work only between `GM_MODEL_ON` (09:00) and `GM_MODEL_OFF`
   (19:00), local time. Jobs that need the model outside them are deferred (`run_after` = next
   on-time), not failed ([`clock.rs`](../../crates/gm/src/clock.rs) `ModelHours`,
-  [`pipeline.rs`](../../crates/gm/src/pipeline.rs) `Pipeline::model_step`).
+  [`pipeline.rs`](../../crates/gm/src/pipeline.rs) `Pipeline::model_step`). Model hours govern
+  background work only: a task the owner starts from Telegram (translate, analyze, reply, on the
+  `interactive` lane) runs at any hour, whenever the model answers, because the owner is waiting for
+  it and asked for it; if the model is not answering, the owner is told once and the task waits like
+  any other job ([`tasks/runtime.rs`](../../crates/gm/src/tasks/runtime.rs)).
 - **Model process:** owned by mlx-air (instance `gm`, its own launchd agent with KeepAlive). gm
   never starts or stops it; it only probes `GM_LLM_READY_URL` for the health check.
   *Amended 2026-11-17:* the Phase 2 residency controller that started and stopped

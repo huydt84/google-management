@@ -17,10 +17,12 @@ pub mod i18n;
 pub mod llm;
 pub mod notify;
 pub mod pipeline;
+pub mod recipes;
 pub mod rules;
 pub mod scheduler;
 pub mod secrets;
 pub mod status;
+pub mod tasks;
 pub mod telegram;
 pub mod triage_model;
 pub mod user_settings;
@@ -36,4 +38,7 @@ pub mod topics {
     pub const DIGEST_REFRESH: &str = "digest.refresh";
     pub const SCHEDULE_DUE: &str = "schedule.due";
     pub const FEEDBACK_RECEIVED: &str = "feedback.received";
+    pub const USER_INSTRUCTION: &str = "user.instruction";
+    pub const APPROVAL_DECISION: &str = "approval.decision";
+    pub const TASK_REPLY: &str = "task.reply";
 }

@@ -85,16 +85,15 @@ One row per model request ([ADR-0010](../adr/0010-llm-client-lanes-residency.md)
 ## Retention
 
 Every 6 hours, rows older than `GM_RETENTION_DAYS` (60) are deleted from `events`, from `jobs` in
-`done`/`dead`, and from `llm_calls`. The local eval set (`~/.local/share/gm/eval/`, outside the
+`done`/`dead`, from `llm_calls`, from `tasks` (their `approvals` go with them) and from
+`chat_messages`. `audit_log` is kept forever: it holds metadata only (action, recipients, ids, no mail
+body). The local eval set (`~/.local/share/gm/eval/`, outside the
 database) is exempt ([ADR-0017](../adr/0017-eval-data-handling.md)).
 
 ## Planned
 
 | Phase | Table | Purpose |
 |-------|-------|---------|
-| 2 | `digests` | one row per sent digest: date, Telegram message id (for later edits), item ids |
-| 2 | `triage_feedback` | `event_id`, label (👍/👎, should have notified), created_at |
-| 3 | `tasks`, `approvals`, `chat_messages`, `audit_log`, `kv_state` | instructions, immutable approvals with payload hash, Telegram message mapping, audit trail, poller offset |
 | 4 | `calendar_state` | sync token per calendar |
 
 Each comes as a new numbered migration. Parallel sessions must keep one linear migration sequence
@@ -144,7 +143,8 @@ Machine-wide key-value state (not per user), read and written with `db::system_g
 
 | Key | Value | Notes |
 |-----|-------|-------|
-| `telegram_offset` | int | next `getUpdates` offset ([`telegram.rs`](../../crates/gm/src/telegram.rs)) |
+| `telegram_offset` | int | next `getUpdates` offset ([`telegram/poller.rs`](../../crates/gm/src/telegram/poller.rs)) |
+| `notifications_paused` | bool | `true` while `/pause` holds mail notifications ([`telegram/mod.rs`](../../crates/gm/src/telegram/mod.rs)) |
 
 ### `triage_feedback` (`0006_feedback.sql`)
 
@@ -155,3 +155,68 @@ Machine-wide key-value state (not per user), read and written with `db::system_g
 | `rule` | text | the event's rule when rated (`model` = model triage → eval candidate) |
 | `via` | text | `telegram`, `web` |
 | `tapped_at` | timestamptz | the newest tap wins |
+
+## Phase 3 (`0007_actions.sql`)
+
+Code: [`tasks/runtime.rs`](../../crates/gm/src/tasks/runtime.rs), [`tasks/approvals.rs`](../../crates/gm/src/tasks/approvals.rs), [`telegram/mod.rs`](../../crates/gm/src/telegram/mod.rs).
+
+### `tasks`
+
+One owner request: a button tap or a sentence about a mail.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigserial PK | |
+| `origin_key` | text unique | the update that created it (`cb:<callback id>`, `msg:<message id>`) |
+| `event_id` | bigint FK → `events` (set null) | the mail |
+| `origin` | text | `telegram` |
+| `instruction` | text | the owner's words (trusted); answers to a question are appended |
+| `intent` | text | `translate`, `analyze`, `reply`, `unknown` (NULL until routed) |
+| `args` | jsonb | e.g. `{language}` for a translation, `{edit}` for a change to a reply draft |
+| `status` | text | `pending → running → done \| needs_input \| awaiting_approval \| failed`; `awaiting_approval → executing → done \| failed`; `awaiting_approval → rejected \| expired`; `needs_input \| awaiting_approval → pending` when the owner answers or asks for a change |
+| `result` | jsonb | the answer text, the reply draft id and body, `last_origin`, `waiting_told` |
+| `error` | text | |
+| `reply_to` | bigint | the Telegram message answers reply to |
+
+### `approvals`
+
+A proposed external action. The payload never changes after insert.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigserial PK | |
+| `task_id` | bigint FK → `tasks` (cascade) | |
+| `action` | text | `gmail.send_draft` |
+| `payload` | jsonb | `{account, draft_id, thread_id, to, subject, body_sha256}` |
+| `payload_hash` | text | sha256 of the payload as canonical JSON (sorted keys, no spaces); checked again before executing |
+| `preview` | text | the text the owner saw |
+| `status` | text | `pending → approved → executed \| failed`; `pending → rejected \| expired`; a pending approval also expires when the owner asks for a change, and fails when its hash no longer matches or the draft changed in Gmail |
+| `expires_at` | timestamptz | creation + `GM_APPROVAL_TTL_H` |
+| `decided_at`, `decided_via` | timestamptz, text | `telegram`, `web` |
+| `executing_job` | bigint | the `approval.decision` job that approved it, the only one allowed to run the executor |
+| `error` | text | |
+
+### `chat_messages`
+
+Which mail, task or approval a Telegram message belongs to, so a reply to it can be routed, and which
+`task.reply` sent it.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `chat_id`, `message_id` | text, bigint | unique together |
+| `event_id`, `task_id`, `approval_id` | bigint | what the message is about (no foreign keys: the map outlives nothing it points to) |
+| `direction` | text | `in` (from the owner, recorded once: a re-polled update is skipped), `out` |
+| `reply_key` | text | the `task.reply` key that sent it |
+
+### `audit_log`
+
+Every executed or failed external action. Kept forever.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `ts` | timestamptz | |
+| `actor` | text | `owner` |
+| `action` | text | `gmail.send_draft` |
+| `target` | text | recipients |
+| `task_id` | bigint | (no foreign key, so the row survives task retention) |
+| `details` | jsonb | executed: `{approval_id, via, outcome, draft_id, thread_id, subject, message_id, note}` (`note: "already sent"` when the draft had already gone out); failed: `{approval_id, via, outcome, error}`. Never a mail body |

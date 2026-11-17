@@ -22,6 +22,12 @@ pub struct ParsedMessage {
     pub body_text: String,
     pub has_list_unsubscribe: bool,
     pub attachments: Vec<String>,
+    /// `Message-ID` header (with angle brackets), used to thread a reply.
+    pub message_id_header: String,
+    /// `References` header, extended by a reply.
+    pub references: String,
+    /// `Reply-To` addresses (lowercase); a reply goes here, else to `from_addr`.
+    pub reply_to: Vec<String>,
 }
 
 impl ParsedMessage {
@@ -247,5 +253,15 @@ pub fn parse_message(msg: &Value) -> ParsedMessage {
         body_text,
         has_list_unsubscribe: header(&hs, "list-unsubscribe").is_some(),
         attachments,
+        message_id_header: header(&hs, "message-id")
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        references: header(&hs, "references")
+            .unwrap_or_default()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        reply_to: parse_address_list(header(&hs, "reply-to").unwrap_or_default()),
     }
 }

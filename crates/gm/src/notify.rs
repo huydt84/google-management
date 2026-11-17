@@ -1,10 +1,11 @@
-//! Outbound notifications behind a channel interface (ADR-0006 as amended): Telegram now, others
-//! later. Messages are plain text (invariant 8): mail-derived text is never sent as markup.
+//! Outbound notifications behind a channel interface (ADR-0006 as amended): Telegram now
+//! ([`crate::telegram::TelegramClient`]), others later. Messages are plain text (invariant 9):
+//! mail-derived text is never sent as markup.
 
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::i18n::Tr;
 use crate::rules::Priority;
@@ -27,6 +28,8 @@ pub struct OutgoingMessage {
     pub silent: bool,
     /// Inline keyboard rows; empty for none.
     pub buttons: Keyboard,
+    /// Send as a reply to this message of the same chat (Telegram `reply_parameters`).
+    pub reply_to: Option<i64>,
 }
 
 impl OutgoingMessage {
@@ -35,6 +38,7 @@ impl OutgoingMessage {
             text: text.into(),
             silent,
             buttons: vec![],
+            reply_to: None,
         }
     }
 }
@@ -56,114 +60,6 @@ pub trait Notifier: Send + Sync {
         Ok(())
     }
     fn name(&self) -> &'static str;
-}
-
-pub struct TelegramNotifier {
-    http: reqwest::Client,
-    api_base: String,
-    token: String,
-    chat_id: String,
-}
-
-fn keyboard_json(buttons: &Keyboard) -> Value {
-    json!({"inline_keyboard": buttons.iter().map(|row| row.iter().map(|b| json!({"text": b.text, "callback_data": b.data})).collect::<Vec<_>>()).collect::<Vec<_>>()})
-}
-
-impl TelegramNotifier {
-    pub fn new(http: reqwest::Client, api_base: &str, token: &str, chat_id: &str) -> Self {
-        Self {
-            http,
-            api_base: api_base.trim_end_matches('/').into(),
-            token: token.into(),
-            chat_id: chat_id.into(),
-        }
-    }
-
-    pub fn chat_id(&self) -> &str {
-        &self.chat_id
-    }
-
-    /// Call a Bot API method. Never logs or returns the URL: it contains the bot token
-    /// (invariant 5). "message is not modified" counts as success (edits are idempotent).
-    pub async fn call(&self, method: &str, body: &Value) -> anyhow::Result<Value> {
-        let resp = self
-            .http
-            .post(format!("{}/bot{}/{method}", self.api_base, self.token))
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("telegram {method} failed: {}", e.without_url()))?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body: String = resp
-                .text()
-                .await
-                .unwrap_or_default()
-                .chars()
-                .take(200)
-                .collect();
-            if status.as_u16() == 400 && body.contains("message is not modified") {
-                return Ok(Value::Null);
-            }
-            anyhow::bail!("telegram {method} failed: {status} {body}");
-        }
-        resp.json::<Value>()
-            .await
-            .map_err(|e| anyhow::anyhow!("telegram {method}: bad response: {}", e.without_url()))
-    }
-}
-
-#[async_trait]
-impl Notifier for TelegramNotifier {
-    async fn send(&self, msg: &OutgoingMessage) -> anyhow::Result<Option<i64>> {
-        let mut body = json!({
-            "chat_id": self.chat_id,
-            "text": msg.text,
-            "disable_notification": msg.silent,
-            "link_preview_options": {"is_disabled": true},
-        });
-        if !msg.buttons.is_empty() {
-            body["reply_markup"] = keyboard_json(&msg.buttons);
-        }
-        let r = self.call("sendMessage", &body).await?;
-        Ok(r["result"]["message_id"].as_i64())
-    }
-
-    async fn edit(&self, message_id: i64, msg: &OutgoingMessage) -> anyhow::Result<()> {
-        let mut body = json!({
-            "chat_id": self.chat_id,
-            "message_id": message_id,
-            "text": msg.text,
-            "link_preview_options": {"is_disabled": true},
-        });
-        if !msg.buttons.is_empty() {
-            body["reply_markup"] = keyboard_json(&msg.buttons);
-        }
-        self.call("editMessageText", &body).await?;
-        Ok(())
-    }
-
-    async fn edit_buttons(&self, message_id: i64, buttons: &Keyboard) -> anyhow::Result<()> {
-        self.call(
-            "editMessageReplyMarkup",
-            &json!({"chat_id": self.chat_id, "message_id": message_id, "reply_markup": keyboard_json(buttons)}),
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn answer_callback(&self, callback_id: &str, text: &str) -> anyhow::Result<()> {
-        self.call(
-            "answerCallbackQuery",
-            &json!({"callback_query_id": callback_id, "text": text}),
-        )
-        .await?;
-        Ok(())
-    }
-
-    fn name(&self) -> &'static str {
-        "telegram"
-    }
 }
 
 /// Used when Telegram is not configured: notifications only go to the log.

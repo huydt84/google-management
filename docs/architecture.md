@@ -3,7 +3,7 @@
 This document explains how Google Management is put together, at increasing levels of detail. The
 diagrams use [Mermaid](https://mermaid.js.org/) and render on GitHub and in most Markdown viewers.
 
-Legend used throughout: **solid** = exists today (Phase 1, Rust), **dashed** = planned (phase noted).
+Legend used throughout: **solid** = exists today (Phases 1–3, Rust), **dashed** = planned (phase noted).
 
 - [1. Scope and quality goals](#1-scope-and-quality-goals)
 - [2. System context](#2-system-context)
@@ -63,13 +63,14 @@ flowchart LR
     gm --> pg
     gm -- "secrets" --> kc
     gm -- "sendMessage" --> tg
-    gm -. "getUpdates (Phase 3)" .-> tg
+    gm -- "getUpdates (long poll)" --> tg
+    gm -- "drafts.create / update / get / send (approved only)" --> gmail
     gm -. "events (Phase 4)" .-> cal
 ```
 
 - Every connection is **outbound** from the Mac; nothing on the internet calls gm. Gmail changes
   arrive through a Pub/Sub subscription that gm **pulls**, with a safety poll every 15 minutes
-  ([ADR-0002](adr/0002-gmail-ingestion-by-pull.md)); Telegram will be long-polled.
+  ([ADR-0002](adr/0002-gmail-ingestion-by-pull.md)); Telegram updates (taps, replies, commands) are long-polled.
 - The owner reaches the web UI on `localhost:8080`, or from the phone through `tailscale serve`
   ([ADR-0013](adr/0013-ops-launchd-keychain-tailscale.md)).
 
@@ -85,6 +86,8 @@ flowchart TB
             house["housekeeping:<br/>stale-job requeue, retention"]
             sched["scheduler: digest 09:05"]
             health["health checks (60 s)"]
+            tgpoll["Telegram getUpdates poller"]
+            expiry["approval expiry (10 min)"]
         end
         pg[("Postgres 17<br/>Docker :5433")]
         mlx["mlx-server-runtime :8000<br/>(mlx-air, launchd com.mlx-air.instance.gm)"]
@@ -93,6 +96,8 @@ flowchart TB
     web --> pg
     workers --> pg
     poll --> pg
+    tgpoll --> pg
+    expiry --> pg
     workers --> mlx
     health -.->|/ready| mlx
     backup --> pg
@@ -165,7 +170,7 @@ flowchart LR
 | [`crypto.rs`](../crates/gm/src/crypto.rs) | `SecretBox`: AES-256-GCM for refresh tokens, key = Keychain `master-key`. |
 | [`db.rs`](../crates/gm/src/db.rs) | sqlx pool, embedded [`migrations/`](../crates/gm/migrations/), small typed queries, retention, `system_get`/`system_set`. |
 | [`bus.rs`](../crates/gm/src/bus.rs) | Durable pub/sub on Postgres (§8). |
-| [`google/`](../crates/gm/src/google/) | OAuth (PKCE, id_token check), encrypted account store with access-token cache, thin Gmail REST client, Pub/Sub REST (`pubsub.rs`). |
+| [`google/`](../crates/gm/src/google/) | OAuth (PKCE, id_token check), encrypted account store with access-token cache, thin Gmail REST client (incl. drafts), Pub/Sub REST (`pubsub.rs`), reply composition (`compose.rs`: headers from the original mail, RFC 2047, RFC 5322 text). |
 | [`gmail/`](../crates/gm/src/gmail/) | Ingestion (bootstrap, history sync, 404 recovery, poll loop), Pub/Sub loop (watch renewal, pull, ack) and MIME parsing (charsets incl. ISO-2022-JP, HTML → text). |
 | [`rules.rs`](../crates/gm/src/rules.rs) | Rules engine v2 ([ADR-0012](adr/0012-rules-engine-v2.md)): matchers, extractors, actions, examples, hot reload; `Action::as_str` / `parse_final` are the only action-name mapping. |
 | [`pipeline.rs`](../crates/gm/src/pipeline.rs) | Idempotent handlers `triage`, `classify`, `summarize`, `notify`; `route` (verdict → next topic); `model_step`, the shared steps of every model job (model hours, fetch or `gone`, owner language, wait while the model is unavailable). |
@@ -174,7 +179,9 @@ flowchart LR
 | [`scheduler.rs`](../crates/gm/src/scheduler.rs) | Publishes `schedule.due` at each owner's `digest_at`; missed times fire once. |
 | [`health.rs`](../crates/gm/src/health.rs) | Health checks (dead jobs, ingest lag, model `/ready`, reconnect), alerts after 15 min, recovery messages; feeds the dashboard panel, the digest System section and `/metrics`. |
 | [`feedback.rs`](../crates/gm/src/feedback.rs) | 👍/👎 storage (last tap wins) and keyboard redraw. |
-| [`telegram.rs`](../crates/gm/src/telegram.rs) | `getUpdates` long poll for button presses (minimal 3A). |
+| [`telegram/`](../crates/gm/src/telegram/) | Bot API client (`client.rs`, the `Notifier`), the `getUpdates` poller (`poller.rs`: taps, replies, commands, foreign-chat filter, stored offset), callback data, the `chat_messages` map (`ChatLog`), `/pause` flag. |
+| [`tasks/`](../crates/gm/src/tasks/) | Owner tasks: `Intent`, bus payloads, `Recipe` / `Executor` traits, canonical JSON hash (`mod.rs`); intent router with keyword fast path (`router.rs`); approvals and audit (`approvals.rs`); the runtime that runs instructions, decisions and replies (`runtime.rs`); `Registry` (`registry.rs`). |
+| [`recipes/`](../crates/gm/src/recipes/) | Translate (chunked), Analyze (thinking), Reply (draft + proposal) and the `gmail.send_draft` executor that re-checks the live draft. |
 | [`status.rs`](../crates/gm/src/status.rs) | `gm status`: launchd agents, running build, endpoints, model name, migrations and queue, read from the live Mac; reuses the health checker's queries. |
 | [`eval.rs`](../crates/gm/src/eval.rs) | Local eval set files and `gm eval` (runs rules → triage → the summary `Pipeline::route` picks). |
 | [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9). |
@@ -182,7 +189,7 @@ flowchart LR
 | [`user_settings.rs`](../crates/gm/src/user_settings.rs) | Per-user settings with validation; `tr(email)` gives UI strings in the owner's language. |
 | [`i18n.rs`](../crates/gm/src/i18n.rs) | Fluent strings for en / vi / ja ([`locales/`](../crates/gm/locales/)). |
 | [`clock.rs`](../crates/gm/src/clock.rs) | `Clock` (system or fixed in tests) and `ModelHours`. |
-| [`web/`](../crates/gm/src/web/) | axum router (`mod.rs`), host/origin guard, owner session, askama pages (`pages.rs`, [`templates/`](../crates/gm/templates/)). |
+| [`web/`](../crates/gm/src/web/) | axum router (`mod.rs`), host/origin guard, owner session, askama pages (`pages.rs`, [`templates/`](../crates/gm/templates/)), tasks and web approvals (`tasks.rs`). |
 
 ## 5. Key flows
 
@@ -275,9 +282,39 @@ Items not summarized yet go out as titles; when their summary arrives the same d
 
 ### 5.4 Owner instruction → approval → execution (Phase 3)
 
-Unchanged from [ADR-0003](adr/0003-intent-router-before-agent.md): an intent router that sees only
-the owner's words, fixed recipes (translate, analyze, reply), immutable approvals with a payload hash,
-and an executor that re-checks the live draft before sending. Details: [phase 3 plan](plan/phase-3.md).
+As in [ADR-0003](adr/0003-intent-router-before-agent.md): an intent router that sees only the
+owner's words, fixed recipes (translate, analyze, reply), immutable approvals with a payload hash, and
+an executor that re-checks the live draft before sending. Code:
+[`telegram/poller.rs`](../crates/gm/src/telegram/poller.rs),
+[`tasks/runtime.rs`](../crates/gm/src/tasks/runtime.rs), [`recipes/`](../crates/gm/src/recipes/).
+
+```mermaid
+sequenceDiagram
+    actor O as Owner (Telegram)
+    participant P as poller
+    participant R as task runtime
+    participant M as model (interactive lane)
+    participant G as Gmail API
+    O->>P: reply "tell them Tuesday works" to a notification
+    P->>R: user.instruction (chat_messages → event)
+    R->>R: fast path / router → reply
+    R->>G: messages.get (re-fetch the mail)
+    R->>M: owner's words + <email> → {"body"}
+    R->>G: drafts.create (To/Subject/threading from headers)
+    R->>R: approval (payload + sha256), task.reply
+    R-->>O: preview + [Approve] [Reject]
+    O->>P: Approve
+    P->>R: approval.decision
+    R->>R: lock, pending?, hash matches?
+    R->>G: drafts.get: same to, subject, body, thread?
+    R->>G: drafts.send
+    R->>R: audit_log, task.reply
+    R-->>O: ✅ Sent to …
+```
+
+Owner tasks run whenever the model answers, also outside model hours. Specs:
+[interfaces](spec/interfaces.md#translate-analyze-reply-and-approvals-phase-3),
+[events](spec/events.md#phase-3-implemented).
 
 ## 6. State machines
 
@@ -376,6 +413,39 @@ erDiagram
         int latency_ms
         bool ok
     }
+    events ||--o{ tasks : "asked about"
+    tasks ||--o{ approvals : "proposes"
+    tasks {
+        bigint id PK
+        text origin_key "unique"
+        bigint event_id FK
+        text intent
+        text status
+        jsonb result
+    }
+    approvals {
+        bigint id PK
+        bigint task_id FK
+        text action
+        jsonb payload "immutable"
+        text payload_hash "sha256"
+        text status
+        timestamptz expires_at
+    }
+    chat_messages {
+        text chat_id
+        bigint message_id "unique with chat_id"
+        bigint event_id
+        bigint task_id
+        bigint approval_id
+        text reply_key
+    }
+    audit_log {
+        bigint id PK
+        text action
+        text target
+        jsonb details "kept forever"
+    }
 ```
 
 ## 8. Event bus
@@ -419,8 +489,9 @@ All model calls go through `llm::LlmClient` ([ADR-0010](adr/0010-llm-client-lane
   text is kept with `parse_ok=false`. No `tools` / `response_format` (the runtime has neither).
 - **Accounting:** every call writes `llm_calls` (task, lane, model, tokens, latency, ok); `/metrics`
   exposes 24 h totals per lane.
-- **Model hours:** gm runs model work 09:00–19:00 only and defers it otherwise
-  (`Pipeline::model_step` in [`pipeline.rs`](../crates/gm/src/pipeline.rs)). The model process is
+- **Model hours:** gm runs background model work 09:00–19:00 only and defers it otherwise
+  (`Pipeline::model_step` in [`pipeline.rs`](../crates/gm/src/pipeline.rs)). Tasks the owner starts
+  from Telegram (translate, analyze, reply) run at any hour, whenever the model answers. The model process is
   mlx-air's: gm never starts or stops it. Model: Qwen3-8B 4-bit now, Bonsai-27B 1-bit later
   ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md)).
 
@@ -437,10 +508,10 @@ flowchart TB
         mail["Mail subjects, bodies,<br/>sender names, attachments"]
     end
     subgraph llmz["LLM output (untrusted)"]
-        llmout["summary JSON"]
+        llmout["summary JSON, reply body"]
     end
-    subgraph effects["External effects (Phase 3+)"]
-        send["send mail, edit calendar"]
+    subgraph effects["External effects"]
+        send["send a reply draft (Phase 3)<br/>edit calendar (later)"]
     end
     mail -- "delimited data, no tools" --> llmout
     ownerw --> code
@@ -473,6 +544,10 @@ Details: [security spec](spec/security.md).
 | Mail deleted before triage | `messages.get` 404 | Event → `gone`. |
 | Invalid `rules.yaml` edit | Parse error | Previous rules stay active; the error is logged. `gm rules` checks it first. |
 | Postgres down | Everything stalls; `/healthz` 503 | Docker restarts it; nightly dumps for restore. |
+| Model down during an owner task | `task_run` defers | The owner is told once; retried every 5 min, at any hour. |
+| Reply draft edited in Gmail before Approve | Executor sees a different draft | Nothing is sent; the new version is proposed with fresh buttons. |
+| Crash between `drafts.send` and the audit row | Job retried | The draft is gone; a sent message with the same body in the thread counts as sent, so it is not sent twice. |
+| `gmail.compose` not granted | Draft call 403 | The owner is asked to reconnect; the dashboard shows the missing scope. |
 
 ## 12. Evolution by phase
 

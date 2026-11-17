@@ -12,7 +12,7 @@ at night).
 **Owns:** `src/google/calendar.rs`, `src/calendar/` (new), migration `000N_calendar.sql`, calendar
 strings in the locale files.
 
-1. Scope `calendar.readonly` added to `REQUIRED_SCOPES` (owner reconnects).
+1. Scope `calendar.readonly` added to `Config::required_scopes` (owner reconnects).
 2. `calendar_state(email, calendar_id, sync_token, updated_at)`. Bootstrap: a full list to get a sync
    token without creating events (old data is not replayed). Poll every 5 minutes with `syncToken`;
    `410 Gone` → re-bootstrap.

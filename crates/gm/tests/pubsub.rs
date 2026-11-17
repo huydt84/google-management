@@ -198,6 +198,6 @@ async fn without_the_pubsub_scope_it_asks_for_a_reconnect(pool: PgPool) {
     assert!(!t.app.ingestor.pubsub_ok());
     assert_eq!(
         gm::config::Config::for_tests().required_scopes(),
-        vec![gm::google::GMAIL_READONLY]
+        vec![gm::google::GMAIL_READONLY, gm::google::GMAIL_COMPOSE]
     );
 }

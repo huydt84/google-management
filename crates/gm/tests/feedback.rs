@@ -58,7 +58,9 @@ async fn notifications_carry_feedback_buttons(pool: PgPool) {
     let id = t.insert_event("f1").await;
     t.drain().await;
     let sent = t.sent();
-    let row = &sent[0].buttons[0];
+    let actions = &sent[0].buttons[0];
+    assert_eq!(actions[0].data, format!("i:{id}:translate"));
+    let row = &sent[0].buttons[1];
     assert_eq!(row[0].data, format!("f:{id}:up"));
     assert_eq!(row[1].data, format!("f:{id}:down"));
 }
