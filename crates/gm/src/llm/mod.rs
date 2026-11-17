@@ -22,7 +22,7 @@ pub const SUMMARY_TASK: &str = include_str!("../../prompts/summary.md");
 
 /// The model server can't take the request right now (not running, timed out, or overloaded:
 /// connection error, timeout, HTTP 429/502/503/504). Callers queue the work instead of failing it
-/// (decision L12).
+/// (ADR-0010).
 #[derive(Debug, thiserror::Error)]
 #[error("LLM unavailable: {0}")]
 pub struct LlmUnavailable(pub String);
@@ -150,8 +150,9 @@ fn yes() -> bool {
     true
 }
 
-/// Strip reasoning and fences, take the outermost `{...}`, validate. `None` if unusable.
-pub fn parse_summary(text: &str) -> Option<EmailSummary> {
+/// Strip reasoning and fences and parse the outermost `{...}` as a JSON object. `None` if there is
+/// none. Every task parses model output through this (the runtime has no JSON mode, so parsing is tolerant).
+pub fn parse_json_object(text: &str) -> Option<serde_json::Map<String, Value>> {
     static THINK: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(r"(?is)<think>.*?</think>").unwrap());
     let cleaned = THINK.replace_all(text, "");
@@ -159,8 +160,15 @@ pub fn parse_summary(text: &str) -> Option<EmailSummary> {
     if end <= start {
         return None;
     }
-    let mut v: Value = serde_json::from_str(&cleaned[start..=end]).ok()?;
-    let obj = v.as_object_mut()?;
+    match serde_json::from_str(&cleaned[start..=end]).ok()? {
+        Value::Object(o) => Some(o),
+        _ => None,
+    }
+}
+
+/// Validate a summary. `None` if unusable.
+pub fn parse_summary(text: &str) -> Option<EmailSummary> {
+    let obj = parse_json_object(text)?;
     let summary = obj.get("summary")?.as_str()?.trim().to_string();
     if summary.is_empty() {
         return None;
@@ -211,6 +219,23 @@ pub struct LlmClient {
     summary_max_tokens: u32,
     admission: Arc<Admission>,
     pool: Option<PgPool>,
+    recorder: Option<Arc<Mutex<Vec<CallRecord>>>>,
+}
+
+/// One model request as seen by [`LlmClient::record_calls`] (used by `gm eval`, which has no DB).
+#[derive(Debug, Clone)]
+pub struct CallRecord {
+    pub task: String,
+    pub ok: bool,
+    pub latency_ms: i32,
+    pub prompt_tokens: Option<i32>,
+    pub completion_tokens: Option<i32>,
+}
+
+/// Result of a JSON task: the parsed value (after at most one retry) and the last raw output.
+pub struct JsonReply<T> {
+    pub parsed: Option<T>,
+    pub raw: String,
 }
 
 #[derive(Deserialize)]
@@ -249,7 +274,15 @@ impl LlmClient {
             summary_max_tokens: cfg.llm_summary_max_tokens,
             admission: Admission::new(cfg.llm_max_inflight),
             pool,
+            recorder: None,
         }
+    }
+
+    /// Keep every call in memory as well (tokens, latency, ok) and return the shared list.
+    pub fn record_calls(&mut self) -> Arc<Mutex<Vec<CallRecord>>> {
+        let r = Arc::new(Mutex::new(Vec::new()));
+        self.recorder = Some(r.clone());
+        r
     }
 
     pub async fn chat(
@@ -300,6 +333,19 @@ impl LlmClient {
         }
         .await;
         let latency_ms = started.elapsed().as_millis() as i32;
+        if let Some(rec) = &self.recorder {
+            let (pt, ct) = match &result {
+                Ok((_, u)) => (u.prompt_tokens, u.completion_tokens),
+                Err(_) => (None, None),
+            };
+            rec.lock().unwrap().push(CallRecord {
+                task: task.to_string(),
+                ok: result.is_ok(),
+                latency_ms,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+            });
+        }
         if let Some(pool) = &self.pool {
             let (pt, ct, ok, err) = match &result {
                 Ok((_, u)) => (u.prompt_tokens, u.completion_tokens, true, None),
@@ -323,15 +369,16 @@ impl LlmClient {
         result.map(|(c, _)| c)
     }
 
-    /// Shared stable prefix first (system prompt + task + thinking switch), per-user settings and
-    /// the mail last, so the prefix KV cache is reused across mails and tasks (L9).
-    pub fn summary_messages(&self, m: &ParsedMessage, language: &str) -> Vec<Value> {
+    /// The mail as the model sees it: headers and the cleaned body capped at `max_tokens`, with
+    /// delimiters neutralized and wrapped in `<email>` (Google content is untrusted).
+    pub fn email_block(&self, m: &ParsedMessage, max_tokens: usize) -> String {
         let body = clean::clean_body(if m.body_text.is_empty() {
             &m.snippet
         } else {
             &m.body_text
         });
-        let (body, truncated) = clean::truncate_to_tokens(&body, self.max_input_tokens);
+        let (body, truncated) =
+            clean::truncate_to_tokens(&body, max_tokens.min(self.max_input_tokens));
         let attachments = if m.attachments.is_empty() {
             "none".to_string()
         } else {
@@ -347,15 +394,56 @@ impl LlmClient {
             body,
             if truncated { "\n[...truncated...]" } else { "" }
         );
-        let mut system = format!("{}\n{}", SYSTEM_PREFIX.trim_end(), SUMMARY_TASK.trim_end());
+        format!("<email>\n{}\n</email>", clean::sanitize_delimiters(&email))
+    }
+
+    /// Shared stable prefix first (system prompt + task + thinking switch), per-user settings and
+    /// the mail last, so the prefix KV cache is reused across mails and tasks.
+    pub fn task_messages(&self, task: &str, language: &str, email_block: &str) -> Vec<Value> {
+        let mut system = format!("{}\n{}", SYSTEM_PREFIX.trim_end(), task.trim_end());
         if !self.no_think_tag.is_empty() {
             system.push_str(&format!("\n{}", self.no_think_tag));
         }
         vec![
             json!({"role": "system", "content": system}),
-            json!({"role": "user", "content": format!(
-                "Output language: {language}\n\n<email>\n{}\n</email>", clean::sanitize_delimiters(&email))}),
+            json!({"role": "user", "content": format!("Output language: {language}\n\n{email_block}")}),
         ]
+    }
+
+    pub fn summary_messages(&self, m: &ParsedMessage, language: &str) -> Vec<Value> {
+        self.task_messages(
+            SUMMARY_TASK,
+            language,
+            &self.email_block(m, self.max_input_tokens),
+        )
+    }
+
+    /// Ask for one JSON object; if `parse` rejects the reply, ask once more with a format reminder
+    /// at temperature 0. Transport errors (including [`LlmUnavailable`]) are returned as is.
+    pub async fn chat_json<T>(
+        &self,
+        task: &str,
+        lane: Lane,
+        mut messages: Vec<Value>,
+        max_tokens: u32,
+        parse: impl Fn(&str) -> Option<T>,
+    ) -> anyhow::Result<JsonReply<T>> {
+        let first = self.chat(task, lane, &messages, max_tokens, 0.2).await?;
+        if let Some(v) = parse(&first) {
+            return Ok(JsonReply {
+                parsed: Some(v),
+                raw: first,
+            });
+        }
+        messages.push(json!({"role": "assistant", "content": first}));
+        messages.push(json!({"role": "user", "content": "Reply again with ONLY the JSON object described above."}));
+        let second = self
+            .chat(&format!("{task}-retry"), lane, &messages, max_tokens, 0.0)
+            .await?;
+        Ok(JsonReply {
+            parsed: parse(&second),
+            raw: second,
+        })
     }
 
     /// Summarize with one format-reminder retry; falls back to the raw text (parse_ok = false).
@@ -365,27 +453,18 @@ impl LlmClient {
         language: &str,
         lane: Lane,
     ) -> anyhow::Result<EmailSummary> {
-        let mut messages = self.summary_messages(m, language);
-        let first = self
-            .chat("summary", lane, &messages, self.summary_max_tokens, 0.2)
-            .await?;
-        if let Some(s) = parse_summary(&first) {
-            return Ok(s);
-        }
-        messages.push(json!({"role": "assistant", "content": first}));
-        messages.push(json!({"role": "user", "content": "Reply again with ONLY the JSON object described above."}));
-        let second = self
-            .chat(
-                "summary-retry",
+        let reply = self
+            .chat_json(
+                "summary",
                 lane,
-                &messages,
+                self.summary_messages(m, language),
                 self.summary_max_tokens,
-                0.0,
+                parse_summary,
             )
             .await?;
-        Ok(parse_summary(&second).unwrap_or_else(|| {
+        Ok(reply.parsed.unwrap_or_else(|| {
             tracing::warn!("LLM output was not valid JSON after retry; using raw text");
-            let text: String = second.chars().take(1200).collect();
+            let text: String = reply.raw.chars().take(1200).collect();
             EmailSummary {
                 summary: if text.trim().is_empty() {
                     "(empty model output)".into()

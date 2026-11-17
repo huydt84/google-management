@@ -63,6 +63,9 @@ pub struct Config {
 
     // LLM (OpenAI-compatible: mlx-server-runtime)
     pub llm_base_url: String,
+    /// mlx-server-runtime readiness probe (`GET`, 2xx = model loaded). Default: the base URL
+    /// without `/v1`, plus `/ready`.
+    pub llm_ready_url: String,
     pub llm_api_key: String,
     pub llm_model: String,
     pub llm_timeout_s: u64,
@@ -71,11 +74,13 @@ pub struct Config {
     pub llm_summary_max_tokens: u32,
     /// Appended to prompts of non-thinking tasks (Qwen3: `/no_think`). Empty disables.
     pub llm_no_think_tag: String,
-    /// While the model is unavailable, queued summaries try again after this many seconds (L12).
+    /// While the model is unavailable, queued summaries try again after this many seconds.
     pub llm_unavailable_retry_s: u64,
-    /// Model residency window in local time (ADR-0010). Equal values mean "always on".
+    /// Model hours in local time (ADR-0010): model work runs only inside them. Equal values mean "always on".
     pub model_on: NaiveTime,
     pub model_off: NaiveTime,
+    /// Default morning digest time; each user can change it in Settings.
+    pub digest_at: NaiveTime,
 
     // Defaults for users who have not saved settings
     pub default_summary_language: String,
@@ -98,6 +103,8 @@ pub struct Config {
     pub metrics_token: Option<String>,
 
     pub log_dir: Option<PathBuf>,
+    /// Local eval set (ADR-0017): raw mails, never committed or sent anywhere.
+    pub eval_dir: PathBuf,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -144,6 +151,26 @@ fn time(name: &str, default: &str) -> anyhow::Result<NaiveTime> {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
+        Self::load(true)
+    }
+
+    /// For `gm eval` and `gm status`: the same settings, but nothing required for the server (Google client,
+    /// secrets) is needed; those fields are empty and no Keychain item is read.
+    pub fn from_env_without_secrets() -> anyhow::Result<Self> {
+        Self::load(false)
+    }
+
+    fn load(strict: bool) -> anyhow::Result<Self> {
+        let required = |n: &str| {
+            if strict {
+                required(n)
+            } else {
+                Ok(env_or(n, ""))
+            }
+        };
+        let secret = |n: &str| {
+            if strict { secret(n) } else { Ok(String::new()) }
+        };
         let _ = dotenvy::dotenv();
         let base_url = env_or("BASE_URL", "http://localhost:8080")
             .trim_end_matches('/')
@@ -154,6 +181,11 @@ impl Config {
                 "GM_HOST must be a loopback address (got {host:?}); use Tailscale for remote access"
             );
         }
+        let llm_base_url = env_or("LLM_BASE_URL", "http://127.0.0.1:8000/v1")
+            .trim_end_matches('/')
+            .to_string();
+        let llm_ready_url = env("LLM_READY_URL")
+            .unwrap_or_else(|| format!("{}/ready", llm_base_url.trim_end_matches("/v1")));
         let cfg = Self {
             host,
             port: parse("PORT", 8080)?,
@@ -190,9 +222,8 @@ impl Config {
                 other => bail!("GM_GMAIL_INGEST_MODE must be poll or pubsub (got {other:?})"),
             },
             rules_path: PathBuf::from(env_or("RULES_PATH", "rules.yaml")),
-            llm_base_url: env_or("LLM_BASE_URL", "http://127.0.0.1:8000/v1")
-                .trim_end_matches('/')
-                .to_string(),
+            llm_base_url,
+            llm_ready_url,
             llm_api_key: env_or("LLM_API_KEY", "not-needed"),
             llm_model: env_or("LLM_MODEL", "mlx-community/Qwen3-8B-4bit"),
             llm_timeout_s: parse("LLM_TIMEOUT_S", 120)?,
@@ -204,9 +235,14 @@ impl Config {
             llm_unavailable_retry_s: parse("LLM_UNAVAILABLE_RETRY_S", 300)?,
             model_on: time("MODEL_ON", "09:00")?,
             model_off: time("MODEL_OFF", "19:00")?,
+            digest_at: time("DIGEST_AT", "09:05")?,
             default_summary_language: env_or("DEFAULT_SUMMARY_LANGUAGE", "Vietnamese"),
             default_ui_language: env_or("DEFAULT_UI_LANGUAGE", "en"),
-            telegram_bot_token: secrets::get("telegram-bot-token"),
+            telegram_bot_token: if strict {
+                secrets::get("telegram-bot-token")
+            } else {
+                None
+            },
             telegram_chat_id: env("TELEGRAM_CHAT_ID"),
             telegram_api_base: env_or("TELEGRAM_API_BASE", "https://api.telegram.org"),
             run_background: parse("RUN_BACKGROUND", true)?,
@@ -215,8 +251,16 @@ impl Config {
             retention_days: parse("RETENTION_DAYS", 60)?,
             master_key: secret("master-key")?,
             session_secret: secret("session-secret")?,
-            metrics_token: secrets::get("metrics-token"),
+            metrics_token: if strict {
+                secrets::get("metrics-token")
+            } else {
+                None
+            },
             log_dir: env("LOG_DIR").map(PathBuf::from),
+            eval_dir: env("EVAL_DIR").map(PathBuf::from).unwrap_or_else(|| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+                    .join(".local/share/gm/eval")
+            }),
         };
         Ok(cfg)
     }
@@ -241,6 +285,7 @@ impl Config {
             pubsub: None,
             rules_path: PathBuf::from("does-not-exist.yaml"),
             llm_base_url: "http://127.0.0.1:9/v1".into(),
+            llm_ready_url: "http://127.0.0.1:9/ready".into(),
             llm_api_key: "test".into(),
             llm_model: "test-model".into(),
             llm_timeout_s: 5,
@@ -251,6 +296,7 @@ impl Config {
             llm_unavailable_retry_s: 300,
             model_on: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             model_off: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            digest_at: NaiveTime::from_hms_opt(9, 5, 0).unwrap(),
             default_summary_language: "Vietnamese".into(),
             default_ui_language: "en".into(),
             telegram_bot_token: None,
@@ -264,6 +310,7 @@ impl Config {
             session_secret: "test-session-secret-test-session-secret".into(),
             metrics_token: None,
             log_dir: None,
+            eval_dir: std::env::temp_dir().join("gm-eval-unused"),
         }
     }
 
@@ -274,6 +321,13 @@ impl Config {
             scopes.push(crate::google::PUBSUB);
         }
         scopes
+    }
+
+    pub fn model_hours(&self) -> crate::clock::ModelHours {
+        crate::clock::ModelHours {
+            on: self.model_on,
+            off: self.model_off,
+        }
     }
 
     pub fn telegram_enabled(&self) -> bool {

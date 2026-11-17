@@ -6,6 +6,8 @@ topic constants in `crates/gm/src/lib.rs` (`topics`).
 
 ## Delivery semantics (all topics)
 
+Code: [`src/bus.rs`](../../crates/gm/src/bus.rs).
+
 | Property | Rule |
 |----------|------|
 | Publish | `bus.publish(&mut conn, topic, &payload)` inside the producer's transaction. Messages exist only if it commits. |
@@ -25,6 +27,8 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 
 ## Topic catalog
 
+Code: [`src/lib.rs`](../../crates/gm/src/lib.rs), [`src/pipeline.rs`](../../crates/gm/src/pipeline.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/feedback.rs`](../../crates/gm/src/feedback.rs), [`src/telegram.rs`](../../crates/gm/src/telegram.rs). Topic names are the constants in `gm::topics` (`lib.rs`); each handler is registered next to its implementation.
+
 ### Phase 1 (implemented)
 
 | Topic | Producer | Subscriber | Payload | Idempotency check |
@@ -33,14 +37,20 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 | `gmail.message.summarize` | `triage` (notify/triage with summary) | `summarize` | same | event status `triaged` |
 | `notify.email` | `triage` (no summary) or `summarize` | `notify` | `{event_id}` | event status `ready` |
 
+### Phase 2 (implemented)
+
+| Topic | Producer | Subscriber | Payload | Idempotency check |
+|-------|----------|------------|---------|-------------------|
+| `gmail.message.classify` | `triage` (action `triage`) | `classify` (model triage, notify lane) | as `gmail.message.received` | event status `classify` (row locked) |
+| `digest.item.summarize` | `triage` / `classify` (digest with `summarize: true`) | `digest_summarize` (batch lane) | `{event_id}` | status `digest` and `summary IS NULL` (row locked) |
+| `schedule.due` | scheduler | `digest_build` (kind `digest`) | `{kind: digest, at, owner}` | one `digests` row per (owner, date) |
+| `feedback.received` | Telegram poller (`callback_query` `f:<id>:up|down` from the owner's chat) | `feedback` | `{event_id, label, tapped_at, message_id?, keyboard}` | upsert keeps the latest `tapped_at`; keyboard redraw is idempotent |
+| `digest.refresh` | `digest_summarize` (item of a sent digest) | `digest_refresh` | `{digest_id}` | digest `sent`, same local day, inside model hours; skipped if the text is unchanged |
+
 ### Phase 2 (planned)
 
 | Topic | Producer | Subscriber | Payload |
 |-------|----------|------------|---------|
-| `gmail.message.classify` | `triage` (action `triage`) | `classify` (model triage → notify / digest / ignore) | as `gmail.message.received` |
-| `digest.item.summarize` | `triage` (digest with `summarize: true`) | `digest_summarize` (batch lane) | `{event_id}` |
-| `schedule.due` | scheduler | digest builder, residency controller | `{kind, at}` |
-| `feedback.received` | Telegram poller | feedback handler | `{event_id, label}` |
 
 ### Phase 3 (planned)
 
@@ -58,6 +68,8 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 
 ## Event record (`events` table)
 
+Code: [`src/db.rs`](../../crates/gm/src/db.rs), [`src/pipeline.rs`](../../crates/gm/src/pipeline.rs).
+
 Each Google object becomes one row, keyed by `(source, external_id)`.
 
 | source | kind | external_id | Phase |
@@ -70,13 +82,23 @@ Each Google object becomes one row, keyed by `(source, external_id)`.
 (`{rule, action, priority, summarize, section, message, extracted}`). The full body is never stored.
 
 `events.summary`: the summary JSON (`summary`, `importance`, `category`, `suggested_actions`,
-`language`, `parse_ok`). Nothing is notified without it: an unavailable model defers the job every
+`language`, `parse_ok`); for digest items `{line, parse_ok}` or `{jobs, parse_ok}`. Nothing is notified without it: an unavailable model defers the job every
 `GM_LLM_UNAVAILABLE_RETRY_S` (300 s), and other errors leave the job `dead`.
 
-Statuses: `new → ignored | digest | triaged → ready → notified`, `new → ready` (rule-only),
-`new → gone`, `triaged → gone`. Diagram: [architecture §6](../architecture.md#6-state-machines).
+Statuses: `new → ignored | digest | classify | triaged → ready → notified`, `new → ready`
+(rule-only), `classify → ignored | digest | triaged | ready` (model triage, as if a rule had said
+that action), `new | classify | triaged → gone`.
+
+Model triage (`classify`, `src/triage_model.rs`, `prompts/triage.md`): headers and the first ~1,500
+tokens of the cleaned body, notify lane, `/no_think`, at most 80 output tokens, JSON
+`{action: notify|digest|ignore, reason}` parsed tolerantly with one retry. Unusable output → `notify`
+(fail open). Outside model hours it defers to the next opening, while the model is unavailable every
+`GM_LLM_UNAVAILABLE_RETRY_S`. The verdict is `{rule: "model", priority: normal, summarize: action !=
+ignore, section: "model" for digest, reason}`. Diagram: [architecture §6](../architecture.md#6-state-machines).
 
 ## Gmail ingestion contract
+
+Code: [`src/gmail/ingest.rs`](../../crates/gm/src/gmail/ingest.rs), [`src/gmail/pubsub.rs`](../../crates/gm/src/gmail/pubsub.rs), [`src/google/gmail.rs`](../../crates/gm/src/google/gmail.rs), [`src/google/pubsub.rs`](../../crates/gm/src/google/pubsub.rs).
 
 | Step | Behavior |
 |------|----------|
@@ -91,3 +113,10 @@ Statuses: `new → ignored | digest | triaged → ready → notified`, `new → 
 | Watch | `users.watch` on each active mailbox for `GM_GMAIL_LABEL_IDS`; renewed when less than 6 days remain (checked before every pull); expiration in `gmail_state.watch_expiration`. |
 | Pull | Up to 20 messages per pull (about a minute of waiting). Data is base64 JSON `{emailAddress, historyId}`; sync each named active mailbox; acknowledge the whole batch only if every sync succeeded (otherwise it is redelivered after the ack deadline). Unknown or malformed messages are acknowledged and dropped. |
 | Pub/Sub failure | Error shown on the dashboard, poll interval back to 60 s, retry with backoff 5 s doubling to 5 min. A missing `pubsub` scope asks the owner to reconnect Gmail. |
+
+## Scheduler
+
+[`scheduler.rs`](../../crates/gm/src/scheduler.rs) checks every 30 s. Schedules: `digest:<owner>`
+at the owner's `digest_at`. `schedule_runs.last_at` records the last occurrence fired: an occurrence later than
+it fires once (also after sleep), and a schedule seen for the first time is recorded without firing.
+The record and the publish share one transaction.

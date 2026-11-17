@@ -1,4 +1,4 @@
-//! Mail cleaning and input caps before prompting (ADR-0010, L8): drop quoted replies and
+//! Mail cleaning and input caps before prompting (ADR-0010): drop quoted replies and
 //! signatures, then truncate to an approximate token budget.
 
 /// Rough token estimate without a tokenizer: CJK characters ≈ 1 token each, other text ≈ 4 chars

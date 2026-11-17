@@ -6,15 +6,15 @@
 
 ## Context
 
-Phase 0 was written in Python (FastAPI, SQLAlchemy, Authlib). The owner chose Rust for the long-lived
+Phase 0 was written in Python (FastAPI, SQLAlchemy, Authlib). The owner chose Rust (stable toolchain, edition 2024) for the long-lived
 system: one compiled binary, strong typing across the bus payloads and the database, and low idle
 resource use on a Mac that also runs the LLM.
 
 ## Decision
 
-- A Cargo workspace at the repository root. One binary `gm` (subcommands `serve`, `sync`, `eval`,
-  `migrate`, `keychain`) runs everything as tokio tasks: the axum web server, Gmail ingestion, bus
-  workers, the scheduler and the model-residency controller.
+- A Cargo workspace at the repository root. One binary `gm` (subcommands `serve`, `migrate`, `gen-key`,
+  `keychain`, `rules`, `eval`; see [`main.rs`](../../crates/gm/src/main.rs)) runs everything as tokio
+  tasks: the axum web server, Gmail ingestion, bus workers, the scheduler and health checks.
 - Libraries: axum (web), sqlx (Postgres, embedded migrations; queries via `sqlx::query`/`query_as`,
   checked at runtime and by the test suite, confirmed by the owner on 2026-11-16), reqwest with thin hand-written clients for Google OAuth/Gmail and Telegram, tracing,
   askama + htmx (see [0014](0014-web-ui-askama-htmx-fluent.md)), fluent (i18n), serde, chrono.

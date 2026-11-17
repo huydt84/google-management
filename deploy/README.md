@@ -24,9 +24,13 @@ cp .env.example .env                       # non-secret config only
 
 ## Install the launchd agents
 
-A one-time registration; afterwards the agents start on every login (decision O1, no install
-command). The model agent (`com.gm.mlx`) is not loaded for now: until it is, summaries simply wait
-in the queue and rule-only pings still go out (decision L12).
+A one-time registration; afterwards the agents start on every login (there is no install
+command). Plists: [`deploy/launchd/`](launchd/).
+
+The model is not one of gm's agents: mlx-air runs it (instance `gm`, launchd
+`com.mlx-air.instance.gm`, config in `~/Library/Application Support/mlx-air/instances/gm/`), and gm
+only calls it at `GM_LLM_BASE_URL`. While it is down, summaries wait in the queue and rule-only pings
+still go out ([ADR-0015](../docs/adr/0015-notification-policy-and-digest.md)); after 15 minutes in model hours the health check alerts.
 
 ```bash
 mkdir -p ~/Library/Logs/gm
@@ -36,10 +40,20 @@ for name in com.gm.server com.gm.backup; do
 done
 ```
 
+- Check what is installed and running: `./target/release/gm status` (launchd agents, running build,
+  web, model, migrations, queue; exit code 1 on a failure).
 - Restart after an upgrade: `cargo build --release && launchctl kickstart -k gui/$(id -u)/com.gm.server`
 - Stop: `launchctl bootout gui/$(id -u)/com.gm.server`
 - Logs: `~/Library/Logs/gm/` (JSON, rotated daily, 7 kept).
 - The first Keychain read from launchd may show a macOS prompt; choose "Always Allow".
+
+## OAuth consent pages
+
+Publishing the Google OAuth app (so refresh tokens don't expire after 7 days as in "Testing") needs a
+homepage and a privacy policy. They are the two static pages in [`oauth-pages/`](oauth-pages/),
+hosted on their own Vercel project (`google-management-bay.vercel.app`, also the authorized domain),
+apart from the owner's other domains and Cloud projects. They hold no data and gm doesn't depend on
+them at runtime.
 
 ## Remote access
 

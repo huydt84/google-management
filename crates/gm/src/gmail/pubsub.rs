@@ -1,4 +1,4 @@
-//! Pub/Sub ingest mode (ADR-0002, decision A7). gm provisions its topic and subscription, keeps a
+//! Pub/Sub ingest mode (ADR-0002). gm provisions its topic and subscription, keeps a
 //! Gmail watch on every active mailbox, pulls notifications and syncs the mailboxes they name.
 //! Messages are acknowledged only after every sync succeeded, so a failure means redelivery, not
 //! loss. The poll loop keeps running as a safety net (every 15 min while this loop is healthy,

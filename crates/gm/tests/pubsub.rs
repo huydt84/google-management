@@ -1,4 +1,4 @@
-//! Pub/Sub ingest mode (ADR-0002, decision A7) against a wiremock Google.
+//! Pub/Sub ingest mode (ADR-0002) against a wiremock Google.
 mod common;
 
 use base64::Engine;

@@ -13,6 +13,11 @@ use super::{AppError, SharedState, current_owner};
 use crate::i18n::{Tr, UI_LANGUAGES};
 use crate::user_settings::{COMMON_LANGUAGES, UserSettings};
 
+/// A UTC time shown in the Mac's local time zone.
+fn local_time(t: &chrono::DateTime<chrono::Utc>, fmt: &str) -> String {
+    t.with_timezone(&chrono::Local).format(fmt).to_string()
+}
+
 fn render<T: Template>(t: &T) -> Result<Response, AppError> {
     Ok(Html(t.render()?).into_response())
 }
@@ -31,9 +36,15 @@ pub struct EventRow {
     pub link: String,
     pub status: String,
     pub rule: String,
+    /// Model triage reason (`rule = "model"`).
+    pub reason: String,
     pub importance: String,
     pub summary: String,
     pub error: String,
+    /// The owner's 👍/👎 (`up` / `down`), if any.
+    pub feedback: String,
+    /// Whether the message is in the local eval set.
+    pub in_eval: bool,
 }
 
 #[derive(Template)]
@@ -53,7 +64,64 @@ struct IndexPage {
     summary_language: String,
     notifier: String,
     job_stats: Vec<(String, i64)>,
+    health: Vec<HealthRow>,
     events: Vec<EventRow>,
+    /// Outcome of "Add to eval": message key, or empty.
+    banner: String,
+}
+
+pub struct HealthRow {
+    pub label: String,
+    /// ok | failing | skipped
+    pub state: String,
+    pub since: String,
+}
+
+async fn health_rows(state: &SharedState, tr: &Tr) -> Result<Vec<HealthRow>, AppError> {
+    let incidents = state.health.incidents().await?;
+    Ok(state
+        .health
+        .evaluate()
+        .await?
+        .into_iter()
+        .map(|r| {
+            let since = incidents
+                .iter()
+                .find(|(n, _)| n == r.name)
+                .map(|(_, t)| local_time(t, "%m-%d %H:%M"))
+                .unwrap_or_default();
+            HealthRow {
+                state: match r.failing {
+                    Some(true) => "failing",
+                    Some(false) => "ok",
+                    None => "skipped",
+                }
+                .into(),
+                label: if r.failing == Some(true) {
+                    r.message(tr)
+                } else {
+                    tr.get(&format!("health-label-{}", r.name.replace('_', "-")))
+                },
+                since,
+            }
+        })
+        .collect())
+}
+
+/// The summary as one line: a notification summary, a digest line, or a job list.
+fn summary_text(summary: &Value) -> String {
+    if let Some(s) = summary["summary"].as_str().or(summary["line"].as_str()) {
+        return s.to_string();
+    }
+    summary["jobs"]
+        .as_array()
+        .map(|jobs| {
+            jobs.iter()
+                .filter_map(|j| j["title"].as_str())
+                .collect::<Vec<_>>()
+                .join(" · ")
+        })
+        .unwrap_or_default()
 }
 
 fn event_row(e: crate::db::Event) -> EventRow {
@@ -61,11 +129,7 @@ fn event_row(e: crate::db::Event) -> EventRow {
     let summary = e.summary.clone().unwrap_or(Value::Null);
     EventRow {
         id: e.id,
-        time: e
-            .created_at
-            .with_timezone(&chrono::Local)
-            .format("%m-%d %H:%M")
-            .to_string(),
+        time: local_time(&e.created_at, "%m-%d %H:%M"),
         from: s(&e.data["from"]),
         subject: e.data["subject"]
             .as_str()
@@ -74,13 +138,47 @@ fn event_row(e: crate::db::Event) -> EventRow {
         link: s(&e.data["link"]),
         status: e.status,
         rule: e.rule.unwrap_or_default(),
+        reason: s(&e.data["verdict"]["reason"]),
         importance: s(&summary["importance"]),
-        summary: s(&summary["summary"]),
+        summary: summary_text(&summary),
         error: s(&summary["error"]),
+        feedback: String::new(),
+        in_eval: false,
     }
 }
 
-pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<Response, AppError> {
+async fn with_feedback(
+    state: &SharedState,
+    events: Vec<crate::db::Event>,
+) -> Result<Vec<EventRow>, AppError> {
+    let ids: Vec<i64> = events.iter().map(|e| e.id).collect();
+    let labels = crate::feedback::labels(&state.pool, &ids).await?;
+    let in_eval: std::collections::HashSet<String> =
+        crate::eval::ids(&state.cfg.eval_dir).into_iter().collect();
+    Ok(events
+        .into_iter()
+        .map(|e| {
+            let fb = labels.get(&e.id).cloned().unwrap_or_default();
+            EventRow {
+                feedback: fb,
+                in_eval: in_eval.contains(&e.external_id),
+                ..event_row(e)
+            }
+        })
+        .collect())
+}
+
+#[derive(Deserialize, Default)]
+pub struct IndexQuery {
+    #[serde(default)]
+    eval: String,
+}
+
+pub async fn index(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    Query(q): Query<IndexQuery>,
+) -> Result<Response, AppError> {
     let Some(email) = current_owner(&state, &jar) else {
         return render(&LoginPage {
             tr: Tr::new(&state.user_settings.defaults().ui_language),
@@ -133,11 +231,7 @@ pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<R
         last_sync: gs
             .as_ref()
             .and_then(|g| g.last_sync_at)
-            .map(|t| {
-                t.with_timezone(&chrono::Local)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            })
+            .map(|t| local_time(&t, "%Y-%m-%d %H:%M:%S"))
             .unwrap_or_else(|| "—".into()),
         last_error: gs.and_then(|g| g.last_error).unwrap_or_default(),
         ingest,
@@ -152,11 +246,12 @@ pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<R
             tr.get("log-only")
         },
         job_stats: crate::db::count_by(&state.pool, "jobs").await?,
-        events: crate::db::recent_events(&state.pool, 50)
-            .await?
-            .into_iter()
-            .map(event_row)
-            .collect(),
+        health: health_rows(&state, &tr).await?,
+        events: with_feedback(&state, crate::db::recent_events(&state.pool, 50).await?).await?,
+        banner: match q.eval.as_str() {
+            "added" | "updated" | "full" | "gone" => format!("eval-{}", q.eval),
+            _ => String::new(),
+        },
         tr,
     };
     render(&page)
@@ -173,6 +268,8 @@ struct SettingsPage {
     ui_languages: Vec<(String, String)>,
     languages: Vec<String>,
     default_help: String,
+    digest_at: String,
+    digest_help: String,
     error: String,
     saved: bool,
 }
@@ -190,6 +287,14 @@ fn settings_page_for(
             "summary-language-help",
             &[("default", state.cfg.default_summary_language.clone())],
         ),
+        digest_help: tr.args(
+            "digest-time-help",
+            &[
+                ("on", state.cfg.model_on.format("%H:%M").to_string()),
+                ("off", state.cfg.model_off.format("%H:%M").to_string()),
+            ],
+        ),
+        digest_at: s.digest_at.clone(),
         tr,
         email,
         summary_language: s.summary_language.clone(),
@@ -235,6 +340,8 @@ pub struct SettingsForm {
     translation_language: String,
     #[serde(default)]
     ui_language: String,
+    #[serde(default)]
+    digest_at: String,
 }
 
 pub async fn save_settings(
@@ -252,6 +359,11 @@ pub async fn save_settings(
             state.user_settings.defaults().ui_language.clone()
         } else {
             f.ui_language
+        },
+        digest_at: if f.digest_at.is_empty() {
+            state.user_settings.defaults().digest_at.clone()
+        } else {
+            f.digest_at
         },
     };
     match state.user_settings.save(&email, submitted.clone()).await? {
@@ -366,6 +478,16 @@ pub async fn metrics(
             "# TYPE gm_ingest_lag_seconds gauge\ngm_ingest_lag_seconds {lag:.0}\n"
         ));
     }
+    out.push_str("# TYPE gm_health_failing gauge\n");
+    for r in state.health.evaluate().await? {
+        if let Some(f) = r.failing {
+            out.push_str(&format!(
+                "gm_health_failing{{check=\"{}\"}} {}\n",
+                r.name,
+                u8::from(f)
+            ));
+        }
+    }
     if state.cfg.pubsub.is_some() {
         out.push_str(&format!(
             "# TYPE gm_pubsub_healthy gauge\ngm_pubsub_healthy {}\n",
@@ -373,4 +495,304 @@ pub async fn metrics(
         ));
     }
     Ok(([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], out).into_response())
+}
+
+pub struct DigestRow {
+    pub id: i64,
+    pub date: String,
+    pub items: i32,
+    pub status: String,
+}
+
+#[derive(Template)]
+#[template(path = "digest.html")]
+struct DigestPage {
+    tr: Tr,
+    email: String,
+    digests: Vec<DigestRow>,
+    selected_id: i64,
+    selected_text: String,
+}
+
+#[derive(Deserialize)]
+pub struct IdQuery {
+    id: Option<i64>,
+}
+
+/// Today's and past digests (2A).
+pub async fn digest_page(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    Query(q): Query<IdQuery>,
+) -> Result<Response, AppError> {
+    let Some(email) = current_owner(&state, &jar) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let prefs = state.user_settings.get(&email).await?;
+    let rows: Vec<(i64, chrono::NaiveDate, i32, String, String)> = sqlx::query_as(
+        "SELECT id, digest_date, item_count, status, text FROM digests
+         WHERE owner_email = $1 ORDER BY digest_date DESC LIMIT 60",
+    )
+    .bind(&email)
+    .fetch_all(&state.pool)
+    .await?;
+    let selected =
+        q.id.and_then(|id| rows.iter().find(|r| r.0 == id))
+            .or(rows.first());
+    let (selected_id, selected_text) = selected
+        .map(|r| (r.0, r.4.clone()))
+        .unwrap_or((0, String::new()));
+    render(&DigestPage {
+        tr: Tr::new(&prefs.ui_language),
+        email,
+        digests: rows
+            .iter()
+            .map(|(id, date, items, status, _)| DigestRow {
+                id: *id,
+                date: date.format("%Y-%m-%d").to_string(),
+                items: *items,
+                status: status.clone(),
+            })
+            .collect(),
+        selected_id,
+        selected_text,
+    })
+}
+
+type JobDbRow = (
+    i64,
+    String,
+    String,
+    String,
+    i32,
+    chrono::DateTime<chrono::Utc>,
+    Option<String>,
+);
+type SenderDbRow = (
+    String,
+    i64,
+    Option<String>,
+    chrono::DateTime<chrono::Utc>,
+    Option<String>,
+);
+
+pub struct JobRow {
+    pub id: i64,
+    pub topic: String,
+    pub subscriber: String,
+    pub status: String,
+    pub attempts: i32,
+    pub updated: String,
+    pub error: String,
+}
+
+#[derive(Template)]
+#[template(path = "jobs.html")]
+struct JobsPage {
+    tr: Tr,
+    email: String,
+    status: String,
+    statuses: Vec<String>,
+    jobs: Vec<JobRow>,
+}
+
+#[derive(Deserialize)]
+pub struct JobsQuery {
+    status: Option<String>,
+}
+
+/// Jobs by status, dead letters by default, with Retry (2E).
+pub async fn jobs_page(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    Query(q): Query<JobsQuery>,
+) -> Result<Response, AppError> {
+    let Some(email) = current_owner(&state, &jar) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let statuses = ["dead", "pending", "running", "done"];
+    let status = q
+        .status
+        .filter(|s| statuses.contains(&s.as_str()))
+        .unwrap_or_else(|| "dead".into());
+    let rows: Vec<JobDbRow> = sqlx::query_as(
+        "SELECT id, topic, subscriber, status, attempts, updated_at, last_error FROM jobs
+             WHERE status = $1 ORDER BY id DESC LIMIT 200",
+    )
+    .bind(&status)
+    .fetch_all(&state.pool)
+    .await?;
+    let prefs = state.user_settings.get(&email).await?;
+    render(&JobsPage {
+        tr: Tr::new(&prefs.ui_language),
+        email,
+        status,
+        statuses: statuses.iter().map(|s| s.to_string()).collect(),
+        jobs: rows
+            .into_iter()
+            .map(
+                |(id, topic, subscriber, status, attempts, updated, error)| JobRow {
+                    id,
+                    topic,
+                    subscriber,
+                    status,
+                    attempts,
+                    updated: local_time(&updated, "%m-%d %H:%M"),
+                    error: error.unwrap_or_default(),
+                },
+            )
+            .collect(),
+    })
+}
+
+const RETRY_SQL: &str = "UPDATE jobs SET status = 'pending', attempts = 0, run_after = now(),
+    last_error = NULL, locked_at = NULL, updated_at = now() WHERE status = 'dead'";
+
+pub async fn retry_job(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    sqlx::query(&format!("{RETRY_SQL} AND id = $1"))
+        .bind(id)
+        .execute(&state.pool)
+        .await?;
+    Ok(Redirect::to("/jobs?status=dead").into_response())
+}
+
+pub async fn retry_all_dead(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let n = sqlx::query(RETRY_SQL)
+        .execute(&state.pool)
+        .await?
+        .rows_affected();
+    tracing::info!(n, "dead jobs retried from the dashboard");
+    Ok(Redirect::to("/jobs?status=dead").into_response())
+}
+
+pub struct SenderRow {
+    pub address: String,
+    pub count: i64,
+    pub last_subject: String,
+    pub last_seen: String,
+    pub rules: String,
+}
+
+#[derive(Template)]
+#[template(path = "senders.html")]
+struct SendersPage {
+    tr: Tr,
+    email: String,
+    senders: Vec<SenderRow>,
+}
+
+/// Ignored mail of the last 30 days by sender (2E): shows whom to move into a rule.
+pub async fn senders_page(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+) -> Result<Response, AppError> {
+    let Some(email) = current_owner(&state, &jar) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let rows: Vec<SenderDbRow> = sqlx::query_as(
+        "SELECT COALESCE(NULLIF(data->>'from_addr', ''), '?') AS addr, count(*),
+                    (array_agg(data->>'subject' ORDER BY id DESC))[1], max(created_at),
+                    string_agg(DISTINCT COALESCE(rule, '?'), ', ')
+             FROM events WHERE status = 'ignored' AND created_at > now() - interval '30 days'
+             GROUP BY addr ORDER BY count(*) DESC, addr LIMIT 300",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let prefs = state.user_settings.get(&email).await?;
+    render(&SendersPage {
+        tr: Tr::new(&prefs.ui_language),
+        email,
+        senders: rows
+            .into_iter()
+            .map(|(address, count, subject, last, rules)| SenderRow {
+                address,
+                count,
+                last_subject: subject.unwrap_or_default(),
+                last_seen: local_time(&last, "%m-%d"),
+                rules: rules.unwrap_or_default(),
+            })
+            .collect(),
+    })
+}
+
+#[derive(Deserialize)]
+pub struct FeedbackForm {
+    label: String,
+}
+
+/// 👍 / 👎 from the dashboard (2C).
+pub async fn event_feedback(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Form(f): Form<FeedbackForm>,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    if !matches!(f.label.as_str(), "up" | "down") {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    }
+    crate::feedback::record(&state.pool, id, &f.label, "web", chrono::Utc::now()).await?;
+    Ok(Redirect::to(&format!("/#event-{id}")).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct EvalForm {
+    expected: String,
+}
+
+/// Add the event's mail to the local eval set with the action it should have had.
+/// The raw message is fetched from Gmail once and written to `GM_EVAL_DIR` (never to the database).
+pub async fn event_eval(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Form(f): Form<EvalForm>,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let Some(expected) = crate::rules::Action::parse_final(&f.expected) else {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    };
+    let back =
+        |outcome: &str| Redirect::to(&format!("/?eval={outcome}#event-{id}")).into_response();
+    let Some(ev) = crate::db::event(&state.pool, id).await? else {
+        return Ok(back("gone"));
+    };
+    let message = match state.gmail.get_message(&ev.account, &ev.external_id).await {
+        Ok(m) => m,
+        Err(crate::google::GoogleError::NotFound) => return Ok(back("gone")),
+        Err(e) => return Err(e.into()),
+    };
+    let case = crate::eval::EvalCase {
+        message_id: ev.external_id.clone(),
+        account: ev.account,
+        added_at: chrono::Utc::now(),
+        expected,
+        notes: String::new(),
+        message,
+    };
+    let dir = state.cfg.eval_dir.clone();
+    let added = tokio::task::spawn_blocking(move || crate::eval::add(&dir, &case)).await??;
+    tracing::info!(event_id = id, outcome = ?added, "eval case saved");
+    Ok(back(match added {
+        crate::eval::Added::New => "added",
+        crate::eval::Added::Updated => "updated",
+        crate::eval::Added::Full => "full",
+    }))
 }

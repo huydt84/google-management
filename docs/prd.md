@@ -5,7 +5,7 @@
 | Status | Phase 0 shipped (Python); Phase 1 (Rust port, rules v2, operations) implemented; Phases 2–4 planned |
 | Owner | The machine owner (single user) |
 | Last updated | 2026-11-16 |
-| Related | [Decision log](decisions.md) · [Architecture](architecture.md) · [Specs](spec/) · [ADRs](adr/) · [Plan](plan/README.md) |
+| Related | [Architecture](architecture.md) · [Specs](spec/) · [ADRs](adr/) · [Plan](plan/README.md) |
 
 ## 1. Summary
 
@@ -84,7 +84,7 @@ carried over to Phase 1.
 | US-1.2 | I connect Gmail once and it keeps working. | Encrypted refresh token; Pub/Sub pull (gm provisions it) with a 15-min safety poll; `needs_reconnect` shown when Google revokes it. | ✅ |
 | US-1.3 | A Rakuten Card charge pings me silently with the amount. | Rule `rakuten-card-flash` extracts amount and date; silent Telegram message, day or night. | ✅ |
 | US-1.4 | Security mail (Rakuten login, 【重要】, Google/Apple account) is flagged 🚨. | Urgent rules; the rule-only login notice pings at any hour; summarized ones ping once the summary exists (09:00 at night). | ✅ |
-| US-1.5 | Promotions, shop newsletters, review requests and LinkedIn noise don't ping me. | Ignore rules (T8, T9, T14, T15). | ✅ |
+| US-1.5 | Promotions, shop newsletters, review requests and LinkedIn noise don't ping me. | Ignore rules in `rules.yaml`. | ✅ |
 | US-1.6 | Card statements, LinkedIn messages and unmatched mail ping me with a summary. | Notify rules; summaries during model hours; normal/high wait for 09:00 at night. | ✅ |
 | US-1.7 | Shipped / delayed orders ping me quietly. | Silent notify with summary. | ✅ |
 | US-1.8 | I edit rules without restarting and can't break them by accident. | Hot reload; invalid file keeps the old rules; `gm rules` + CI check examples. | ✅ |
@@ -101,7 +101,7 @@ carried over to Phase 1.
 | US-2.2 | LinkedIn job alerts appear once, deduplicated. | Title / company / location / link list. |
 | US-2.3 | Mail no rule covers is judged by the model. | notify / digest / ignore with a reason, visible on the dashboard. |
 | US-2.4 | I tell it when it got it wrong. | 👍/👎 buttons; feedback stored; shown in `gm eval`. |
-| US-2.5 | The model only uses memory during the day. | Residency controller starts mlx at 09:00, stops it at 19:00. |
+| US-2.5 | Model work happens during the day. | gm runs model work 09:00–19:00 only; the model process itself is managed by mlx-air. |
 | US-2.6 | I can measure model quality before changing models or prompts. | `gm eval` on the local eval set (≤ 200 mails). |
 | US-2.7 | I'm alerted if the system is unhealthy. | Telegram alert after 15 minutes of dead jobs, ingest lag, model down or token invalid; dashboard health panel. |
 | US-2.8 | I can retry failed jobs. | Dead-letter page. |
@@ -227,11 +227,12 @@ Bonsai-27B 1-bit model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md))
 |-------|-------|---------------|
 | 0 ✅ | See what matters (Python) | Shipped in commit `145de43`; replaced by Phase 1. |
 | 1 | Rust port, rules v2, operations | Parity with Phase 0; rules from the mail analysis with examples; Keychain, launchd files, backups, CI, metrics; Python removed. |
-| 2 | Digest and model triage | Digest at 09:05; model triage with feedback; residency controller; `gm eval`; health alerts; dead-letter page. |
+| 2 | Digest and model triage | Digest at 09:05; model triage with feedback; `gm eval`; health alerts; dead-letter page. |
 | 3 | Act, with approval | Translate, analyze, reply from Telegram; approvals and audit; prompt-injection end-to-end test. |
 | 4 | Calendar | Invitations and changes; today's calendar in the digest. |
 
-Details: [plan](plan/README.md). Decisions behind this order: [decision log](decisions.md) P12.
+Details: [plan](plan/README.md). Why this order: most daily mail is digest-bound, so the digest delivers value before reply and
+actions ([ADR-0015](adr/0015-notification-policy-and-digest.md)).
 
 ## 11. Risks and mitigations
 
@@ -250,8 +251,7 @@ Details: [plan](plan/README.md). Decisions behind this order: [decision log](dec
 ## 12. Open questions
 
 1. Is Telegram the long-term channel? (A `Notifier` interface keeps a switch cheap.)
-2. Should the digest also go to the web UI as a page? (Proposed in Phase 2: yes, `/digest`.)
-3. When Bonsai-27B is supported, is its quality gain worth its memory? (Decide with `gm eval`.)
+2. When Bonsai-27B is supported, is its quality gain worth its memory? (Decide with `gm eval`.)
 
 ## 13. Glossary
 

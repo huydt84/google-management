@@ -4,6 +4,9 @@
   <h1>{{ tr.get("app-title") }}</h1>
   <div>
     <span class="muted">{{ email }}</span>
+    <a class="btn" href="/digest">{{ tr.get("digests") }}</a>
+    <a class="btn" href="/jobs">{{ tr.get("jobs") }}</a>
+    <a class="btn" href="/senders">{{ tr.get("senders") }}</a>
     <a class="btn" href="/settings">{{ tr.get("settings") }}</a>
     <form method="post" action="/auth/logout"><button class="btn">{{ tr.get("sign-out") }}</button></form>
   </div>
@@ -53,6 +56,17 @@
 </div>
 
 <section class="card">
+  <h2>{{ tr.get("health") }}</h2>
+  <dl>
+  {% for h in health %}
+    <dt class="{% if h.state == "failing" %}bad{% else if h.state == "ok" %}ok{% else %}muted{% endif %}">{% if h.state == "failing" %}✗{% else if h.state == "ok" %}✓{% else %}–{% endif %}</dt>
+    <dd>{{ h.label }}{% if !h.since.is_empty() %} <span class="muted">({{ tr.get("since") }} {{ h.since }})</span>{% endif %}{% if h.state == "skipped" %} <span class="muted">({{ tr.get("health-skipped") }})</span>{% endif %}</dd>
+  {% endfor %}
+  </dl>
+</section>
+
+<section class="card">
+  {% if !banner.is_empty() %}<p class="{% if banner == "eval-full" || banner == "eval-gone" %}bad{% else %}ok{% endif %}">{{ tr.get(banner) }}</p>{% endif %}
   <h2>{{ tr.get("recent-events") }}</h2>
   {% if events.is_empty() %}
     <p class="muted">{{ tr.get("no-events") }}</p>
@@ -62,17 +76,36 @@
     <thead><tr><th>#</th><th>{{ tr.get("col-time") }}</th><th>{{ tr.get("col-from-subject") }}</th><th>{{ tr.get("col-status") }}</th><th>{{ tr.get("col-summary") }}</th></tr></thead>
     <tbody>
     {% for e in events %}
-      <tr>
+      <tr id="event-{{ e.id }}">
         <td class="muted">{{ e.id }}</td>
         <td class="muted" style="white-space:nowrap">{{ e.time }}</td>
         <td>{{ e.from }}<br>
           {% if e.link.is_empty() %}<span class="muted">{{ e.subject }}</span>
           {% else %}<a href="{{ e.link }}" target="_blank" rel="noopener noreferrer">{{ e.subject }}</a>{% endif %}
         </td>
-        <td><span class="pill s-{{ e.status }}">{{ e.status }}</span><br><span class="muted">{{ e.rule }}</span></td>
+        <td><span class="pill s-{{ e.status }}">{{ e.status }}</span><br><span class="muted">{{ e.rule }}</span>{% if !e.reason.is_empty() %}<br><span class="muted">“{{ e.reason }}”</span>{% endif %}</td>
         <td>
           {% if !e.summary.is_empty() %}<strong>{{ e.importance }}</strong> · {{ e.summary }}
           {% else if !e.error.is_empty() %}<span class="bad">{{ e.error }}</span>{% endif %}
+          {% if e.status != "new" && e.status != "gone" %}
+          <div style="margin-top:4px">
+            <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="up"><button class="btn" title="{{ tr.get("feedback") }}">{% if e.feedback == "up" %}✅{% endif %}👍</button></form>
+            <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="down"><button class="btn" title="{{ tr.get("feedback") }}">{% if e.feedback == "down" %}✅{% endif %}👎</button></form>
+          </div>
+          <form method="post" action="/events/{{ e.id }}/eval" style="margin-top:4px{% if e.feedback == "down" && e.rule == "model" %};outline:2px solid currentColor;outline-offset:2px{% endif %}">
+            <select name="expected" aria-label="{{ tr.get("eval-expected") }}">
+              <option value="notify">{{ tr.get("eval-notify") }}</option>
+              <option value="digest">{{ tr.get("eval-digest") }}</option>
+              <option value="ignore">{{ tr.get("eval-ignore") }}</option>
+            </select>
+            <button class="btn">{% if e.in_eval %}{{ tr.get("eval-update") }}{% else %}{{ tr.get("eval-add") }}{% endif %}</button>
+            {% if e.in_eval %}<span class="muted">{{ tr.get("eval-in-set") }}</span>{% endif %}
+          </form>
+          {% if e.feedback == "down" %}
+            {% if e.rule == "model" %}<p class="warn" style="margin:4px 0 0">{{ tr.get("feedback-model-hint") }}</p>
+            {% else %}<p class="warn" style="margin:4px 0 0">{{ tr.args("feedback-rule-hint", [("rule", e.rule.clone())]) }}</p>{% endif %}
+          {% endif %}
+          {% endif %}
         </td>
       </tr>
     {% endfor %}

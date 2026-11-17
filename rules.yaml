@@ -11,13 +11,15 @@
 # examples: redacted headers (no names, real amounts, IPs or order numbers) that must match this
 #           rule; checked by `gm rules` and by the test suite (ADR-0017).
 #
-# Policy source: docs/decisions.md, "Mail triage policy" (T1–T16).
+# Each section says how that kind of mail is handled. Night policy (ADR-0015): rule-only
+# notifications (summarize: false) go out at any hour; anything summarized waits for model hours.
 
 default: triage
 
 rules:
-  # ---------------------------------------------------------------- security (T4): urgent
-  # Rule-only (summarize: false) pings at any hour; summarized ones wait for the model (P4).
+  # ---------------------------------------------------------------- security: urgent
+  # The Rakuten login notice is rule-only, so it pings at any hour; 【重要】 notices and Google /
+  # Apple account security mail are summarized, so at night they wait for the model.
   - name: rakuten-login
     when:
       from: no-reply@id.rakuten.co.jp
@@ -49,7 +51,10 @@ rules:
       - from: "Apple <appleid@id.apple.com>"
         subject: "Your Apple Account was used to sign in"
 
-  # ---------------------------------------------------------------- Rakuten Card (T1–T3, T5, T9)
+  # ---------------------------------------------------------------- Rakuten Card
+  # 速報版 usage flash: silent ping with amount and date, any hour. 確定版 usage: digest merchant
+  # list. Statement: high, summarized. Terms changes: digest. 楽天カード通信 shares the sender address
+  # and is told apart by display name and unsubscribe link: ignored.
   - name: rakuten-card-flash
     when:
       from: info@mail.rakuten-card.co.jp
@@ -117,7 +122,9 @@ rules:
       - from: "楽天カード株式会社 <info@mail.rakuten-card.co.jp>"
         subject: "会員規約改定延期のお知らせ【楽天カード株式会社】"
 
-  # ---------------------------------------------------------------- Rakuten Ichiba orders (T6–T8)
+  # ---------------------------------------------------------------- Rakuten Ichiba orders
+  # Shipped / arrival / delay: silent ping with shop, item and tracking number. Order
+  # confirmations: digest. Review requests: ignored.
   - name: rakuten-order-shipping
     when:
       from: "*@shop.rakuten.co.jp"
@@ -169,7 +176,8 @@ rules:
       - from: "楽天みんなのレビュー <hyouka@rakuten.co.jp>"
         subject: "【楽天市場】お買い物へのレビューをお願いします"
 
-  # ---------------------------------------------------------------- coupons and points (T10)
+  # ---------------------------------------------------------------- coupons and points
+  # RaCoupon expiry and points reports: one digest line each, no model.
   - name: rakuten-coupons
     when:
       from: no-reply@mail.coupon.rakuten.co.jp
@@ -191,7 +199,7 @@ rules:
       - from: "楽天モバイルからのお知らせ <rmobile-notification@mobile.rakuten.co.jp>"
         subject: "【楽天モバイル】利用獲得ポイントのお知らせ"
 
-  # ---------------------------------------------------------------- other Rakuten marketing (T9)
+  # ---------------------------------------------------------------- other Rakuten marketing: ignored
   - name: rakuten-marketing
     when:
       from: ["*@*rakuten.co.jp", "*@*rakuten-card.co.jp"]
@@ -205,7 +213,9 @@ rules:
       - from: "楽天アフィリエイト <mail@affiliate.rakuten.co.jp>"
         subject: "初回限定！報酬受取で500円GET【楽天アフィリエイト】"
 
-  # ---------------------------------------------------------------- LinkedIn (T12–T14)
+  # ---------------------------------------------------------------- LinkedIn
+  # Job alerts: deduplicated digest list. Messages from people: notify. Invitations, posts and
+  # recommendations: ignored.
   - name: linkedin-job-alerts
     when:
       from: [jobalerts-noreply@linkedin.com, jobs-noreply@linkedin.com]
@@ -234,7 +244,9 @@ rules:
         subject: "I want to connect"
         labels: [CATEGORY_SOCIAL, INBOX]
 
-  # ---------------------------------------------------------------- newsletters you read (T11)
+  # ---------------------------------------------------------------- newsletters you read
+  # One or two digest lines each. Other Promotions-tab mail is ignored but counted on /senders, so a
+  # sender can be moved into this list.
   - name: newsletters
     when:
       from:

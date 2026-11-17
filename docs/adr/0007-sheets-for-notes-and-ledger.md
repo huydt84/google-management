@@ -1,6 +1,7 @@
 # 0007. Google Sheets via drive.file for the ledger instead of Keep
 
-- Status: Deferred (ledger moved to the backlog on 2026-11-16, see [decision log](../decisions.md) P13)
+- Status: Deferred (2026-11-16: the expense ledger is not a selected use case and moved to the
+  backlog; no Sheets scope is requested)
 - Date: 2026-11-16
 
 ## Context

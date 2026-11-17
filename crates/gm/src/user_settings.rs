@@ -34,6 +34,8 @@ pub enum SettingsError {
     Language,
     #[error("invalid-ui-language")]
     UiLanguage,
+    #[error("invalid-digest-time")]
+    DigestTime,
 }
 
 impl SettingsError {
@@ -42,6 +44,7 @@ impl SettingsError {
         match self {
             SettingsError::Language => "invalid-language",
             SettingsError::UiLanguage => "invalid-ui-language",
+            SettingsError::DigestTime => "invalid-digest-time",
         }
     }
 }
@@ -65,6 +68,18 @@ pub struct UserSettings {
     /// Web UI and fixed notification text: en | vi | ja.
     #[serde(default = "default_ui")]
     pub ui_language: String,
+    /// Morning digest time, HH:MM local; must fall inside model hours.
+    #[serde(default = "default_digest_at")]
+    pub digest_at: String,
+}
+
+fn default_digest_at() -> String {
+    "09:05".into()
+}
+
+/// Parse an HH:MM digest time.
+pub fn parse_digest_at(v: &str) -> Option<chrono::NaiveTime> {
+    chrono::NaiveTime::parse_from_str(v.trim(), "%H:%M").ok()
 }
 
 fn default_ui() -> String {
@@ -87,10 +102,12 @@ impl UserSettings {
         if !i18n::is_ui_language(&self.ui_language) {
             return Err(SettingsError::UiLanguage);
         }
+        let digest_at = parse_digest_at(&self.digest_at).ok_or(SettingsError::DigestTime)?;
         Ok(Self {
             summary_language,
             translation_language,
             ui_language: self.ui_language,
+            digest_at: digest_at.format("%H:%M").to_string(),
         })
     }
 }
@@ -99,10 +116,17 @@ impl UserSettings {
 pub struct UserSettingsStore {
     pool: PgPool,
     defaults: UserSettings,
+    hours: crate::clock::ModelHours,
 }
 
 impl UserSettingsStore {
-    pub fn new(pool: PgPool, default_summary_language: &str, default_ui_language: &str) -> Self {
+    pub fn new(
+        pool: PgPool,
+        default_summary_language: &str,
+        default_ui_language: &str,
+        default_digest_at: chrono::NaiveTime,
+        hours: crate::clock::ModelHours,
+    ) -> Self {
         let ui = if i18n::is_ui_language(default_ui_language) {
             default_ui_language
         } else {
@@ -114,12 +138,22 @@ impl UserSettingsStore {
                 summary_language: default_summary_language.to_string(),
                 translation_language: None,
                 ui_language: ui.to_string(),
+                digest_at: default_digest_at.format("%H:%M").to_string(),
             },
+            hours,
         }
     }
 
     pub fn defaults(&self) -> &UserSettings {
         &self.defaults
+    }
+
+    /// UI strings in the user's language (the default language if their settings can't be read).
+    pub async fn tr(&self, email: &str) -> crate::i18n::Tr {
+        match self.get(email).await {
+            Ok(p) => crate::i18n::Tr::new(&p.ui_language),
+            Err(_) => crate::i18n::Tr::new(&self.defaults.ui_language),
+        }
     }
 
     pub async fn get(&self, email: &str) -> anyhow::Result<UserSettings> {
@@ -159,6 +193,10 @@ impl UserSettingsStore {
             Ok(s) => s,
             Err(e) => return Ok(Err(e)),
         };
+        // The digest needs the model, so it must run inside model hours.
+        if !parse_digest_at(&s.digest_at).is_some_and(|t| self.hours.contains(t)) {
+            return Ok(Err(SettingsError::DigestTime));
+        }
         sqlx::query(
             "INSERT INTO user_settings (email, settings) VALUES ($1, $2)
              ON CONFLICT (email) DO UPDATE SET settings = EXCLUDED.settings, updated_at = now()",
@@ -203,14 +241,17 @@ mod tests {
             summary_language: "English".into(),
             translation_language: Some(" ".into()),
             ui_language: "ja".into(),
+            digest_at: "9:05".into(),
         };
         let v = s.validated().unwrap();
+        assert_eq!(v.digest_at, "09:05");
         assert_eq!(v.translation_language, None);
         assert_eq!(v.effective_translation_language(), "English");
         let bad = UserSettings {
             summary_language: "English".into(),
             translation_language: None,
             ui_language: "fr".into(),
+            digest_at: "09:05".into(),
         };
         assert_eq!(bad.validated(), Err(SettingsError::UiLanguage));
     }

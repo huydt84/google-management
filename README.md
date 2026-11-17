@@ -5,12 +5,12 @@ a tested rules file, summarizes it with a local LLM (mlx-server-runtime, Qwen3-8
 you on Telegram. Exactly one Google account (`GM_ALLOWED_EMAIL`) can sign in. Mail never leaves the
 machine.
 
-**Phase 1 (current):** a single Rust binary. Gmail → rules engine v2 → local summary → Telegram, with
+**Phase 1 (deployed):** a single Rust binary. Gmail → rules engine v2 → local summary → Telegram, with
 a night policy, Keychain secrets, launchd, backups and metrics. Next: a morning digest and model
 triage (Phase 2), then Translate / Analyze / Reply with approvals (Phase 3).
 
-Start with the [documentation index](docs/README.md): decision log, PRD, architecture, specs, ADRs
-and the phased plan.
+Start with the [documentation index](docs/README.md): PRD, architecture, ADRs, specs and the phased
+plan.
 
 ```
 Gmail ──► Pub/Sub ──(pull)──► GmailIngestor ◄──(safety poll 15 min)

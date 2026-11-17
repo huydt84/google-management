@@ -24,6 +24,29 @@ pub enum Action {
     Triage,
 }
 
+impl Action {
+    /// The three outcomes a mail can end with (rules, model triage, eval cases); `triage` is only a
+    /// routing step.
+    pub const FINAL: [Action; 3] = [Action::Notify, Action::Digest, Action::Ignore];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Action::Ignore => "ignore",
+            Action::Digest => "digest",
+            Action::Notify => "notify",
+            Action::Triage => "triage",
+        }
+    }
+
+    /// One of [`Action::FINAL`] by name (case-insensitive, trimmed).
+    pub fn parse_final(s: &str) -> Option<Action> {
+        let s = s.trim();
+        Self::FINAL
+            .into_iter()
+            .find(|a| a.as_str().eq_ignore_ascii_case(s))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {
@@ -178,6 +201,9 @@ pub struct Verdict {
     /// Rendered `message` template (rule-only notifications), if the rule has one.
     pub message: Option<String>,
     pub extracted: BTreeMap<String, String>,
+    /// Why model triage chose this action (`rule = "model"` only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Body text examined by `body` matchers and extractors (keeps regex work bounded).
@@ -288,6 +314,7 @@ impl Rule {
             section: self.section.clone(),
             message,
             extracted,
+            reason: None,
         }
     }
 }
@@ -378,6 +405,23 @@ impl RuleSet {
         })
     }
 
+    /// Digest sections in rule order (first appearance), ending with `other`. The digest renders
+    /// sections in this order, then the model's section last.
+    pub fn digest_sections(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for r in &self.rules {
+            if let (Action::Digest, Some(s)) = (r.action, &r.section)
+                && !out.contains(s)
+            {
+                out.push(s.clone());
+            }
+        }
+        if !out.iter().any(|s| s == "other") {
+            out.push("other".into());
+        }
+        out
+    }
+
     pub fn evaluate(&self, m: &ParsedMessage) -> Verdict {
         for r in &self.rules {
             if r.when.matches(m) {
@@ -392,6 +436,7 @@ impl RuleSet {
             section: matches!(self.default, Action::Digest).then(|| "other".into()),
             message: None,
             extracted: BTreeMap::new(),
+            reason: None,
         }
     }
 

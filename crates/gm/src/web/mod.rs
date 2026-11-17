@@ -29,6 +29,9 @@ pub struct AppState {
     pub ingestor: Arc<GmailIngestor>,
     pub user_settings: UserSettingsStore,
     pub signer: Signer,
+    pub health: Arc<crate::health::Health>,
+    /// Fetches the raw message when the owner adds a mail to the eval set.
+    pub gmail: crate::google::gmail::GmailClient,
     pub notifier_name: &'static str,
 }
 
@@ -110,6 +113,13 @@ pub fn router(state: SharedState) -> Router {
             "/settings",
             get(pages::settings_page).post(pages::save_settings),
         )
+        .route("/digest", get(pages::digest_page))
+        .route("/jobs", get(pages::jobs_page))
+        .route("/jobs/retry-dead", post(pages::retry_all_dead))
+        .route("/jobs/{id}/retry", post(pages::retry_job))
+        .route("/senders", get(pages::senders_page))
+        .route("/events/{id}/feedback", post(pages::event_feedback))
+        .route("/events/{id}/eval", post(pages::event_eval))
         .route("/api/gmail/sync", post(pages::sync_now))
         .route("/api/events", get(pages::events_json))
         .route("/healthz", get(pages::healthz))

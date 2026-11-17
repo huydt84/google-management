@@ -1,4 +1,4 @@
-//! Cloud Pub/Sub REST client (v1) for Gmail push notifications (ADR-0002, decision A7). gm creates
+//! Cloud Pub/Sub REST client (v1) for Gmail push notifications (ADR-0002). gm creates
 //! its own topic, the publisher permission for Gmail's service account and a pull subscription, then
 //! pulls and acknowledges messages. Calls use the owner's Google token with the `pubsub` scope.
 

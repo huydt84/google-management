@@ -12,7 +12,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{Local, NaiveDate, TimeZone};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{body_string_contains, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use gm::app::{self, App, Overrides};
@@ -33,17 +33,21 @@ pub fn config(server: &MockServer) -> Config {
     cfg.google_token_url = format!("{uri}/token");
     cfg.gmail_api_base = format!("{uri}/gmail/v1");
     cfg.llm_base_url = format!("{uri}/v1");
+    cfg.llm_ready_url = format!("{uri}/ready");
     cfg.telegram_api_base = uri;
     cfg.rules_path = format!("{}/../../rules.yaml", env!("CARGO_MANIFEST_DIR")).into();
     cfg
 }
 
+/// A local time on a fixed day one week ahead of the real date, so that a job deferred from the
+/// fake clock ("tomorrow 09:00") is still in the future for Postgres' real `now()`.
 pub fn local(h: u32, m: u32) -> chrono::DateTime<Local> {
-    let d = NaiveDate::from_ymd_opt(2026, 11, 16)
-        .unwrap()
-        .and_hms_opt(h, m, 0)
-        .unwrap();
+    let d = test_day().and_hms_opt(h, m, 0).unwrap();
     Local.from_local_datetime(&d).earliest().unwrap()
+}
+
+pub fn test_day() -> NaiveDate {
+    Local::now().date_naive() + chrono::Duration::days(7)
 }
 
 pub struct TestApp {
@@ -59,6 +63,13 @@ pub async fn test_app(
     now: Option<chrono::DateTime<Local>>,
 ) -> TestApp {
     let server = MockServer::start().await;
+    // The model is up unless a test says otherwise (low priority: `mock_ready` overrides it).
+    Mock::given(method("GET"))
+        .and(path("/ready"))
+        .respond_with(ResponseTemplate::new(200))
+        .with_priority(10)
+        .mount(&server)
+        .await;
     let mut cfg = config(&server);
     configure(&mut cfg);
     let notifier = Arc::new(RecordingNotifier::default());
@@ -113,6 +124,20 @@ impl TestApp {
     pub async fn mock_llm(&self, content: &str) {
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"message": {"role": "assistant", "content": content}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20}
+            })))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Answer only requests whose prompt contains `marker` (e.g. [`TRIAGE`]). Mount these before a
+    /// catch-all [`TestApp::mock_llm`]: wiremock picks the first matching mock.
+    pub async fn mock_llm_for(&self, marker: &str, content: &str) {
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(body_string_contains(marker))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "choices": [{"message": {"role": "assistant", "content": content}}],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 20}
@@ -193,3 +218,69 @@ pub async fn mock_404(server: &MockServer, path_re: &str) {
 }
 
 pub const SUMMARY_JSON: &str = r#"{"summary": "Tóm tắt.", "importance": "high", "category": "work", "suggested_actions": ["reply"], "language": "English"}"#;
+
+/// Prompt markers for [`TestApp::mock_llm_for`].
+pub const TRIAGE: &str = "Task: decide how the owner should receive";
+pub const SUMMARY: &str = "Task: summarize one email for a phone notification";
+
+pub fn triage_json(action: &str, reason: &str) -> String {
+    format!(r#"{{"action": "{action}", "reason": "{reason}"}}"#)
+}
+
+// ------------------------------------------------------------------------------ web helpers
+
+pub async fn send(
+    router: &axum::Router,
+    req: axum::http::Request<axum::body::Body>,
+) -> (axum::http::StatusCode, axum::http::HeaderMap, String) {
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let resp = router.clone().oneshot(req).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    let bytes = body.collect().await.unwrap().to_bytes();
+    (
+        parts.status,
+        parts.headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+pub fn get(uri: &str, cookie: Option<&str>) -> axum::http::Request<axum::body::Body> {
+    let mut b = axum::http::Request::get(uri).header(axum::http::header::HOST, "localhost:8080");
+    if let Some(c) = cookie {
+        b = b.header(axum::http::header::COOKIE, c);
+    }
+    b.body(axum::body::Body::empty()).unwrap()
+}
+
+pub fn post_form(uri: &str, cookie: &str, form: &str) -> axum::http::Request<axum::body::Body> {
+    use axum::http::header;
+    axum::http::Request::post(uri)
+        .header(header::HOST, "localhost:8080")
+        .header(header::COOKIE, cookie)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(axum::body::Body::from(form.to_string()))
+        .unwrap()
+}
+
+pub fn session_cookie(t: &TestApp, email: &str) -> String {
+    use gm::web::session::{Session, Signer};
+    let now = chrono::Utc::now().timestamp();
+    let tok = Signer::new(&t.app.cfg.session_secret).sign(
+        "session",
+        &Session {
+            email: email.into(),
+            iat: now,
+            exp: now + 600,
+        },
+    );
+    format!("gm_session={tok}")
+}
+
+pub async fn mock_ready(server: &MockServer, ok: bool) {
+    Mock::given(method("GET"))
+        .and(path("/ready"))
+        .respond_with(ResponseTemplate::new(if ok { 200 } else { 503 }))
+        .mount(server)
+        .await;
+}

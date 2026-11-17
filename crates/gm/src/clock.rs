@@ -1,4 +1,4 @@
-//! Time and the model residency window (ADR-0010, ADR-0015).
+//! Time and model hours: when gm runs model work (ADR-0010, ADR-0015).
 
 use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone, Utc};
 
@@ -33,10 +33,14 @@ pub struct ModelHours {
 
 impl ModelHours {
     pub fn is_on(&self, now: DateTime<Local>) -> bool {
+        self.contains(now.time())
+    }
+
+    /// Whether a time of day falls inside the window.
+    pub fn contains(&self, t: NaiveTime) -> bool {
         if self.on == self.off {
             return true;
         }
-        let t = now.time();
         if self.on < self.off {
             t >= self.on && t < self.off
         } else {
@@ -62,6 +66,20 @@ impl ModelHours {
         }
         (now + Duration::hours(1)).with_timezone(&Utc)
     }
+}
+
+/// The latest local occurrence of time-of-day `t` at or before `now` (today's, or yesterday's if
+/// today's is still ahead). Used by the scheduler so a time missed during sleep fires once on wake.
+pub fn latest_occurrence(t: NaiveTime, now: DateTime<Local>) -> DateTime<Local> {
+    for back in 0..3 {
+        let date = now.date_naive() - Duration::days(back);
+        if let Some(c) = Local.from_local_datetime(&date.and_time(t)).earliest()
+            && c <= now
+        {
+            return c;
+        }
+    }
+    now
 }
 
 #[cfg(test)]

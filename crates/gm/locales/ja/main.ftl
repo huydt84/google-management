@@ -50,3 +50,74 @@ invalid-language = "English" や "Vietnamese" のような言語名を入力し�
 invalid-ui-language = 一覧にある表示言語を選んでください。
 notif-from = 差出人
 notif-suggested = 提案
+
+# Digest (2A)
+digests = ダイジェスト
+digest-none = ダイジェストはまだありません。最初のものは設定の時刻に送信されます。
+digest-nothing-sent = 新着がなかったため送信していません。
+col-date = 日付
+col-items = 件数
+digest-time = 朝のダイジェスト時刻
+digest-time-help = 朝のダイジェストを送る時刻 (HH:MM)。モデル稼働時間 ({ $on }–{ $off }) 内で指定してください。
+invalid-digest-time = モデル稼働時間内の時刻を HH:MM で指定してください。
+digest-title = ☀️ 朝のダイジェスト · { $date }
+digest-section-card-usage = 💳 カード利用
+digest-section-account = 🏦 アカウントのお知らせ
+digest-section-orders = 📦 注文
+digest-section-coupons = 🎟️ クーポン
+digest-section-points = ⭐ ポイント
+digest-section-jobs = 💼 求人アラート
+digest-section-newsletters = 📰 ニュースレター
+digest-section-other = 📬 その他
+digest-section-model = 📨 その他のメール
+digest-system = ⚠️ システム
+digest-pending-note = ⏳ 要約を作成中です。完了するとこのメッセージが更新されます。
+
+# Health, jobs, senders (2E)
+health = 稼働状況
+since = 発生
+health-skipped = モデル稼働時間外は確認しません
+health-label-dead-jobs = 失敗したジョブなし
+health-label-ingest-lag = Gmail の同期は最新
+health-label-model-down = モデルは応答中
+health-label-needs-reconnect = Gmail の接続は有効
+health-dead-jobs = 失敗したジョブが { $count } 件: ダッシュボードのジョブから再実行できます
+health-ingest-lag = Gmail が { $minutes } 分間同期されていません
+health-model-down = モデル稼働時間中にモデルが応答しません
+health-needs-reconnect = Gmail の再接続が必要です: { $account }
+health-alert = 🩺 { $minutes } 分間続いている問題: { $problem }
+health-recovered = ✅ 解決しました: { $problem }
+jobs = ジョブ
+no-jobs = この状態のジョブはありません。
+col-job = ジョブ
+col-attempts = 試行回数
+retry = 再実行
+retry-all = 失敗したジョブをすべて再実行
+senders = 無視した送信者
+senders-note = 過去 30 日間に無視したメールを送信者ごとに表示します。ダイジェストに入れたい送信者は rules.yaml の newsletters ルールに追加してください。
+no-senders = 過去 30 日間に無視したメールはありません。
+col-sender = 送信者
+col-count = 件数
+col-last-subject = 最新の件名
+col-rule = 無視したルール
+
+
+# Feedback (2C)
+feedback = この処理は正しかったですか？
+feedback-thanks = 記録しました。
+button-unknown = このボタンは現在使えません。
+feedback-rule-hint = ルール「{ $rule }」による判定です。rules.yaml で修正してください。
+feedback-model-hint = モデルによる判定です。正しいアクションで評価セットに追加してください。
+
+# Eval set (2F)
+eval-expected = 正しいアクション
+eval-notify = 通知
+eval-digest = ダイジェスト
+eval-ignore = 無視
+eval-add = 評価セットに追加
+eval-update = 評価セットを更新
+eval-in-set = 評価セットに登録済み
+eval-added = 評価セットに追加しました。
+eval-updated = 評価ケースを更新しました。
+eval-full = 評価セットが上限（200通）に達しています。先に評価フォルダのファイルを削除してください。
+eval-gone = このメールは存在しないため追加できません。

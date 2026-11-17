@@ -79,7 +79,7 @@ pub async fn count_by(pool: &PgPool, table: &str) -> sqlx::Result<Vec<(String, i
     .await
 }
 
-/// Delete events older than the retention window and finished jobs older than it (ADR, P9).
+/// Delete events older than the retention window and finished jobs older than it (`GM_RETENTION_DAYS`, default 60).
 pub async fn apply_retention(pool: &PgPool, days: i64) -> sqlx::Result<(u64, u64)> {
     let ev =
         sqlx::query("DELETE FROM events WHERE created_at < now() - make_interval(days => $1::int)")
@@ -94,9 +94,33 @@ pub async fn apply_retention(pool: &PgPool, days: i64) -> sqlx::Result<(u64, u64
     .execute(pool)
     .await?
     .rows_affected();
+    sqlx::query("DELETE FROM digests WHERE created_at < now() - make_interval(days => $1::int)")
+        .bind(days as i32)
+        .execute(pool)
+        .await?;
     sqlx::query("DELETE FROM llm_calls WHERE created_at < now() - make_interval(days => $1::int)")
         .bind(days as i32)
         .execute(pool)
         .await?;
     Ok((ev, jobs))
+}
+
+/// A machine-wide setting (`system_settings`), or `None` if never set.
+pub async fn system_get(pool: &PgPool, key: &str) -> sqlx::Result<Option<Value>> {
+    sqlx::query_scalar("SELECT value FROM system_settings WHERE key = $1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+}
+
+pub async fn system_set(pool: &PgPool, key: &str, value: &Value) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO system_settings (key, value) VALUES ($1, $2)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(pool)
+    .await?;
+    Ok(())
 }

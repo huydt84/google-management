@@ -50,3 +50,74 @@ invalid-language = Use a language name such as "English" or "Vietnamese" (2–40
 invalid-ui-language = Choose one of the listed interface languages.
 notif-from = From
 notif-suggested = Suggested
+
+# Digest (2A)
+digests = Digest
+digest-none = No digest yet. The first one is sent at the digest time set in Settings.
+digest-nothing-sent = Nothing was sent: there was nothing new.
+col-date = Date
+col-items = Items
+digest-time = Morning digest time
+digest-time-help = When the morning digest is sent (HH:MM). Must be within model hours ({ $on }–{ $off }).
+invalid-digest-time = Choose a digest time within model hours, as HH:MM.
+digest-title = ☀️ Morning digest · { $date }
+digest-section-card-usage = 💳 Card usage
+digest-section-account = 🏦 Account notices
+digest-section-orders = 📦 Orders
+digest-section-coupons = 🎟️ Coupons
+digest-section-points = ⭐ Points
+digest-section-jobs = 💼 Job alerts
+digest-section-newsletters = 📰 Newsletters
+digest-section-other = 📬 Other
+digest-section-model = 📨 Other mail
+digest-system = ⚠️ System
+digest-pending-note = ⏳ Summary still being written; this message is updated when it is ready.
+
+# Health, jobs, senders (2E)
+health = Health
+since = since
+health-skipped = not checked outside model hours
+health-label-dead-jobs = No dead jobs
+health-label-ingest-lag = Gmail sync up to date
+health-label-model-down = Model answering
+health-label-needs-reconnect = Gmail connection valid
+health-dead-jobs = { $count } dead job(s): open Jobs on the dashboard to retry
+health-ingest-lag = Gmail not synced for { $minutes } min
+health-model-down = The model is not answering during model hours
+health-needs-reconnect = Gmail needs to be reconnected: { $account }
+health-alert = 🩺 Problem for { $minutes } min: { $problem }
+health-recovered = ✅ Resolved: { $problem }
+jobs = Jobs
+no-jobs = No jobs with this status.
+col-job = Job
+col-attempts = Attempts
+retry = Retry
+retry-all = Retry all dead jobs
+senders = Ignored senders
+senders-note = Mail ignored in the last 30 days, by sender. To get a sender into the digest, add it to the newsletters rule in rules.yaml.
+no-senders = Nothing was ignored in the last 30 days.
+col-sender = Sender
+col-count = Count
+col-last-subject = Last subject
+col-rule = Ignored by
+
+
+# Feedback (2C)
+feedback = Was this handled right?
+feedback-thanks = Thanks, noted.
+button-unknown = This button is no longer supported.
+feedback-rule-hint = Rule "{ $rule }" decided this: edit it in rules.yaml.
+feedback-model-hint = The model decided this: add it to the eval set with the right action.
+
+# Eval set (2F)
+eval-expected = Right action
+eval-notify = Notify
+eval-digest = Digest
+eval-ignore = Ignore
+eval-add = Add to eval
+eval-update = Update eval
+eval-in-set = In the eval set
+eval-added = Added to the eval set.
+eval-updated = Eval case updated.
+eval-full = The eval set is full (200 mails): remove some files from the eval folder first.
+eval-gone = This mail no longer exists, so it can't be added.

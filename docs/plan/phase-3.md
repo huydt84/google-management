@@ -7,7 +7,7 @@ external effect (sending mail) waits for the owner's approval.
 **Not in Phase 3:** a free-form agent that picks its own tools, automations, the expense ledger
 (backlog), Calendar (Phase 4).
 
-Decisions: [decision log](../decisions.md) P6, P7, P8, L4, L7; [ADR-0003](../adr/0003-intent-router-before-agent.md),
+Decisions: [ADR-0003](../adr/0003-intent-router-before-agent.md),
 [ADR-0006](../adr/0006-telegram-as-mobile-channel.md).
 
 ## Pinned design

@@ -13,7 +13,7 @@ fn day_hours(cfg: &mut gm::config::Config) {
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
-async fn unmatched_mail_is_summarized_and_notified(pool: PgPool) {
+async fn unmatched_mail_triaged_notify_is_summarized_and_notified(pool: PgPool) {
     let t = test_app(pool, |_| {}, None).await;
     t.connect_owner().await;
     t.mock_message(gmail_message(
@@ -24,10 +24,15 @@ async fn unmatched_mail_is_summarized_and_notified(pool: PgPool) {
         "Shall we have lunch tomorrow?",
     ))
     .await;
+    t.mock_llm_for(
+        TRIAGE,
+        &triage_json("notify", "a person asks you something"),
+    )
+    .await;
     t.mock_llm(SUMMARY_JSON).await;
 
     let id = t.insert_event("m1").await;
-    assert_eq!(t.drain().await, 3, "triage, summarize, notify");
+    assert_eq!(t.drain().await, 4, "triage, classify, summarize, notify");
     assert_eq!(t.event_status(id).await, "notified");
     let sent = t.sent();
     assert_eq!(sent.len(), 1);
@@ -38,13 +43,14 @@ async fn unmatched_mail_is_summarized_and_notified(pool: PgPool) {
     assert!(!sent[0].silent);
 
     let ev = gm::db::event(&t.app.pool, id).await.unwrap().unwrap();
-    assert_eq!(ev.rule.as_deref(), Some("default"));
+    assert_eq!(ev.rule.as_deref(), Some("model"));
+    assert_eq!(ev.data["verdict"]["reason"], "a person asks you something");
     assert_eq!(ev.summary.unwrap()["importance"], "high");
     let calls: i64 = sqlx::query_scalar("SELECT count(*) FROM llm_calls WHERE ok")
         .fetch_one(&t.app.pool)
         .await
         .unwrap();
-    assert_eq!(calls, 1);
+    assert_eq!(calls, 2, "triage + summary");
 
     // At-least-once: redelivering the same jobs changes nothing.
     sqlx::query("UPDATE jobs SET status = 'pending'")
@@ -95,11 +101,11 @@ async fn night_mail_needing_the_model_is_deferred_to_morning(pool: PgPool) {
     .await;
     let id = t.insert_event("m3").await;
     t.drain().await;
-    assert_eq!(t.event_status(id).await, "triaged");
+    assert_eq!(t.event_status(id).await, "classify");
     assert!(t.sent().is_empty());
     let (status, attempts, run_after): (String, i32, chrono::DateTime<chrono::Utc>) =
         sqlx::query_as(
-            "SELECT status, attempts, run_after FROM jobs WHERE subscriber = 'summarize'",
+            "SELECT status, attempts, run_after FROM jobs WHERE subscriber = 'classify'",
         )
         .fetch_one(&t.app.pool)
         .await

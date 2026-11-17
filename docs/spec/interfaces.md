@@ -5,6 +5,8 @@ rules file and the LLM contracts.
 
 ## HTTP
 
+Code: [`src/web/mod.rs`](../../crates/gm/src/web/mod.rs), [`src/web/pages.rs`](../../crates/gm/src/web/pages.rs), [`src/web/auth.rs`](../../crates/gm/src/web/auth.rs), [`templates/`](../../crates/gm/templates/).
+
 Served on `127.0.0.1:${GM_PORT}` (8080). Code: `crates/gm/src/web/`.
 
 Guards on every request (`web::guard`):
@@ -18,14 +20,14 @@ Guards on every request (`web::guard`):
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model hours, queue counts, last 50 events |
+| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model hours, queue counts, health panel (Phase 2), last 50 events |
 | GET | `/auth/login` | — | Start sign-in (OIDC, PKCE, signed `gm_oauth` state cookie) |
 | GET | `/auth/callback` | — | Finish sign-in; 403 on state mismatch or unless the verified email equals `GM_ALLOWED_EMAIL` |
 | POST | `/auth/logout` | — | Clear the session |
 | GET | `/connect/google` | session | Start API consent (`gmail.readonly`, plus `pubsub` in Pub/Sub mode; offline, `prompt=consent`) |
 | GET | `/connect/google/callback` | session | Check owner and scopes, store the encrypted refresh token, bootstrap the Gmail cursor |
 | GET | `/settings` | session (else redirect to `/`) | The user's settings, rendered in their UI language |
-| POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`; 400 with a localized reason, else redirect `/settings?saved=1` |
+| POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`, `digest_at` (HH:MM inside model hours); 400 with a localized reason, else redirect `/settings?saved=1` |
 | POST | `/api/gmail/sync` | session | Sync the owner's mailbox now, redirect to `/` |
 | GET | `/api/events` | session (401 JSON otherwise) | Last 100 events as JSON |
 | GET | `/healthz` | — | `{"ok":true}`, or 503 if the database is unreachable |
@@ -33,18 +35,29 @@ Guards on every request (`web::guard`):
 
 Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 `gm_llm_prompt_tokens_24h`, `gm_llm_completion_tokens_24h`, `gm_llm_latency_ms_sum_24h` (per task and lane),
-`gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode). Counts only, no content.
+`gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode), `gm_health_failing{check}` (Phase 2). Counts only, no content. Model-server metrics come from
+mlx-air's own `/metrics`.
+
+### Implemented (Phase 2)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/digest[?id=]` | session | The last 60 digests (date, items, status) and the text of the selected one (default: latest) |
+| GET | `/jobs[?status=dead|pending|running|done]` | session | Jobs by status (default `dead`, latest 200) with their last error |
+| POST | `/events/{id}/feedback` | session | Form `label=up|down`: 👍/👎 from the dashboard (2C); redirect to the event row |
+| POST | `/events/{id}/eval` | session | Form `expected=notify|digest|ignore`: fetch the raw mail from Gmail and add it to the local eval set, or update its expected action (2F). Redirect to `/?eval=added|updated|full|gone#event-{id}` |
+| POST | `/jobs/{id}/retry`, `/jobs/retry-dead` | session | A dead job (or all of them) back to `pending` with attempts reset; redirect to `/jobs` |
+| GET | `/senders` | session | Ignored mail of the last 30 days grouped by sender address: count, last subject, the rule(s) that ignored it |
 
 ### Planned
 
 | Method | Path | Phase | Purpose |
 |--------|------|-------|---------|
-| GET | `/digest` | 2 | Today's and past digests |
-| GET | `/jobs?status=dead`, POST `/jobs/{id}/retry` | 2 | Dead-letter management |
-| GET | `/senders` | 2 | Ignored-sender counts (promote a sender to the newsletter list) |
 | GET | `/tasks`, POST `/approvals/{id}/approve` · `/reject` | 3 | Tasks and web approvals |
 
 ## Telegram
+
+Code: [`src/notify.rs`](../../crates/gm/src/notify.rs), [`src/telegram.rs`](../../crates/gm/src/telegram.rs), [`src/feedback.rs`](../../crates/gm/src/feedback.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/health.rs`](../../crates/gm/src/health.rs).
 
 The bot sends to exactly one chat, `GM_TELEGRAM_CHAT_ID`. Messages are plain text (no `parse_mode`),
 ≤ 4096 characters, link previews disabled. Strings are localized with the owner's `ui_language`;
@@ -80,21 +93,62 @@ https://mail.google.com/…
 - Rule-only notifications (`summarize: false`) go out at any hour; their text is the rule `message`
   or the subject, sender and link.
 - A notification that needs a summary is never sent without it: it waits for model hours and for the
-  model to answer (decisions P4, L12).
+  model to answer ([ADR-0015](../adr/0015-notification-policy-and-digest.md)).
+- Phase 2: every notification carries a `👍` `👎` row (callback data `f:<event_id>:up|down`).
+
+### Button presses (Phase 2: feedback; minimal part of 3A)
+
+`src/telegram.rs` long-polls `getUpdates` (`timeout` 25 s, `allowed_updates: ["callback_query"]`;
+offset in `system_settings.telegram_offset`, stored after each update). Presses whose
+`message.chat.id` is not `GM_TELEGRAM_CHAT_ID` are answered empty and ignored; unknown callback data
+gets "This button is no longer supported". A feedback press is answered at once ("Thanks, noted.")
+and published as `feedback.received`; its handler stores the label (last tap wins by tap time) and
+redraws the message's keyboard with ✅ on the current choice (`editMessageReplyMarkup`). 👎 on a
+rule-matched mail shows a hint on the dashboard to edit that rule in `rules.yaml`; on a model-triaged
+mail, to add it to the eval set. There is no "mute this sender" button: rules stay in the one
+reviewed, tested file.
+
+### Digest (Phase 2)
+
+One silent message per user and day at their `digest_at` (default 09:05), split at 4096 characters
+on line boundaries. Header `☀️ Morning digest · <date>`, then the sections in `rules.yaml` order of
+first appearance (titles from `digest-section-<name>` in the locale files, else the raw name), then
+"📨 Other mail" (model triage) last. Lines:
+
+- rule `message` if any, else `• <sender>: <summary line>`, else the extracted values, else
+  `• <sender>: <subject>`; `⏳` marks items whose summary isn't ready (with a note at the end);
+- jobs: one line per posting `• <title> — <company> · <location>` plus the link, deduplicated by
+  (title, company) across the digest;
+- model items: `[n] <sender>: <line>` and `↳ <reason>`, with a `👍 n` / `👎 n` row each (at most 8);
+- `⚠️ System` with the current health problems, only when there are any.
+
+Nothing is sent when there is nothing to say (the run is still recorded on `/digest`). The digest
+covers digest mail not yet in a digest; the first one only takes the last 24 hours. Until model hours
+end that day, the message is edited (`editMessageText`) when pending summaries arrive; after that,
+leftovers stay as subject lines. Mail arriving after the digest goes into the next one.
+
+### Health alerts (Phase 2)
+
+Checked every minute (`src/health.rs`): `dead_jobs` (any job `dead`), `ingest_lag` (an active
+account not synced for more than 10 min; in Pub/Sub mode while it works, the safety-poll interval +
+10 min), `model_down` (`GM_LLM_READY_URL` not 2xx within 5 s; only checked during model hours, an open
+incident stays open outside them), `needs_reconnect` (an account whose refresh token was rejected).
+After 15 minutes of the same failure: one message `🩺 Problem for <n> min: <problem>`, and
+`✅ Resolved: <problem>` when it passes. Silent 19:00–09:00, with sound by day. A failed send is
+retried the next minute. Incidents live in `health_state`.
 
 ### Planned
 
 | Feature | Phase |
 |---------|-------|
-| Digest message at 09:05, sections in rule order, edited when late summaries arrive | 2 |
-| Health alert after 15 minutes unhealthy (dead jobs, ingest lag > 10 min, model down in model hours, token invalid) | 2 |
-| Feedback buttons `f:<event_id>:up/down` under notifications and model-triaged items | 2 |
 | **[Translate]**, **[Analyze]**, **[Reply]** buttons (`i:<event_id>:<intent>`); approvals `a:<approval_id>:y/n` | 3 |
 | Replies to notifications as instructions; `/status`, `/pause`, `/resume`, `/language` | 3 |
 
 `callback_data` is limited to 64 bytes, so it carries ids only. Updates from other chats are ignored.
 
 ## CLI
+
+Code: [`src/main.rs`](../../crates/gm/src/main.rs).
 
 `gm <command>` (`crates/gm/src/main.rs`):
 
@@ -106,9 +160,12 @@ https://mail.google.com/…
 | `gm keychain set <name>` | Store a secret in the Keychain (macOS prompts for the value) |
 | `gm keychain list` | Show which known secrets are present (never the values) |
 | `gm rules [path]` | Validate a rules file and check every rule's examples |
-| `gm eval` (Phase 2) | Run the local eval set against the local model |
+| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary, `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
+| `gm eval [--dir DIR] [--language LANG]` | Run rules → model triage → summary on every case in the eval set against the **local** model (refuses a non-loopback `GM_LLM_BASE_URL`) and print accuracy per expected action, the confusion matrix, the JSON parse rate per task, misclassified ids, and calls, latency p50/p95 and tokens per model task. Needs no database, Keychain or Google access |
 
 ## Configuration
+
+Code: [`src/config.rs`](../../crates/gm/src/config.rs), [`src/secrets.rs`](../../crates/gm/src/secrets.rs), [`.env.example`](../../.env.example).
 
 Non-secret settings come from the environment or `.env` (prefix `GM_`); see
 [.env.example](../../.env.example). Secrets come from the Keychain (service `google-management`), or
@@ -131,7 +188,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_ALLOWED_EMAIL` | required | The only account that can sign in |
 | `GM_DATABASE_URL` | `postgres://gm:gm@127.0.0.1:5433/gm` | Database |
 | `GM_GOOGLE_CLIENT_ID` | required | OAuth client (Web application) |
-| `GM_GOOGLE_AUTH_URL` / `_TOKEN_URL`, `GM_GMAIL_API_BASE`, `GM_TELEGRAM_API_BASE` | Google / Telegram | Overridden in tests |
+| `GM_GOOGLE_AUTH_URL`, `GM_GOOGLE_TOKEN_URL`, `GM_GMAIL_API_BASE`, `GM_TELEGRAM_API_BASE` | Google / Telegram | Overridden in tests |
 | `GM_GMAIL_INGEST_MODE` | `poll` | `poll` or `pubsub` (the owner's setup uses `pubsub`) |
 | `GM_GOOGLE_PROJECT_ID` | required for `pubsub` | Google Cloud project that holds gm's topic and subscription |
 | `GM_GMAIL_PUBSUB_TOPIC` / `GM_GMAIL_PUBSUB_SUBSCRIPTION` | `gm-gmail` / `gm-gmail-pull` | Created by gm if missing |
@@ -142,6 +199,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_RULES_PATH` | `rules.yaml` | Rules file |
 | `GM_LLM_BASE_URL` | `http://127.0.0.1:8000/v1` | OpenAI-compatible endpoint |
 | `GM_LLM_API_KEY` | `not-needed` | Bearer token for it |
+| `GM_LLM_READY_URL` | base URL without `/v1` + `/ready` | Readiness probe of the model server (`model_down` health check) |
 | `GM_LLM_MODEL` | `mlx-community/Qwen3-8B-4bit` | Model name |
 | `GM_LLM_TIMEOUT_S` | 120 | Request timeout |
 | `GM_LLM_MAX_INFLIGHT` | 2 | Concurrent model requests across lanes |
@@ -150,6 +208,8 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_NO_THINK_TAG` | `/no_think` | Appended to the system prompt; empty to disable |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
 | `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on) |
+| `GM_EVAL_DIR` | `~/.local/share/gm/eval` | Local eval set folder (mode 0700, files 0600, at most 200 cases) |
+| `GM_DIGEST_AT` | `09:05` | Default morning digest time; each user can change it in Settings (inside model hours) |
 | `GM_DEFAULT_SUMMARY_LANGUAGE` | `Vietnamese` | Default summary language |
 | `GM_DEFAULT_UI_LANGUAGE` | `en` | Default UI language (`en`, `vi`, `ja`) |
 | `GM_TELEGRAM_CHAT_ID` | — | Owner's chat |
@@ -160,6 +220,8 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LOG_DIR` | — | JSON log directory (daily files, 7 kept); stderr only if unset |
 
 ## Rules file (`rules.yaml`)
+
+Code: [`src/rules.rs`](../../crates/gm/src/rules.rs), [`rules.yaml`](../../rules.yaml).
 
 Specified in [ADR-0012](../adr/0012-rules-engine-v2.md); the header of [rules.yaml](../../rules.yaml)
 is the reference. Summary:
@@ -173,7 +235,23 @@ is the reference. Summary:
 - Unknown keys are errors. The file is reloaded when its mtime changes; an invalid edit keeps the
   previous rules. `gm rules` and the test suite check every example.
 
+## Eval case file
+
+Code: [`src/eval.rs`](../../crates/gm/src/eval.rs).
+
+One file per case, `GM_EVAL_DIR/<gmail id>.json`, plain JSON so it can be read and edited by hand:
+
+```json
+{"message_id": "18c…", "account": "owner@…", "added_at": "2026-11-17T09:12:00Z",
+ "expected": "notify | digest | ignore", "notes": "", "message": { "…Gmail API message, format=full…" }}
+```
+
+Files that don't parse or whose `expected` isn't one of the three actions are skipped with a warning.
+Removing a case means deleting its file.
+
 ## LLM contracts
+
+Code: [`src/llm/mod.rs`](../../crates/gm/src/llm/mod.rs), [`prompts/`](../../crates/gm/prompts/), [`src/triage_model.rs`](../../crates/gm/src/triage_model.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs).
 
 All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) through `LlmClient`. No
 `tools`, `response_format` or JSON mode is assumed.
@@ -201,12 +279,25 @@ client retries once with a reminder; then it keeps the raw text (≤ 1,200 chara
 with `importance: medium` and `parse_ok: false`. Connection errors, timeouts and HTTP 429/502/503/504
 are `LlmUnavailable` (the job is queued); other HTTP errors fail the job.
 
+### Model triage (implemented, `prompts/triage.md`)
+
+`{"action": "notify" | "digest" | "ignore", "reason": "at most 12 words"}`. Notify lane, first ~1,500
+body tokens, at most 80 output tokens, one retry; unusable output → `notify` (fail open).
+
+### Digest item (implemented, `prompts/digest.md`, `prompts/jobs.md`)
+
+Batch lane. Stored in `events.summary`.
+
+- Line: `{"line": "1-2 sentences"}` (≤ 150 output tokens) → stored `{line, parse_ok}`; unusable output
+  keeps the raw text (≤ 300 characters) with `parse_ok: false`.
+- Job alerts (section `jobs`): `{"jobs": [{title, company, location, link}]}` (≤ 600 output tokens, at
+  most 10 per mail) → stored `{jobs, parse_ok}`. A `link` is kept only if it is an `https://` URL that
+  appears verbatim in the mail; the model can't introduce links.
+
 ### Planned
 
 | Contract | Phase | Lane | Output |
 |----------|-------|------|--------|
-| Model triage | 2 | notify | `{action: notify|digest|ignore, reason}` |
-| Digest line | 2 | batch | `{line}` (1–2 sentences); job alerts: `{jobs: [{title, company, location, link}]}` |
 | Translate | 3 | interactive | text in `translation_language` |
 | Analyze | 3 | interactive (thinking on) | key points, deadlines, amounts, phishing signs |
 | Intent router | 3 | interactive | `{intent, args}` from the owner's words only |

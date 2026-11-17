@@ -11,15 +11,20 @@ use crate::bus::Bus;
 use crate::clock::{Clock, ModelHours, SystemClock};
 use crate::config::Config;
 use crate::crypto::SecretBox;
+use crate::digest::Digest;
+use crate::feedback::Feedback;
 use crate::gmail::ingest::GmailIngestor;
 use crate::gmail::pubsub::PubSubIngest;
 use crate::google::accounts::AccountStore;
 use crate::google::gmail::GmailClient;
 use crate::google::pubsub::PubSubClient;
+use crate::health::Health;
 use crate::llm::LlmClient;
 use crate::notify::{LogNotifier, Notifier, TelegramNotifier};
 use crate::pipeline::Pipeline;
 use crate::rules::RuleFile;
+use crate::scheduler::Scheduler;
+use crate::telegram::TelegramPoller;
 use crate::user_settings::UserSettingsStore;
 use crate::web::{self, AppState, SharedState, session::Signer};
 
@@ -37,6 +42,12 @@ pub struct App {
     /// Present in Pub/Sub ingest mode.
     pub pubsub: Option<Arc<PubSubIngest>>,
     pub pipeline: Arc<Pipeline>,
+    pub digest: Arc<Digest>,
+    pub scheduler: Arc<Scheduler>,
+    pub health: Arc<Health>,
+    pub feedback: Arc<Feedback>,
+    /// Present when Telegram is configured.
+    pub telegram: Option<Arc<TelegramPoller>>,
     pub state: SharedState,
 }
 
@@ -87,11 +98,13 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         pool.clone(),
         &cfg.default_summary_language,
         &cfg.default_ui_language,
+        cfg.digest_at,
+        cfg.model_hours(),
     );
     let pipeline = Arc::new(Pipeline {
         pool: pool.clone(),
         bus: bus.clone(),
-        gmail,
+        gmail: gmail.clone(),
         accounts: accounts.clone(),
         rules: Arc::new(RuleFile::new(&cfg.rules_path)),
         llm: Arc::new(LlmClient::new(&cfg, Some(pool.clone()))),
@@ -105,6 +118,55 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         llm_unavailable_retry: chrono::Duration::seconds(cfg.llm_unavailable_retry_s as i64),
     });
     pipeline.register();
+    let health = Arc::new(Health {
+        pool: pool.clone(),
+        http: http.clone(),
+        ready_url: cfg.llm_ready_url.clone(),
+        hours: pipeline.hours,
+        clock: pipeline.clock.clone(),
+        notifier: notifier.clone(),
+        user_settings: user_settings.clone(),
+        ingestor: ingestor.clone(),
+        pubsub_safety_poll_s: cfg.pubsub.as_ref().map(|p| p.safety_poll_interval_s),
+        owner: cfg.allowed_email.clone(),
+    });
+    let feedback = Arc::new(Feedback {
+        pool: pool.clone(),
+        notifier: notifier.clone(),
+    });
+    feedback.register(&bus);
+    let telegram = match (&cfg.telegram_bot_token, &cfg.telegram_chat_id) {
+        (Some(token), Some(chat)) => Some(Arc::new(TelegramPoller {
+            api: TelegramNotifier::new(
+                reqwest::Client::builder()
+                    .timeout(Duration::from_secs(crate::telegram::LONG_POLL_S + 15))
+                    .build()?,
+                &cfg.telegram_api_base,
+                token,
+                chat,
+            ),
+            chat_id: chat.clone(),
+            pool: pool.clone(),
+            bus: bus.clone(),
+            notifier: notifier.clone(),
+            user_settings: user_settings.clone(),
+            owner: cfg.allowed_email.clone(),
+        })),
+        _ => None,
+    };
+    let digest = Arc::new(Digest {
+        p: pipeline.clone(),
+        problems: Some(health.clone()),
+        feedback: Some(feedback.clone()),
+    });
+    digest.register();
+    let scheduler = Arc::new(Scheduler {
+        pool: pool.clone(),
+        bus: bus.clone(),
+        clock: pipeline.clock.clone(),
+        user_settings: user_settings.clone(),
+        default_digest_at: cfg.digest_at,
+    });
     let state = Arc::new(AppState {
         cfg: cfg.clone(),
         pool: pool.clone(),
@@ -113,6 +175,8 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         ingestor: ingestor.clone(),
         user_settings,
         signer: Signer::new(&cfg.session_secret),
+        health: health.clone(),
+        gmail,
         notifier_name: notifier.name(),
     });
     Ok(App {
@@ -122,6 +186,11 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         ingestor,
         pubsub,
         pipeline,
+        digest,
+        scheduler,
+        health,
+        feedback,
+        telegram,
         state,
     })
 }
@@ -175,6 +244,13 @@ pub fn spawn_background(app: &App) {
     if let Some(pubsub) = app.pubsub.clone() {
         supervise("gmail-pubsub", move || pubsub.clone().run());
     }
+    if let Some(poller) = app.telegram.clone() {
+        supervise("telegram-updates", move || poller.clone().run());
+    }
+    let health = app.health.clone();
+    supervise("health", move || health.clone().run());
+    let scheduler = app.scheduler.clone();
+    supervise("scheduler", move || scheduler.clone().run());
     let (pool, days) = (app.pool.clone(), app.cfg.retention_days);
     supervise("retention", move || {
         let pool = pool.clone();
