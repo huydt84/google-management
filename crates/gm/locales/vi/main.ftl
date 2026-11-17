@@ -118,3 +118,16 @@ feedback-thanks = Cảm ơn, đã ghi nhận.
 button-unknown = Nút này không còn được hỗ trợ.
 feedback-rule-hint = Quy tắc "{ $rule }" đã quyết định việc này: hãy sửa trong rules.yaml.
 feedback-model-hint = Mô hình đã quyết định việc này: hãy thêm vào bộ đánh giá với hành động đúng.
+
+# Eval set (2F)
+eval-expected = Hành động đúng
+eval-notify = Thông báo
+eval-digest = Bản tin
+eval-ignore = Bỏ qua
+eval-add = Thêm vào bộ đánh giá
+eval-update = Cập nhật bộ đánh giá
+eval-in-set = Đã có trong bộ đánh giá
+eval-added = Đã thêm vào bộ đánh giá.
+eval-updated = Đã cập nhật mẫu đánh giá.
+eval-full = Bộ đánh giá đã đầy (200 thư): hãy xóa bớt tệp trong thư mục đánh giá trước.
+eval-gone = Thư này không còn tồn tại nên không thể thêm.

@@ -19,6 +19,16 @@ data (name, amounts, order numbers, login IPs). Data retention is 60 days.
   summary JSON validity/length against the local model only.
 - Eval data is never sent to any external service and never committed.
 
+## Amendment (2026-11-17, Phase 2, decisions N15, N16)
+
+- Cases are added from the dashboard ("Add to eval" with an expected-action picker on each event
+  row, highlighted when the owner gave 👎 to a model decision), not with `gm eval add`. Each case is a
+  plain JSON file (`<gmail id>.json`, mode 0600, folder 0700) holding the raw Gmail message, the
+  expected action and notes. A 201st case is refused until files are removed.
+- The command is `gm eval` (no `run`). It refuses a `GM_LLM_BASE_URL` whose host isn't 127.0.0.1,
+  localhost or ::1, and reports accuracy per action, the confusion matrix, JSON parse rate, latency
+  p50/p95 and tokens.
+
 ## Consequences
 
 - CI covers rules; prompt/model quality is checked locally before a model or prompt change.

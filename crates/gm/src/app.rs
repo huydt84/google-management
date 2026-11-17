@@ -108,7 +108,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
     let pipeline = Arc::new(Pipeline {
         pool: pool.clone(),
         bus: bus.clone(),
-        gmail,
+        gmail: gmail.clone(),
         accounts: accounts.clone(),
         rules: Arc::new(RuleFile::new(&cfg.rules_path)),
         llm: Arc::new(LlmClient::new(&cfg, Some(pool.clone()))),
@@ -193,6 +193,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         signer: Signer::new(&cfg.session_secret),
         health: health.clone(),
         residency: residency.clone(),
+        gmail,
         notifier_name: notifier.name(),
     });
     Ok(App {

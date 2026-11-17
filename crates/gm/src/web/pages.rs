@@ -38,6 +38,8 @@ pub struct EventRow {
     pub error: String,
     /// The owner's 👍/👎 (`up` / `down`), if any.
     pub feedback: String,
+    /// Whether the message is in the local eval set.
+    pub in_eval: bool,
 }
 
 #[derive(Template)]
@@ -61,6 +63,8 @@ struct IndexPage {
     job_stats: Vec<(String, i64)>,
     health: Vec<HealthRow>,
     events: Vec<EventRow>,
+    /// Outcome of "Add to eval": message key, or empty.
+    banner: String,
 }
 
 pub struct HealthRow {
@@ -144,6 +148,7 @@ fn event_row(e: crate::db::Event) -> EventRow {
         summary: summary_text(&summary),
         error: s(&summary["error"]),
         feedback: String::new(),
+        in_eval: false,
     }
 }
 
@@ -153,19 +158,32 @@ async fn with_feedback(
 ) -> Result<Vec<EventRow>, AppError> {
     let ids: Vec<i64> = events.iter().map(|e| e.id).collect();
     let labels = crate::feedback::labels(&state.pool, &ids).await?;
+    let in_eval: std::collections::HashSet<String> =
+        crate::eval::ids(&state.cfg.eval_dir).into_iter().collect();
     Ok(events
         .into_iter()
         .map(|e| {
             let fb = labels.get(&e.id).cloned().unwrap_or_default();
             EventRow {
                 feedback: fb,
+                in_eval: in_eval.contains(&e.external_id),
                 ..event_row(e)
             }
         })
         .collect())
 }
 
-pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<Response, AppError> {
+#[derive(Deserialize, Default)]
+pub struct IndexQuery {
+    #[serde(default)]
+    eval: String,
+}
+
+pub async fn index(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    Query(q): Query<IndexQuery>,
+) -> Result<Response, AppError> {
     let Some(email) = current_owner(&state, &jar) else {
         return render(&LoginPage {
             tr: Tr::new(&state.user_settings.defaults().ui_language),
@@ -241,6 +259,10 @@ pub async fn index(State(state): State<SharedState>, jar: CookieJar) -> Result<R
         job_stats: crate::db::count_by(&state.pool, "jobs").await?,
         health: health_rows(&state, &tr).await?,
         events: with_feedback(&state, crate::db::recent_events(&state.pool, 50).await?).await?,
+        banner: match q.eval.as_str() {
+            "added" | "updated" | "full" | "gone" => format!("eval-{}", q.eval),
+            _ => String::new(),
+        },
         tr,
     };
     render(&page)
@@ -775,4 +797,54 @@ pub async fn event_feedback(
     }
     crate::feedback::record(&state.pool, id, &f.label, "web", chrono::Utc::now()).await?;
     Ok(Redirect::to(&format!("/#event-{id}")).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct EvalForm {
+    expected: String,
+}
+
+/// Add the event's mail to the local eval set with the action it should have had (decision N15).
+/// The raw message is fetched from Gmail once and written to `GM_EVAL_DIR` (never to the database).
+pub async fn event_eval(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    Form(f): Form<EvalForm>,
+) -> Result<Response, AppError> {
+    if current_owner(&state, &jar).is_none() {
+        return Ok(StatusCode::UNAUTHORIZED.into_response());
+    }
+    let expected = match f.expected.as_str() {
+        "notify" => crate::rules::Action::Notify,
+        "digest" => crate::rules::Action::Digest,
+        "ignore" => crate::rules::Action::Ignore,
+        _ => return Ok(StatusCode::BAD_REQUEST.into_response()),
+    };
+    let back =
+        |outcome: &str| Redirect::to(&format!("/?eval={outcome}#event-{id}")).into_response();
+    let Some(ev) = crate::db::event(&state.pool, id).await? else {
+        return Ok(back("gone"));
+    };
+    let message = match state.gmail.get_message(&ev.account, &ev.external_id).await {
+        Ok(m) => m,
+        Err(crate::google::GoogleError::NotFound) => return Ok(back("gone")),
+        Err(e) => return Err(e.into()),
+    };
+    let case = crate::eval::EvalCase {
+        message_id: ev.external_id.clone(),
+        account: ev.account,
+        added_at: chrono::Utc::now(),
+        expected,
+        notes: String::new(),
+        message,
+    };
+    let dir = state.cfg.eval_dir.clone();
+    let added = tokio::task::spawn_blocking(move || crate::eval::add(&dir, &case)).await??;
+    tracing::info!(event_id = id, outcome = ?added, "eval case saved");
+    Ok(back(match added {
+        crate::eval::Added::New => "added",
+        crate::eval::Added::Updated => "updated",
+        crate::eval::Added::Full => "full",
+    }))
 }

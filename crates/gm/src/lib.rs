@@ -8,6 +8,7 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod digest;
+pub mod eval;
 pub mod feedback;
 pub mod gmail;
 pub mod google;

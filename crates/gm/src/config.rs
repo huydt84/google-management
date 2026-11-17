@@ -105,6 +105,8 @@ pub struct Config {
     pub metrics_token: Option<String>,
 
     pub log_dir: Option<PathBuf>,
+    /// Local eval set (ADR-0017): raw mails, never committed or sent anywhere.
+    pub eval_dir: PathBuf,
 }
 
 fn env(name: &str) -> Option<String> {
@@ -151,6 +153,26 @@ fn time(name: &str, default: &str) -> anyhow::Result<NaiveTime> {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
+        Self::load(true)
+    }
+
+    /// For `gm eval`: the same settings, but nothing required for the server (Google client,
+    /// secrets) is needed; those fields are empty and no Keychain item is read.
+    pub fn from_env_for_eval() -> anyhow::Result<Self> {
+        Self::load(false)
+    }
+
+    fn load(strict: bool) -> anyhow::Result<Self> {
+        let required = |n: &str| {
+            if strict {
+                required(n)
+            } else {
+                Ok(env_or(n, ""))
+            }
+        };
+        let secret = |n: &str| {
+            if strict { secret(n) } else { Ok(String::new()) }
+        };
         let _ = dotenvy::dotenv();
         let base_url = env_or("BASE_URL", "http://localhost:8080")
             .trim_end_matches('/')
@@ -219,7 +241,11 @@ impl Config {
             mlx_launchd_label: env_or("MLX_LAUNCHD_LABEL", "com.gm.mlx"),
             default_summary_language: env_or("DEFAULT_SUMMARY_LANGUAGE", "Vietnamese"),
             default_ui_language: env_or("DEFAULT_UI_LANGUAGE", "en"),
-            telegram_bot_token: secrets::get("telegram-bot-token"),
+            telegram_bot_token: if strict {
+                secrets::get("telegram-bot-token")
+            } else {
+                None
+            },
             telegram_chat_id: env("TELEGRAM_CHAT_ID"),
             telegram_api_base: env_or("TELEGRAM_API_BASE", "https://api.telegram.org"),
             run_background: parse("RUN_BACKGROUND", true)?,
@@ -228,8 +254,16 @@ impl Config {
             retention_days: parse("RETENTION_DAYS", 60)?,
             master_key: secret("master-key")?,
             session_secret: secret("session-secret")?,
-            metrics_token: secrets::get("metrics-token"),
+            metrics_token: if strict {
+                secrets::get("metrics-token")
+            } else {
+                None
+            },
             log_dir: env("LOG_DIR").map(PathBuf::from),
+            eval_dir: env("EVAL_DIR").map(PathBuf::from).unwrap_or_else(|| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+                    .join(".local/share/gm/eval")
+            }),
         };
         Ok(cfg)
     }
@@ -280,6 +314,7 @@ impl Config {
             session_secret: "test-session-secret-test-session-secret".into(),
             metrics_token: None,
             log_dir: None,
+            eval_dir: std::env::temp_dir().join("gm-eval-unused"),
         }
     }
 

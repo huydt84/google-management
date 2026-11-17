@@ -42,6 +42,7 @@ Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 | GET | `/digest[?id=]` | session | The last 60 digests (date, items, status) and the text of the selected one (default: latest) |
 | GET | `/jobs[?status=dead|pending|running|done]` | session | Jobs by status (default `dead`, latest 200) with their last error |
 | POST | `/events/{id}/feedback` | session | Form `label=up|down`: 👍/👎 from the dashboard (2C); redirect to the event row |
+| POST | `/events/{id}/eval` | session | Form `expected=notify|digest|ignore`: fetch the raw mail from Gmail and add it to the local eval set, or update its expected action (2F). Redirect to `/?eval=added|updated|full|gone#event-{id}` |
 | POST | `/model/residency` | session | Form `on=1|0`: the residency switch (decision N10); turning it on reconciles in the background; redirect to `/` |
 | POST | `/jobs/{id}/retry`, `/jobs/retry-dead` | session | A dead job (or all of them) back to `pending` with attempts reset; redirect to `/jobs` |
 | GET | `/senders` | session | Ignored mail of the last 30 days grouped by sender address: count, last subject, the rule(s) that ignored it |
@@ -150,7 +151,7 @@ retried the next minute. Incidents live in `health_state`.
 | `gm keychain set <name>` | Store a secret in the Keychain (macOS prompts for the value) |
 | `gm keychain list` | Show which known secrets are present (never the values) |
 | `gm rules [path]` | Validate a rules file and check every rule's examples |
-| `gm eval` (Phase 2) | Run the local eval set against the local model |
+| `gm eval [--dir DIR] [--language LANG]` | Run rules → model triage → summary on every case in the eval set against the **local** model (refuses a non-loopback `GM_LLM_BASE_URL`) and print accuracy per expected action, the confusion matrix, the JSON parse rate per task, misclassified ids, and calls, latency p50/p95 and tokens per model task. Needs no database, Keychain or Google access |
 
 ## Configuration
 
@@ -196,6 +197,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
 | `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on) |
 | `GM_MLX_LAUNCHD_LABEL` | `com.gm.mlx` | launchd agent the residency controller starts and stops (`gui/<uid>/<label>`) |
+| `GM_EVAL_DIR` | `~/.local/share/gm/eval` | Local eval set folder (mode 0700, files 0600, at most 200 cases) |
 | `GM_DIGEST_AT` | `09:05` | Default morning digest time; each user can change it in Settings (inside model hours) |
 | `GM_DEFAULT_SUMMARY_LANGUAGE` | `Vietnamese` | Default summary language |
 | `GM_DEFAULT_UI_LANGUAGE` | `en` | Default UI language (`en`, `vi`, `ja`) |
@@ -219,6 +221,18 @@ is the reference. Summary:
   `message` template, `extract` regexes and `examples`.
 - Unknown keys are errors. The file is reloaded when its mtime changes; an invalid edit keeps the
   previous rules. `gm rules` and the test suite check every example.
+
+## Eval case file
+
+One file per case, `GM_EVAL_DIR/<gmail id>.json` (decision N16):
+
+```json
+{"message_id": "18c…", "account": "owner@…", "added_at": "2026-11-17T09:12:00Z",
+ "expected": "notify | digest | ignore", "notes": "", "message": { "…Gmail API message, format=full…" }}
+```
+
+Files that don't parse or whose `expected` isn't one of the three actions are skipped with a warning.
+Removing a case means deleting its file.
 
 ## LLM contracts
 

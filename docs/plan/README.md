@@ -35,7 +35,7 @@ Update this table in the same commit that completes the workstream.
 | 2C | Feedback buttons (needs Telegram callbacks from 3A) | 2B, 3A-min | done |
 | 2D | Residency controller | Phase 1 | done |
 | 2E | Health alerts, health panel, dead-letter page, ignored-sender counts | Phase 1 | done |
-| 2F | `gm eval` and the local eval set | 2B | todo |
+| 2F | `gm eval` and the local eval set | 2B | done |
 | 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | partial: `getUpdates` loop for button presses (`src/telegram.rs`) built in Phase 2 |
 | 3B | Task runtime, intent router, approvals, audit | 3A | todo |
 | 3C | Recipes: translate, analyze, reply (+ `gmail.compose`) | 3B interface | todo |

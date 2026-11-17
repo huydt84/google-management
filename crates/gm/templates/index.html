@@ -77,6 +77,7 @@
 </section>
 
 <section class="card">
+  {% if !banner.is_empty() %}<p class="{% if banner == "eval-full" || banner == "eval-gone" %}bad{% else %}ok{% endif %}">{{ tr.get(banner) }}</p>{% endif %}
   <h2>{{ tr.get("recent-events") }}</h2>
   {% if events.is_empty() %}
     <p class="muted">{{ tr.get("no-events") }}</p>
@@ -102,6 +103,15 @@
             <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="up"><button class="btn" title="{{ tr.get("feedback") }}">{% if e.feedback == "up" %}✅{% endif %}👍</button></form>
             <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="down"><button class="btn" title="{{ tr.get("feedback") }}">{% if e.feedback == "down" %}✅{% endif %}👎</button></form>
           </div>
+          <form method="post" action="/events/{{ e.id }}/eval" style="margin-top:4px{% if e.feedback == "down" && e.rule == "model" %};outline:2px solid currentColor;outline-offset:2px{% endif %}">
+            <select name="expected" aria-label="{{ tr.get("eval-expected") }}">
+              <option value="notify">{{ tr.get("eval-notify") }}</option>
+              <option value="digest">{{ tr.get("eval-digest") }}</option>
+              <option value="ignore">{{ tr.get("eval-ignore") }}</option>
+            </select>
+            <button class="btn">{% if e.in_eval %}{{ tr.get("eval-update") }}{% else %}{{ tr.get("eval-add") }}{% endif %}</button>
+            {% if e.in_eval %}<span class="muted">{{ tr.get("eval-in-set") }}</span>{% endif %}
+          </form>
           {% if e.feedback == "down" %}
             {% if e.rule == "model" %}<p class="warn" style="margin:4px 0 0">{{ tr.get("feedback-model-hint") }}</p>
             {% else %}<p class="warn" style="margin:4px 0 0">{{ tr.args("feedback-rule-hint", [("rule", e.rule.clone())]) }}</p>{% endif %}

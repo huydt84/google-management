@@ -118,3 +118,16 @@ feedback-thanks = 記録しました。
 button-unknown = このボタンは現在使えません。
 feedback-rule-hint = ルール「{ $rule }」による判定です。rules.yaml で修正してください。
 feedback-model-hint = モデルによる判定です。正しいアクションで評価セットに追加してください。
+
+# Eval set (2F)
+eval-expected = 正しいアクション
+eval-notify = 通知
+eval-digest = ダイジェスト
+eval-ignore = 無視
+eval-add = 評価セットに追加
+eval-update = 評価セットを更新
+eval-in-set = 評価セットに登録済み
+eval-added = 評価セットに追加しました。
+eval-updated = 評価ケースを更新しました。
+eval-full = 評価セットが上限（200通）に達しています。先に評価フォルダのファイルを削除してください。
+eval-gone = このメールは存在しないため追加できません。

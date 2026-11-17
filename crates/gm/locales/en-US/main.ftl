@@ -118,3 +118,16 @@ feedback-thanks = Thanks, noted.
 button-unknown = This button is no longer supported.
 feedback-rule-hint = Rule "{ $rule }" decided this: edit it in rules.yaml.
 feedback-model-hint = The model decided this: add it to the eval set with the right action.
+
+# Eval set (2F)
+eval-expected = Right action
+eval-notify = Notify
+eval-digest = Digest
+eval-ignore = Ignore
+eval-add = Add to eval
+eval-update = Update eval
+eval-in-set = In the eval set
+eval-added = Added to the eval set.
+eval-updated = Eval case updated.
+eval-full = The eval set is full (200 mails): remove some files from the eval folder first.
+eval-gone = This mail no longer exists, so it can't be added.
