@@ -160,6 +160,34 @@ impl ChatLog {
         .await
     }
 
+    /// The mail a replied-to message is about, found from the Gmail link in its text. For
+    /// notifications that were sent before they were recorded. Several different links (a
+    /// digest) are ambiguous: no answer.
+    pub async fn event_from_link(&self, text: &str) -> sqlx::Result<Option<i64>> {
+        let mut ids: Vec<&str> = text
+            .match_indices("#all/")
+            .map(|(i, p)| {
+                let rest = &text[i + p.len()..];
+                let end = rest
+                    .find(|c: char| !c.is_ascii_alphanumeric())
+                    .unwrap_or(rest.len());
+                &rest[..end]
+            })
+            .filter(|id| !id.is_empty())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let [id] = ids[..] else {
+            return Ok(None);
+        };
+        sqlx::query_scalar(
+            "SELECT id FROM events WHERE source = 'gmail' AND external_id = $1 LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     /// Whether the `task.reply` with this key was already sent.
     pub async fn was_sent(&self, reply_key: &str) -> sqlx::Result<bool> {
         sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM chat_messages WHERE reply_key = $1)")

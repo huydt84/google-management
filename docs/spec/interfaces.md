@@ -130,7 +130,9 @@ reviewed, tested file.
   keyword fast path (vi / en / ja, e.g. "dịch", "translate", "翻訳", "trả lời …", "tell them …",
   "返信 …") or else the intent router; `unknown` gets a usage hint.
 - **A message that replies to nothing**: the help text, no model call. A reply to a bot message that
-  isn't about a mail: "I can't tell which mail this is about".
+  isn't about a mail: "I can't tell which mail this is about". A bot message missing from
+  `chat_messages` (sent before messages were recorded) is matched to its mail by the single Gmail
+  link in its text (`ChatLog::event_from_link`); a digest, with several links, is not matched.
 - Answers reply to the owner's message (or to the notification for a button) and are recorded in
   `chat_messages`, so replying to them continues the same mail.
 - **Translate** → `🌐 Translation (<language>)` and the translated subject and body (quoted history
