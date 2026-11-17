@@ -31,6 +31,8 @@ pub struct EventRow {
     pub link: String,
     pub status: String,
     pub rule: String,
+    /// Model triage reason (`rule = "model"`).
+    pub reason: String,
     pub importance: String,
     pub summary: String,
     pub error: String,
@@ -74,6 +76,7 @@ fn event_row(e: crate::db::Event) -> EventRow {
         link: s(&e.data["link"]),
         status: e.status,
         rule: e.rule.unwrap_or_default(),
+        reason: s(&e.data["verdict"]["reason"]),
         importance: s(&summary["importance"]),
         summary: s(&summary["summary"]),
         error: s(&summary["error"]),

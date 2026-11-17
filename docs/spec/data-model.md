@@ -44,8 +44,8 @@ Validation (`user_settings.rs`): language names are 2–40 characters of letters
 | `id` | bigserial PK | |
 | `account` | text | Google account email |
 | `source`, `kind`, `external_id` | text | unique `(source, external_id)` |
-| `status` | text | `new`, `ignored`, `digest`, `triaged`, `ready`, `notified`, `gone` |
-| `rule` | text | name of the matching rule, or `default` |
+| `status` | text | `new`, `ignored`, `digest`, `classify` (waiting for model triage), `triaged`, `ready`, `notified`, `gone` |
+| `rule` | text | name of the matching rule, `model` (model triage), or `default` |
 | `data` | jsonb | headers brief, link and verdict ([events spec](events.md#event-record-events-table)) |
 | `summary` | jsonb | summary JSON (set before the event becomes `ready`) |
 

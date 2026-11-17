@@ -178,6 +178,9 @@ pub struct Verdict {
     /// Rendered `message` template (rule-only notifications), if the rule has one.
     pub message: Option<String>,
     pub extracted: BTreeMap<String, String>,
+    /// Why model triage chose this action (`rule = "model"` only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Body text examined by `body` matchers and extractors (keeps regex work bounded).
@@ -288,6 +291,7 @@ impl Rule {
             section: self.section.clone(),
             message,
             extracted,
+            reason: None,
         }
     }
 }
@@ -392,6 +396,7 @@ impl RuleSet {
             section: matches!(self.default, Action::Digest).then(|| "other".into()),
             message: None,
             extracted: BTreeMap::new(),
+            reason: None,
         }
     }
 

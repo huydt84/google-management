@@ -15,7 +15,7 @@ async fn unavailable_model_queues_the_summary_without_using_attempts(pool: PgPoo
     t.connect_owner().await;
     t.mock_message(gmail_message(
         "m8",
-        "Carol <carol@example.org>",
+        "LinkedIn <messages-noreply@linkedin.com>",
         "Hello",
         &["INBOX"],
         "Hi",
@@ -60,7 +60,7 @@ async fn model_not_running_is_an_outage_too(pool: PgPool) {
     t.connect_owner().await;
     t.mock_message(gmail_message(
         "m9",
-        "Dan <dan@example.org>",
+        "LinkedIn <messages-noreply@linkedin.com>",
         "Hi",
         &["INBOX"],
         "Hi",
@@ -83,7 +83,7 @@ async fn real_llm_errors_end_dead_without_a_ping(pool: PgPool) {
     t.connect_owner().await;
     t.mock_message(gmail_message(
         "m10",
-        "Eve <eve@example.org>",
+        "LinkedIn <messages-noreply@linkedin.com>",
         "Hi",
         &["INBOX"],
         "Hi",

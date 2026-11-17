@@ -33,11 +33,16 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 | `gmail.message.summarize` | `triage` (notify/triage with summary) | `summarize` | same | event status `triaged` |
 | `notify.email` | `triage` (no summary) or `summarize` | `notify` | `{event_id}` | event status `ready` |
 
+### Phase 2 (implemented)
+
+| Topic | Producer | Subscriber | Payload | Idempotency check |
+|-------|----------|------------|---------|-------------------|
+| `gmail.message.classify` | `triage` (action `triage`) | `classify` (model triage, notify lane) | as `gmail.message.received` | event status `classify` (row locked) |
+
 ### Phase 2 (planned)
 
 | Topic | Producer | Subscriber | Payload |
 |-------|----------|------------|---------|
-| `gmail.message.classify` | `triage` (action `triage`) | `classify` (model triage → notify / digest / ignore) | as `gmail.message.received` |
 | `digest.item.summarize` | `triage` (digest with `summarize: true`) | `digest_summarize` (batch lane) | `{event_id}` |
 | `schedule.due` | scheduler | digest builder, residency controller | `{kind, at}` |
 | `feedback.received` | Telegram poller | feedback handler | `{event_id, label}` |
@@ -73,8 +78,16 @@ Each Google object becomes one row, keyed by `(source, external_id)`.
 `language`, `parse_ok`). Nothing is notified without it: an unavailable model defers the job every
 `GM_LLM_UNAVAILABLE_RETRY_S` (300 s), and other errors leave the job `dead`.
 
-Statuses: `new → ignored | digest | triaged → ready → notified`, `new → ready` (rule-only),
-`new → gone`, `triaged → gone`. Diagram: [architecture §6](../architecture.md#6-state-machines).
+Statuses: `new → ignored | digest | classify | triaged → ready → notified`, `new → ready`
+(rule-only), `classify → ignored | digest | triaged | ready` (model triage, as if a rule had said
+that action), `new | classify | triaged → gone`.
+
+Model triage (`classify`, `src/triage_model.rs`, `prompts/triage.md`): headers and the first ~1,500
+tokens of the cleaned body, notify lane, `/no_think`, at most 80 output tokens, JSON
+`{action: notify|digest|ignore, reason}` parsed tolerantly with one retry. Unusable output → `notify`
+(fail open). Outside model hours it defers to the next opening, while the model is unavailable every
+`GM_LLM_UNAVAILABLE_RETRY_S`. The verdict is `{rule: "model", priority: normal, summarize: action !=
+ignore, section: "model" for digest, reason}`. Diagram: [architecture §6](../architecture.md#6-state-machines).
 
 ## Gmail ingestion contract
 

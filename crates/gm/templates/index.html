@@ -69,7 +69,7 @@
           {% if e.link.is_empty() %}<span class="muted">{{ e.subject }}</span>
           {% else %}<a href="{{ e.link }}" target="_blank" rel="noopener noreferrer">{{ e.subject }}</a>{% endif %}
         </td>
-        <td><span class="pill s-{{ e.status }}">{{ e.status }}</span><br><span class="muted">{{ e.rule }}</span></td>
+        <td><span class="pill s-{{ e.status }}">{{ e.status }}</span><br><span class="muted">{{ e.rule }}</span>{% if !e.reason.is_empty() %}<br><span class="muted">“{{ e.reason }}”</span>{% endif %}</td>
         <td>
           {% if !e.summary.is_empty() %}<strong>{{ e.importance }}</strong> · {{ e.summary }}
           {% else if !e.error.is_empty() %}<span class="bad">{{ e.error }}</span>{% endif %}

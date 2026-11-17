@@ -226,11 +226,16 @@ sequenceDiagram
     end
     B->>GM: messages.get (format=full)
     B->>B: parse + evaluate rules.yaml → verdict
+    opt no rule matched (action triage)
+        B->>DB: status classify + publish gmail.message.classify
+        B->>L: model triage (notify lane, deferred at night / outage like summaries)
+        B->>B: verdict {rule: model, action, reason}; continue as below
+    end
     alt ignore / digest
         B->>DB: status ignored / digest
     else notify without summary (e.g. card flash)
         B->>DB: status ready + publish notify.email
-    else notify / triage with summary
+    else notify with summary
         B->>DB: status triaged + publish gmail.message.summarize
         alt night (19:00–09:00)
             B->>DB: Defer until 09:00 (attempt not counted)
@@ -271,9 +276,14 @@ stateDiagram-v2
     [*] --> new: ingested
     new --> ignored: rule action ignore
     new --> digest: rule action digest
-    new --> triaged: notify / triage with summary
-    new --> ready: notify without summary
+    new --> triaged: rule notify with summary
+    new --> ready: rule notify without summary
+    new --> classify: no rule (action triage)
+    classify --> ignored: model says ignore
+    classify --> digest: model says digest
+    classify --> triaged: model says notify
     new --> gone: mail deleted before triage
+    classify --> gone: mail deleted before model triage
     triaged --> ready: summary
     triaged --> gone: mail deleted before the summary
     ready --> notified: message sent
@@ -283,7 +293,7 @@ stateDiagram-v2
     notified --> [*]
 ```
 
-Until model triage lands (Phase 2), `triage` (unmatched mail) is handled as notify with a summary.
+Model triage (`classify`) follows the same night and outage rules as summaries.
 
 ### Job (`jobs.status`)
 

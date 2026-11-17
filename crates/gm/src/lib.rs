@@ -15,12 +15,14 @@ pub mod notify;
 pub mod pipeline;
 pub mod rules;
 pub mod secrets;
+pub mod triage_model;
 pub mod user_settings;
 pub mod web;
 
 /// Bus topics. See `docs/spec/events.md`.
 pub mod topics {
     pub const GMAIL_MESSAGE_RECEIVED: &str = "gmail.message.received";
+    pub const GMAIL_MESSAGE_CLASSIFY: &str = "gmail.message.classify";
     pub const GMAIL_MESSAGE_SUMMARIZE: &str = "gmail.message.summarize";
     pub const NOTIFY_EMAIL: &str = "notify.email";
 }

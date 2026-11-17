@@ -12,7 +12,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{Local, NaiveDate, TimeZone};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use wiremock::matchers::{method, path, path_regex};
+use wiremock::matchers::{body_string_contains, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use gm::app::{self, App, Overrides};
@@ -38,12 +38,15 @@ pub fn config(server: &MockServer) -> Config {
     cfg
 }
 
+/// A local time on a fixed day one week ahead of the real date, so that a job deferred from the
+/// fake clock ("tomorrow 09:00") is still in the future for Postgres' real `now()`.
 pub fn local(h: u32, m: u32) -> chrono::DateTime<Local> {
-    let d = NaiveDate::from_ymd_opt(2026, 11, 16)
-        .unwrap()
-        .and_hms_opt(h, m, 0)
-        .unwrap();
+    let d = test_day().and_hms_opt(h, m, 0).unwrap();
     Local.from_local_datetime(&d).earliest().unwrap()
+}
+
+pub fn test_day() -> NaiveDate {
+    Local::now().date_naive() + chrono::Duration::days(7)
 }
 
 pub struct TestApp {
@@ -113,6 +116,20 @@ impl TestApp {
     pub async fn mock_llm(&self, content: &str) {
         Mock::given(method("POST"))
             .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"message": {"role": "assistant", "content": content}}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 20}
+            })))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Answer only requests whose prompt contains `marker` (e.g. [`TRIAGE`]). Mount these before a
+    /// catch-all [`TestApp::mock_llm`]: wiremock picks the first matching mock.
+    pub async fn mock_llm_for(&self, marker: &str, content: &str) {
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(body_string_contains(marker))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "choices": [{"message": {"role": "assistant", "content": content}}],
                 "usage": {"prompt_tokens": 100, "completion_tokens": 20}
@@ -193,3 +210,11 @@ pub async fn mock_404(server: &MockServer, path_re: &str) {
 }
 
 pub const SUMMARY_JSON: &str = r#"{"summary": "Tóm tắt.", "importance": "high", "category": "work", "suggested_actions": ["reply"], "language": "English"}"#;
+
+/// Prompt markers for [`TestApp::mock_llm_for`].
+pub const TRIAGE: &str = "Task: decide how the owner should receive";
+pub const SUMMARY: &str = "Task: summarize one email for a phone notification";
+
+pub fn triage_json(action: &str, reason: &str) -> String {
+    format!(r#"{{"action": "{action}", "reason": "{reason}"}}"#)
+}

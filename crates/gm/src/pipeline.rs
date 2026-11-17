@@ -1,8 +1,10 @@
 //! Mail pipeline, wired as bus subscribers (docs/spec/events.md):
 //!
 //! `gmail.message.received` --triage--> `gmail.message.summarize` --summarize--> `notify.email` --notify-->
+//! and for mail no rule covers: --triage--> `gmail.message.classify` --classify--> (as a rule would)
 //!
-//! Event states: `new → ignored | digest | triaged → ready → notified`, or `gone`. Every handler
+//! Event states: `new → ignored | digest | classify | triaged → ready → notified`, `classify →
+//! ignored | digest | triaged | ready`, or `gone`. Every handler
 //! is idempotent: it checks the event's status before doing work, and a state change commits in
 //! the same transaction as the next publish (invariant 1).
 
@@ -61,6 +63,12 @@ impl Pipeline {
             });
         let p = self.clone();
         self.bus
+            .subscribe(topics::GMAIL_MESSAGE_CLASSIFY, "classify", move |v, c| {
+                let p = p.clone();
+                async move { p.classify(v, c).await }
+            });
+        let p = self.clone();
+        self.bus
             .subscribe(topics::GMAIL_MESSAGE_SUMMARIZE, "summarize", move |v, c| {
                 let p = p.clone();
                 async move { p.summarize(v, c).await }
@@ -113,50 +121,109 @@ impl Pipeline {
             }
             Err(e) => return Err(e.into()),
         };
-        let mut verdict = self.rules.get().evaluate(&msg);
-        if verdict.action == Action::Triage {
-            // Model triage (notify / digest / ignore) arrives with the digest phase. Until then,
-            // unmatched mail is summarized and notified, like Phase 0's default.
-            verdict.summarize = true;
-        }
-        let (status, next) = match verdict.action {
-            Action::Ignore => ("ignored", None),
-            Action::Digest => ("digest", None),
-            Action::Notify | Action::Triage if verdict.summarize => {
-                ("triaged", Some(topics::GMAIL_MESSAGE_SUMMARIZE))
-            }
-            Action::Notify | Action::Triage => ("ready", Some(topics::NOTIFY_EMAIL)),
-        };
+        let verdict = self.rules.get().evaluate(&msg);
         let mut extra = msg.brief();
         extra["link"] = json!(msg.gmail_link(&p.account));
-        extra["verdict"] = serde_json::to_value(&verdict)?;
+        self.apply_verdict(p.event_id, "new", &verdict, extra, &payload)
+            .await?;
+        Ok(Outcome::Done)
+    }
 
+    /// Where a verdict sends an event: its new status and the next topic, if any.
+    pub fn route(verdict: &Verdict) -> (&'static str, Option<&'static str>) {
+        match verdict.action {
+            Action::Ignore => ("ignored", None),
+            Action::Digest => ("digest", None),
+            Action::Triage => ("classify", Some(topics::GMAIL_MESSAGE_CLASSIFY)),
+            Action::Notify if verdict.summarize => {
+                ("triaged", Some(topics::GMAIL_MESSAGE_SUMMARIZE))
+            }
+            Action::Notify => ("ready", Some(topics::NOTIFY_EMAIL)),
+        }
+    }
+
+    /// Record `verdict` (merged into `events.data` with `extra`) and publish the next stage in the
+    /// same transaction, if the event is still in status `expected` (invariant 1).
+    async fn apply_verdict(
+        &self,
+        event_id: i64,
+        expected: &str,
+        verdict: &Verdict,
+        mut extra: Value,
+        received: &Value,
+    ) -> anyhow::Result<()> {
+        let (status, next) = Self::route(verdict);
+        extra["verdict"] = serde_json::to_value(verdict)?;
         let mut tx = self.pool.begin().await?;
         let current: Option<String> =
             sqlx::query_scalar("SELECT status FROM events WHERE id = $1 FOR UPDATE")
-                .bind(p.event_id)
+                .bind(event_id)
                 .fetch_optional(&mut *tx)
                 .await?;
-        if current.as_deref() != Some("new") {
-            return Ok(Outcome::Done);
+        if current.as_deref() != Some(expected) {
+            return Ok(());
         }
         sqlx::query("UPDATE events SET data = data || $2, rule = $3, status = $4, updated_at = now() WHERE id = $1")
-            .bind(p.event_id)
+            .bind(event_id)
             .bind(&extra)
             .bind(&verdict.rule)
             .bind(status)
             .execute(&mut *tx)
             .await?;
         if let Some(topic) = next {
-            let next_payload = if topic == topics::NOTIFY_EMAIL {
-                json!({"event_id": p.event_id})
-            } else {
-                payload
+            let next_payload = match topic {
+                topics::GMAIL_MESSAGE_SUMMARIZE | topics::GMAIL_MESSAGE_CLASSIFY => {
+                    received.clone()
+                }
+                _ => json!({"event_id": event_id}),
             };
             self.bus.publish(&mut tx, topic, &next_payload).await?;
         }
         tx.commit().await?;
-        tracing::info!(event_id = p.event_id, rule = %verdict.rule, status, "event triaged");
+        tracing::info!(event_id, rule = %verdict.rule, status, "event triaged");
+        Ok(())
+    }
+
+    /// Model triage for mail no rule covers (2B). Like summaries it needs the model: outside model
+    /// hours or while the model is unavailable the job waits (P4, L12).
+    pub async fn classify(&self, payload: Value, _ctx: JobContext) -> anyhow::Result<Outcome> {
+        let p: Received = serde_json::from_value(payload.clone())?;
+        if self.status(p.event_id).await?.as_deref() != Some("classify") {
+            return Ok(Outcome::Done);
+        }
+        let now = self.clock.now();
+        if !self.hours.is_on(now) {
+            return Ok(Outcome::Defer(self.hours.next_on(now)));
+        }
+        let msg = match self.fetch(&p.account, &p.message_id).await {
+            Ok(m) => m,
+            Err(GoogleError::NotFound) => {
+                self.set_status(p.event_id, "classify", "gone").await?;
+                return Ok(Outcome::Done);
+            }
+            Err(e) => return Err(e.into()),
+        };
+        let owner = self.accounts.owner_of(&p.account).await?;
+        let prefs = self.user_settings.get(&owner).await?;
+        let decision = match crate::triage_model::classify(&self.llm, &msg, &prefs.summary_language)
+            .await
+        {
+            Ok(d) => d,
+            Err(e) if LlmUnavailable::is(&e) => {
+                let retry_at = now.with_timezone(&chrono::Utc) + self.llm_unavailable_retry;
+                tracing::warn!(event_id = p.event_id, error = %e, %retry_at, "model unavailable; triage queued");
+                return Ok(Outcome::Defer(retry_at));
+            }
+            Err(e) => return Err(e),
+        };
+        self.apply_verdict(
+            p.event_id,
+            "classify",
+            &decision.verdict(),
+            json!({}),
+            &payload,
+        )
+        .await?;
         Ok(Outcome::Done)
     }
 

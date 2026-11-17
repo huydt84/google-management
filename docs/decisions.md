@@ -94,6 +94,32 @@ Rules live in `rules.yaml` (see R1). These rows are its initial content.
 | L11 | Evaluation | Redacted header fixtures in git for rule tests; raw curated eval set (≤200 mails) in a gitignored local folder, run with `gm eval` against the local model only | CI coverage without personal data leaving the Mac | [0017](adr/0017-eval-data-handling.md) |
 | L12 | Model unavailable | Not running, timeout, 429/502/503/504: the summary job is **queued** (retried every **5 minutes**, no attempt used, waits forever). Other LLM errors retry with backoff and then the job goes **`dead`** (dashboard, `/metrics`); no ping without a summary | The model may be off (no launchd agent yet); a summary-less ping duplicates Gmail | [0015](adr/0015-notification-policy-and-digest.md) |
 
+## Phase 2
+
+Decided by the owner in a structured interview on 2026-11-17, before Phase 2 was built.
+
+| # | Decision | Choice | Reason |
+|---|----------|--------|--------|
+| N1 | Phase 2 scope | All of 2A–2F, plus the minimal part of 3A: a Telegram `getUpdates` long-poll loop handling only `callback_query` (button presses). Phase 3 extends it | Feedback is useless without the poller, and the poller is needed anyway |
+| N2 | Empty digest | Send nothing; `/digest` still records a run with 0 items | A "nothing new" message is an interruption without information |
+| N3 | 👎 and "mute this sender" | No mute button: 👎 only records. On a rule-matched mail the dashboard names the rule to edit; on a model-triaged mail it is an eval candidate | Rules stay in one reviewed, tested file; `/senders` shows whom to promote |
+| N4 | Digest time | Per-user setting `digest_at` (Settings page, HH:MM, must fall inside model hours); `GM_DIGEST_AT` (09:05) is the default | Follows P11 and ADR-0015 |
+| N5 | Late digest edits | Pending items are edited into the sent digest until model hours end (19:00) that day; after that leftovers stay as subject lines. Mail arriving after the digest goes into the next one | Summaries can only be produced in model hours |
+| N6 | Model-triaged digest mail | Its own section "Other mail", after all rule sections, with the model's reason | Easy to see and correct what the model decided |
+| N7 | Digest delivery | Silent (`disable_notification`) | Nothing in the digest is urgent by definition |
+| N8 | Feedback on digest items | Model items numbered `[1]`, `[2]`…; one row `👍 n` `👎 n` per item under the digest, at most 8 rows (the rest on the dashboard) | One message, works on the phone, low volume |
+| N9 | After a feedback tap | Buttons stay; the chosen one is marked ✅; tapping the other changes the answer (last tap wins) | A mis-tap can be fixed in place |
+| N10 | Residency switch | A machine-wide setting (`system_settings`), switched On/Off on the dashboard, **off by default**. Off: gm never runs `launchctl` (it still reports whether `/ready` answers). Turning it on applies the current state immediately (start in model hours, stop outside) | The mlx agent is not installed yet; the switch is per machine, not per user |
+| N11 | Unload wait | At 19:00 wait for in-flight model requests for at most **5 minutes**, then stop mlx anyway | Longer than 2× the 120 s request timeout; RAM is free by 19:05 |
+| N12 | Health alerts at night | Silent 19:00–09:00, with sound by day | Nothing gm watches needs the owner at night; mail is queued, not lost |
+| N13 | Health in the digest | A "System" section only when something is unhealthy at digest time | Reminder for open issues without daily noise |
+| N14 | First digest | Covers digest items from the last 24 hours; older unsent items are skipped (still on the dashboard) | Avoids a huge first message |
+| N15 | Adding eval cases | Dashboard: "Add to eval" on an event with an expected-action picker (notify / digest / ignore); gm fetches the mail once and writes the file. No `gm eval add` CLI | Cases are found while looking at the dashboard |
+| N16 | Eval files | Plain JSON (raw Gmail message + expected action + notes), folder mode 0700 | Inspectable and hand-editable; FileVault covers rest |
+| N17 | `/senders` | All ignored mail of the last 30 days grouped by sender: count, last subject, the rule (or `model`) that ignored it | Also shows when a rule or the model ignores something wanted |
+| N18 | Dead jobs | `/jobs?status=dead`: Retry per job and "Retry all" | Handlers are idempotent, so a retry can't double-act |
+| N19 | Git | One `phase2` branch, one commit per workstream | Single sequential session |
+
 ## Pending, owned elsewhere
 
 - **Bonsai-27B-mlx-1bit** (`prism-ml/Bonsai-27B-mlx-1bit`): switch `GM_LLM_MODEL` once mlx-server-runtime
@@ -126,3 +152,13 @@ Rules live in `rules.yaml` (see R1). These rows are its initial content.
   - Defaults chosen without a question: `GM_LLM_MAX_INFLIGHT=2`, summary output cap 400 tokens,
     retention sweep every 6 h, stale-job requeue after 10 min, 7 days of log files, backup at 03:30,
     launchd labels `com.gm.*`, eval folder `~/.local/share/gm/eval/`.
+- 2026-11-17: model triage (2B) built: T16 now holds as written; the interim "unmatched mail is
+  notified with a summary" from 2026-11-16 is gone.
+- 2026-11-17: Phase 2 decisions N1–N19 (owner interview). ADR-0015's `digest_items` table became
+  `digests` plus `events.digest_id`; ADR-0017's `gm eval add` CLI became the dashboard button (N15).
+- 2026-11-17, still to review (technical details set while building Phase 2, no owner question):
+  model triage output cap 80 tokens and body cap 1,500 tokens (from the plan); digest line cap
+  150 tokens, job list cap 600 tokens; model load timeout 5 min; the "model down" health check is
+  skipped outside model hours (an open incident stays open, no recovery message at 19:00); in
+  Pub/Sub mode the ingest-lag threshold is the safety-poll interval + 10 min (a quiet mailbox would
+  otherwise alarm every 15 min); Telegram long poll 25 s.
