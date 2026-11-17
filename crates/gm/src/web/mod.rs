@@ -36,6 +36,7 @@ pub struct AppState {
     pub notifier_name: &'static str,
     /// Web approvals publish `approval.decision`.
     pub bus: Arc<crate::bus::Bus>,
+    pub model: Arc<crate::model::ModelControl>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -116,6 +117,7 @@ pub fn router(state: SharedState) -> Router {
             "/settings",
             get(pages::settings_page).post(pages::save_settings),
         )
+        .route("/model", post(pages::save_model))
         .route("/digest", get(pages::digest_page))
         .route("/jobs", get(pages::jobs_page))
         .route("/jobs/retry-dead", post(pages::retry_all_dead))

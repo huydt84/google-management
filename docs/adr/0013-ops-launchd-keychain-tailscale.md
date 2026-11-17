@@ -12,8 +12,8 @@ their phone without public hosting.
 ## Decision
 
 - **launchd** user agents: `com.gm.server` (`gm serve`, KeepAlive) and `com.gm.backup` (nightly).
-  The model runs under mlx-air's own agent (`com.mlx-air.instance.gm`), which gm does not manage
-  (amended 2026-11-17: gm managing the model duplicated mlx-air). Postgres keeps running in Docker with `restart: unless-stopped`.
+  The model runs under mlx-air's own agent (`com.mlx-air.instance.gm`), which gm starts and stops
+  through the `mlx-air` CLI ([0010](0010-llm-client-lanes-residency.md)). Postgres keeps running in Docker with `restart: unless-stopped`.
   Plists live in `deploy/launchd/`, registered once with the steps in `deploy/README.md`; there is
   no install command: a one-time step needs no tooling.
 - **Secrets in the macOS Keychain** (service `google-management`): `master-key` (encrypts refresh

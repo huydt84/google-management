@@ -57,6 +57,29 @@
   </section>
 </div>
 
+<section class="card" style="max-width:640px">
+  <h2>{{ tr.get("model-card") }} <span class="muted">({{ model_state }})</span></h2>
+  <p class="muted">{{ tr.get("model-card-help") }}</p>
+  {% if model_banner == "saved" %}<p class="ok">{{ tr.get("saved") }}</p>{% else if !model_banner.is_empty() %}<p class="bad">{{ tr.get(model_banner) }}</p>{% endif %}
+  <form method="post" action="/model" style="display:block">
+    <p><label><input type="checkbox" name="manage"{% if model_manage %} checked{% endif %}> <strong>{{ tr.get("model-manage") }}</strong></label><br><span class="muted">{{ tr.get("model-manage-help") }}</span></p>
+    <p><label for="on"><strong>{{ tr.get("model-hours") }}</strong></label><br>
+      <input id="on" name="on" type="time" required value="{{ model_on }}" class="input"> –
+      <input id="off" name="off" type="time" required value="{{ model_off }}" class="input"><br>
+      <span class="muted">{{ tr.get("model-hours-help") }}</span></p>
+    <p><label for="idle_min"><strong>{{ tr.get("model-idle") }}</strong></label><br>
+      <input id="idle_min" name="idle_min" type="number" min="1" max="720" required value="{{ model_idle_min }}" class="input"><br>
+      <span class="muted">{{ tr.get("model-idle-help") }}</span></p>
+    <p><label for="grace_s"><strong>{{ tr.get("model-grace") }}</strong></label><br>
+      <input id="grace_s" name="grace_s" type="number" min="0" max="1800" required value="{{ model_grace_s }}" class="input"><br>
+      <span class="muted">{{ tr.get("model-grace-help") }}</span></p>
+    <p><label for="model"><strong>{{ tr.get("model-id") }}</strong></label><br>
+      <input id="model" name="model" required maxlength="200" value="{{ model_id }}" class="input"><br>
+      <span class="muted">{{ tr.get("model-id-help") }}</span></p>
+    <button class="btn primary" type="submit">{{ tr.get("save") }}</button>
+  </form>
+</section>
+
 <section class="card">
   <h2>{{ tr.get("health") }}</h2>
   <dl>

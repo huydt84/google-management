@@ -203,7 +203,7 @@ async fn get_json(http: &reqwest::Client, url: &str) -> Result<(u16, Value), Str
 }
 
 /// `/healthz` of the configured web server and the model's readiness probe.
-pub async fn endpoints(cfg: &Config) -> Vec<Check> {
+pub async fn endpoints(cfg: &Config, model: &crate::model::ModelSettings) -> Vec<Check> {
     let http = reqwest::Client::new();
     let web = match get_json(
         &http,
@@ -226,19 +226,25 @@ pub async fn endpoints(cfg: &Config) -> Vec<Check> {
     let model = match get_json(&http, &cfg.llm_ready_url).await {
         Ok((code, body)) if (200..300).contains(&code) => {
             let served = body["model"].as_str().unwrap_or("?");
-            if served == cfg.llm_model || served == "?" {
+            if served == model.model || served == "?" {
                 Check::new("model", State::Ok, format!("ready: {served}"))
             } else {
                 Check::new(
                     "model",
                     State::Warn,
                     format!(
-                        "ready, but serves {served} while GM_LLM_MODEL is {}",
-                        cfg.llm_model
+                        "ready, but serves {served} while the configured model is {}",
+                        model.model
                     ),
                 )
             }
         }
+        // Stopped on purpose: gm stops the model outside model hours and starts it on demand.
+        _ if model.manage && !model.hours().is_on(chrono::Local::now()) => Check::new(
+            "model",
+            State::Ok,
+            "stopped outside model hours (gm starts it for your requests)",
+        ),
         Ok((code, _)) => Check::new(
             "model",
             State::Fail,
@@ -347,8 +353,15 @@ pub async fn queue(pool: &PgPool, pubsub_safety_poll_s: Option<u64>) -> anyhow::
 /// Every check, in display order.
 pub async fn collect(cfg: &Config) -> Vec<Check> {
     let mut out = agents();
-    out.extend(endpoints(cfg).await);
-    match crate::db::connect(&cfg.database_url).await {
+    let pool = crate::db::connect(&cfg.database_url).await;
+    let model = match &pool {
+        Ok(p) => crate::model::ModelSettings::load(p, cfg)
+            .await
+            .unwrap_or_else(|_| crate::model::ModelSettings::from_config(cfg)),
+        Err(_) => crate::model::ModelSettings::from_config(cfg),
+    };
+    out.extend(endpoints(cfg, &model).await);
+    match pool {
         Ok(pool) => {
             match migrations(&pool).await {
                 Ok(c) => out.push(c),

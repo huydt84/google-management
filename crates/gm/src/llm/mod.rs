@@ -231,6 +231,7 @@ pub struct LlmClient {
     admission: Arc<Admission>,
     pool: Option<PgPool>,
     recorder: Option<Arc<Mutex<Vec<CallRecord>>>>,
+    control: Option<Arc<crate::model::ModelControl>>,
 }
 
 /// One model request as seen by [`LlmClient::record_calls`] (used by `gm eval`, which has no DB).
@@ -286,7 +287,14 @@ impl LlmClient {
             admission: Admission::new(cfg.llm_max_inflight),
             pool,
             recorder: None,
+            control: None,
         }
+    }
+
+    /// Let the model control start the model for owner requests and count calls in flight.
+    pub fn with_control(mut self, control: Arc<crate::model::ModelControl>) -> Self {
+        self.control = Some(control);
+        self
     }
 
     /// Keep every call in memory as well (tokens, latency, ok) and return the shared list.
@@ -304,6 +312,15 @@ impl LlmClient {
         max_tokens: u32,
         temperature: f32,
     ) -> anyhow::Result<String> {
+        // An owner request starts the model if it is down; every call counts as in flight.
+        let _running = match &self.control {
+            Some(c) => Some(c.begin(lane).await?),
+            None => None,
+        };
+        let model = self
+            .control
+            .as_ref()
+            .map_or_else(|| self.model.clone(), |c| c.request_model());
         let _permit = self.admission.acquire(lane).await;
         let started = Instant::now();
         let result = async {
@@ -312,7 +329,7 @@ impl LlmClient {
                 .post(format!("{}/chat/completions", self.base_url))
                 .bearer_auth(&self.api_key)
                 .json(&json!({
-                    "model": self.model, "messages": messages, "max_tokens": max_tokens,
+                    "model": model, "messages": messages, "max_tokens": max_tokens,
                     "temperature": temperature, "stream": false
                 }))
                 .send()
@@ -368,7 +385,7 @@ impl LlmClient {
             )
             .bind(task)
             .bind(lane.as_str())
-            .bind(&self.model)
+            .bind(&model)
             .bind(pt)
             .bind(ct)
             .bind(latency_ms)

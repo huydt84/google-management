@@ -625,7 +625,7 @@ impl Digest {
             return Ok(Outcome::Done);
         };
         let now = self.p.clock.now();
-        if status != "sent" || !self.p.hours.is_on(now) || now.date_naive() != date {
+        if status != "sent" || !self.p.model.hours().is_on(now) || now.date_naive() != date {
             return Ok(Outcome::Done);
         }
         let rendered = self.render_digest(&owner, date, r.digest_id).await?;

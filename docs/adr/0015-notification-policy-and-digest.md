@@ -20,7 +20,8 @@ digest material.
   subject only; the owner dropped that because such a ping duplicates the Gmail app. The same
   applies while the model is unavailable: summaries are queued (retried every 5 min) and no ping is
   sent without one. Answers to the owner's own requests (translate, analyze, reply) are not
-  notifications and go out at any hour.
+  notifications and go out at any hour: such a request starts the model if it is stopped
+  ([0010](0010-llm-client-lanes-residency.md)). Mail never starts the model at night.
 - **Pause:** `/pause` in Telegram holds mail notifications (they wait, nothing is dropped) until
   `/resume`, which sends what was held at once. The digest, health alerts and answers to the owner's
   requests are not paused.

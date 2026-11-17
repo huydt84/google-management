@@ -69,6 +69,7 @@ pub struct TaskRuntime {
     /// `GM_APPROVAL_TTL_H`.
     pub approval_ttl: chrono::Duration,
     pub llm_unavailable_retry: chrono::Duration,
+    pub model: Arc<crate::model::ModelControl>,
 }
 
 fn joined(v: &Value) -> String {
@@ -259,6 +260,11 @@ impl TaskRuntime {
             .await?;
         let settings = self.user_settings.get(&self.owner).await?;
         let tr = Tr::new(&settings.ui_language);
+        // Outside model hours the model is stopped: the first model call below starts it.
+        if self.model.cold().await {
+            self.tell_once(&t, "starting_told", ReplyKind::ModelStarting)
+                .await?;
+        }
 
         let intent = match t.intent.as_deref().and_then(Intent::parse) {
             Some(i) => i,
@@ -393,6 +399,27 @@ impl TaskRuntime {
         Ok(())
     }
 
+    /// Tell the owner something once per task: `flag` in `tasks.result` records that it was sent.
+    async fn tell_once(&self, t: &Task, flag: &str, kind: ReplyKind) -> anyhow::Result<()> {
+        if t.result[flag] == json!(true) {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("UPDATE tasks SET result = result || jsonb_build_object($2::text, true), updated_at = now() WHERE id = $1")
+            .bind(t.id)
+            .bind(flag)
+            .execute(&mut *tx)
+            .await?;
+        self.bus
+            .publish(
+                &mut tx,
+                topics::TASK_REPLY,
+                &TaskReply::payload(t.id, kind, None),
+            )
+            .await?;
+        tx.commit().await.map_err(Into::into)
+    }
+
     /// Model unavailable → wait (the owner is told once); a message for the owner, or the last
     /// attempt → `failed`; anything else → retry with backoff.
     async fn on_error(
@@ -405,21 +432,8 @@ impl TaskRuntime {
         if LlmUnavailable::is(&e) {
             let retry_at = Utc::now() + self.llm_unavailable_retry;
             tracing::warn!(task_id = t.id, error = %e, %retry_at, "model unavailable; task waits");
-            if t.result["waiting_told"] != json!(true) {
-                let mut tx = self.pool.begin().await?;
-                sqlx::query("UPDATE tasks SET result = result || '{\"waiting_told\": true}', updated_at = now() WHERE id = $1")
-                    .bind(t.id)
-                    .execute(&mut *tx)
-                    .await?;
-                self.bus
-                    .publish(
-                        &mut tx,
-                        topics::TASK_REPLY,
-                        &TaskReply::payload(t.id, ReplyKind::Waiting, None),
-                    )
-                    .await?;
-                tx.commit().await?;
-            }
+            self.tell_once(t, "waiting_told", ReplyKind::Waiting)
+                .await?;
             return Ok(Outcome::Defer(retry_at));
         }
         let message = match UserFacing::of(&e) {
@@ -693,6 +707,7 @@ impl TaskRuntime {
             ReplyKind::Rejected => (tr.get("approval-rejected"), vec![]),
             ReplyKind::Expired => return Ok(Outcome::Done),
             ReplyKind::Unknown => (tr.get("chat-help-mail"), vec![]),
+            ReplyKind::ModelStarting => (tr.get("task-model-starting"), vec![]),
             ReplyKind::Waiting => (tr.get("task-waiting"), vec![]),
         };
         let refs = MessageRefs {

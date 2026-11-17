@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 use crate::bus::{Bus, JobContext, Outcome};
-use crate::clock::{Clock, ModelHours};
+use crate::clock::Clock;
 use crate::gmail::message::{ParsedMessage, parse_message};
 use crate::google::GoogleError;
 use crate::google::accounts::AccountStore;
@@ -36,7 +36,7 @@ pub struct Pipeline {
     pub notifier: Arc<dyn Notifier>,
     pub user_settings: UserSettingsStore,
     pub clock: Arc<dyn Clock>,
-    pub hours: ModelHours,
+    pub model: Arc<crate::model::ModelControl>,
     /// How long a summary waits before trying again while the model is unavailable.
     pub llm_unavailable_retry: chrono::Duration,
     /// Records each notification's Telegram message, so a reply to it reaches the right mail.
@@ -142,8 +142,8 @@ impl Pipeline {
         call: impl AsyncFnOnce(&ParsedMessage, &str) -> anyhow::Result<T>,
     ) -> anyhow::Result<Result<T, Outcome>> {
         let now = self.clock.now();
-        if !self.hours.is_on(now) {
-            return Ok(Err(Outcome::Defer(self.hours.next_on(now))));
+        if !self.model.hours().is_on(now) {
+            return Ok(Err(Outcome::Defer(self.model.hours().next_on(now))));
         }
         let Some(msg) = self
             .fetch_or_gone(event_id, status, account, message_id)
@@ -345,11 +345,11 @@ impl Pipeline {
             ));
         }
         let now = self.clock.now();
-        if needs_llm && !self.hours.is_on(now) {
+        if needs_llm && !self.model.hours().is_on(now) {
             // Only LLM work waits for model hours (ADR-0015). Rule-only notifications (card
             // amount, login notice) go out at any hour; a summarized mail whose notification
             // slipped past 19:00 (e.g. Telegram retries) waits for 09:00.
-            return Ok(Outcome::Defer(self.hours.next_on(now)));
+            return Ok(Outcome::Defer(self.model.hours().next_on(now)));
         }
         let owner = self.accounts.owner_of(&ev.account).await?;
         let prefs = self.user_settings.get(&owner).await?;

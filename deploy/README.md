@@ -28,8 +28,12 @@ A one-time registration; afterwards the agents start on every login (there is no
 command). Plists: [`deploy/launchd/`](launchd/).
 
 The model is not one of gm's agents: mlx-air runs it (instance `gm`, launchd
-`com.mlx-air.instance.gm`, config in `~/Library/Application Support/mlx-air/instances/gm/`), and gm
-only calls it at `GM_LLM_BASE_URL`. While it is down, summaries wait in the queue and rule-only pings
+`com.mlx-air.instance.gm`), and gm decides when: it calls `mlx-air stop gm` after model hours and
+`mlx-air serve --detach --name gm` in model hours or for an owner request
+([ADR-0010](../docs/adr/0010-llm-client-lanes-residency.md); the `GM_MLX_*` and `GM_MODEL_*`
+settings in [`.env.example`](../.env.example)). `mlx-air stop` removes the instance's launchd agent
+and config, so a start recreates them from `GM_LLM_MODEL` and the port of `GM_LLM_BASE_URL`. The
+switch on the dashboard turns this off. While the model is down, summaries wait in the queue and rule-only pings
 still go out ([ADR-0015](../docs/adr/0015-notification-policy-and-digest.md)); after 15 minutes in model hours the health check alerts.
 
 ```bash

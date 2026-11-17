@@ -36,6 +36,15 @@ impl ModelHours {
         self.contains(now.time())
     }
 
+    /// `09:00–19:00`, or `always_text` when the window is the whole day.
+    pub fn label(&self, always_text: &str) -> String {
+        if self.on == self.off {
+            always_text.to_string()
+        } else {
+            format!("{}–{}", self.on.format("%H:%M"), self.off.format("%H:%M"))
+        }
+    }
+
     /// Whether a time of day falls inside the window.
     pub fn contains(&self, t: NaiveTime) -> bool {
         if self.on == self.off {

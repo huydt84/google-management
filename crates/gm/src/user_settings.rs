@@ -116,7 +116,7 @@ impl UserSettings {
 pub struct UserSettingsStore {
     pool: PgPool,
     defaults: UserSettings,
-    hours: crate::clock::ModelHours,
+    model: std::sync::Arc<crate::model::ModelControl>,
 }
 
 impl UserSettingsStore {
@@ -125,7 +125,7 @@ impl UserSettingsStore {
         default_summary_language: &str,
         default_ui_language: &str,
         default_digest_at: chrono::NaiveTime,
-        hours: crate::clock::ModelHours,
+        model: std::sync::Arc<crate::model::ModelControl>,
     ) -> Self {
         let ui = if i18n::is_ui_language(default_ui_language) {
             default_ui_language
@@ -140,7 +140,7 @@ impl UserSettingsStore {
                 ui_language: ui.to_string(),
                 digest_at: default_digest_at.format("%H:%M").to_string(),
             },
-            hours,
+            model,
         }
     }
 
@@ -194,7 +194,7 @@ impl UserSettingsStore {
             Err(e) => return Ok(Err(e)),
         };
         // The digest needs the model, so it must run inside model hours.
-        if !parse_digest_at(&s.digest_at).is_some_and(|t| self.hours.contains(t)) {
+        if !parse_digest_at(&s.digest_at).is_some_and(|t| self.model.hours().contains(t)) {
             return Ok(Err(SettingsError::DigestTime));
         }
         sqlx::query(

@@ -62,11 +62,13 @@ poller.
    model-triaged mail is an eval case for 2F. There is no "mute this sender": rules stay in the one
    reviewed, tested file.
 
-## 2D Residency controller (removed)
+## 2D Residency controller
 
-Built, then removed on 2026-11-17: starting and stopping the model with `launchctl`
-duplicated mlx-air, which owns the model process. gm keeps only model hours (deferring model work)
-and the `/ready` health check ([`health.rs`](../../crates/gm/src/health.rs)).
+Code: [`model.rs`](../../crates/gm/src/model.rs); tests: `crates/gm/tests/model.rs`; decisions:
+[ADR-0010](../adr/0010-llm-client-lanes-residency.md). gm stops the model outside model hours and
+starts it for the owner's requests by calling the `mlx-air` CLI; mlx-air owns the process. Model
+hours, the management switch, idle minutes, stop grace and the model id are editable on the
+dashboard. The `/ready` health check stays in [`health.rs`](../../crates/gm/src/health.rs).
 
 ## 2E Health, dead letters, sender counts
 

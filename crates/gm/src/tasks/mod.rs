@@ -107,6 +107,8 @@ pub enum ReplyKind {
     Expired,
     /// The router could not tell what the owner wants: usage hint.
     Unknown,
+    /// The model is stopped (outside model hours) and is being started for this task.
+    ModelStarting,
     /// The model is not answering; the task retries on its own.
     Waiting,
 }

@@ -79,6 +79,19 @@ pub struct Config {
     /// Model hours in local time (ADR-0010): model work runs only inside them. Equal values mean "always on".
     pub model_on: NaiveTime,
     pub model_off: NaiveTime,
+    /// Whether gm stops the model after hours and starts it on demand (ADR-0010). First default;
+    /// the dashboard value (`system_settings.model_control`) wins once saved.
+    pub model_manage: bool,
+    /// Minutes the model stays up after the last owner request outside model hours.
+    pub model_idle_min: u32,
+    /// Seconds gm waits for in-flight model requests before stopping the model.
+    pub model_stop_grace_s: u32,
+    /// Seconds gm waits for the model to answer `/ready` after starting it.
+    pub model_start_timeout_s: u64,
+    /// The `mlx-air` executable gm calls to start and stop the model.
+    pub mlx_air_bin: String,
+    /// The mlx-air instance name gm starts and stops.
+    pub mlx_instance: String,
     /// Default morning digest time; each user can change it in Settings.
     pub digest_at: NaiveTime,
 
@@ -143,6 +156,15 @@ fn secret(name: &str) -> anyhow::Result<String> {
             secrets::env_name(name)
         )
     })
+}
+
+/// launchd's PATH does not include `~/.local/bin`, where mlx-air installs itself.
+fn default_mlx_air_bin() -> String {
+    std::env::var_os("HOME")
+        .map(|h| std::path::Path::new(&h).join(".local/bin/mlx-air"))
+        .filter(|p| p.exists())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "mlx-air".into())
 }
 
 fn time(name: &str, default: &str) -> anyhow::Result<NaiveTime> {
@@ -237,6 +259,12 @@ impl Config {
             llm_unavailable_retry_s: parse("LLM_UNAVAILABLE_RETRY_S", 300)?,
             model_on: time("MODEL_ON", "09:00")?,
             model_off: time("MODEL_OFF", "19:00")?,
+            model_manage: parse("MODEL_MANAGE", true)?,
+            model_idle_min: parse("MODEL_IDLE_MIN", 10)?,
+            model_stop_grace_s: parse("MODEL_STOP_GRACE_S", 300)?,
+            model_start_timeout_s: parse("MODEL_START_TIMEOUT_S", 120)?,
+            mlx_air_bin: env("MLX_AIR_BIN").unwrap_or_else(default_mlx_air_bin),
+            mlx_instance: env_or("MLX_INSTANCE", "gm"),
             digest_at: time("DIGEST_AT", "09:05")?,
             default_summary_language: env_or("DEFAULT_SUMMARY_LANGUAGE", "Vietnamese"),
             default_ui_language: env_or("DEFAULT_UI_LANGUAGE", "en"),
@@ -299,6 +327,12 @@ impl Config {
             llm_unavailable_retry_s: 300,
             model_on: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             model_off: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            model_manage: false,
+            model_idle_min: 10,
+            model_stop_grace_s: 300,
+            model_start_timeout_s: 5,
+            mlx_air_bin: "mlx-air".into(),
+            mlx_instance: "gm".into(),
             digest_at: NaiveTime::from_hms_opt(9, 5, 0).unwrap(),
             default_summary_language: "Vietnamese".into(),
             default_ui_language: "en".into(),

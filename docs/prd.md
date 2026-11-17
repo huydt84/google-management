@@ -177,6 +177,10 @@ Bonsai-27B 1-bit model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md))
 - **FR-21** Output is JSON, parsed tolerantly, retried once.
 - **FR-22** Model hours 09:00–19:00; work outside them, or while the model is unavailable, is
   deferred, not failed.
+- **FR-22a** Outside model hours the model is stopped to free memory. A task I start from Telegram
+  or the web starts it (I am told once) and it stops again after 10 idle minutes; mail never starts
+  it. Hours, idle minutes, stop grace and the model id are editable on the dashboard, with a switch
+  that turns the management off.
 
 ### 7.6 Settings
 

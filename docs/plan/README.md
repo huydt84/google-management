@@ -35,7 +35,7 @@ Update this table in the same commit that completes the workstream.
 | 2A | Digest builder + scheduler + digest lane | Phase 1 | done |
 | 2B | Model triage | Phase 1 | done |
 | 2C | Feedback buttons (needs Telegram callbacks from 3A) | 2B, 3A-min | done |
-| 2D | Residency controller | Phase 1 | removed: mlx-air owns the model process |
+| 2D | Residency controller | Phase 1 | done: gm stops and starts the model through the `mlx-air` CLI ([`model.rs`](../../crates/gm/src/model.rs)) |
 | 2E | Health alerts, health panel, dead-letter page, ignored-sender counts | Phase 1 | done |
 | 2F | `gm eval` and the local eval set | 2B | done |
 | 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | done |
@@ -92,7 +92,8 @@ Workstreams in the same phase run in parallel when they own different files (lis
    task + `/no_think`) and put the mail last.
 8. **Model hours and outages.** Background work that needs the model returns `Outcome::Defer`
    outside 09:00–19:00, and all model work defers while the model is unavailable (`LlmUnavailable`).
-   Tasks the owner starts from Telegram are the one exception to model hours: they run at any hour.
+   Tasks the owner starts from Telegram are the one exception to model hours: they run at any hour
+   and start the model if it is stopped.
    No notification is sent without its summary; rule-only notifications go out at any hour.
 9. **Telegram messages are plain text** (no `parse_mode`).
 10. **Rules are tested.** Every rule has redacted examples (no names, real amounts, IPs or order

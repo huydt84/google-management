@@ -28,6 +28,7 @@ Guards on every request (`web::guard`):
 | GET | `/connect/google/callback` | session | Check owner and scopes, store the encrypted refresh token, bootstrap the Gmail cursor |
 | GET | `/settings` | session (else redirect to `/`) | The user's settings, rendered in their UI language |
 | POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`, `digest_at` (HH:MM inside model hours); 400 with a localized reason, else redirect `/settings?saved=1` |
+| POST | `/model` | session | Form `on`, `off` (HH:MM), `manage` (checkbox), `idle_min` (1–720), `grace_s` (0–1800), `model` (id, no spaces): the model controls ([ADR-0010](../adr/0010-llm-client-lanes-residency.md)); the new hours must contain the owner's digest time. Redirect `/?model=saved`, or `/?model=<error id>` |
 | POST | `/api/gmail/sync` | session | Sync the owner's mailbox now, redirect to `/` |
 | GET | `/api/events` | session (401 JSON otherwise) | Last 100 events as JSON |
 | GET | `/healthz` | — | `{"ok":true}`, or 503 if the database is unreachable |
@@ -261,7 +262,13 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_SUMMARY_MAX_TOKENS` | 400 | Output cap for summaries |
 | `GM_LLM_NO_THINK_TAG` | `/no_think` | Appended to the system prompt; empty to disable |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
-| `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on) |
+| `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on). First default: the dashboard value (`system_settings.model_control`) wins once saved |
+| `GM_MODEL_MANAGE` | `true` | gm stops the model outside model hours and starts it for owner requests (first default; dashboard switch) |
+| `GM_MODEL_IDLE_MIN` | 10 | Minutes the model stays up after the last owner request outside model hours (first default; dashboard) |
+| `GM_MODEL_STOP_GRACE_S` | 300 | Seconds to wait for in-flight requests before stopping the model (first default; dashboard) |
+| `GM_MODEL_START_TIMEOUT_S` | 120 | Seconds to wait for `/ready` after starting the model |
+| `GM_MLX_AIR_BIN` | `~/.local/bin/mlx-air` if it exists, else `mlx-air` | The executable gm calls to start and stop the model (launchd's PATH lacks `~/.local/bin`) |
+| `GM_MLX_INSTANCE` | `gm` | The mlx-air instance gm starts and stops |
 | `GM_EVAL_DIR` | `~/.local/share/gm/eval` | Local eval set folder (mode 0700, files 0600, at most 200 cases) |
 | `GM_DIGEST_AT` | `09:05` | Default morning digest time; each user can change it in Settings (inside model hours) |
 | `GM_DEFAULT_SUMMARY_LANGUAGE` | `Vietnamese` | Default summary language |

@@ -8,7 +8,7 @@ use std::time::Duration;
 use sqlx::PgPool;
 
 use crate::bus::Bus;
-use crate::clock::{Clock, ModelHours, SystemClock};
+use crate::clock::{Clock, SystemClock};
 use crate::config::Config;
 use crate::crypto::SecretBox;
 use crate::digest::Digest;
@@ -20,6 +20,7 @@ use crate::google::gmail::GmailClient;
 use crate::google::pubsub::PubSubClient;
 use crate::health::Health;
 use crate::llm::LlmClient;
+use crate::model::ModelControl;
 use crate::notify::{LogNotifier, Notifier};
 use crate::pipeline::Pipeline;
 use crate::rules::RuleFile;
@@ -34,6 +35,8 @@ use crate::web::{self, AppState, SharedState, session::Signer};
 pub struct Overrides {
     pub notifier: Option<Arc<dyn Notifier>>,
     pub clock: Option<Arc<dyn Clock>>,
+    /// Replaces the `mlx-air` CLI (tests).
+    pub model_process: Option<Arc<dyn crate::model::ModelProcess>>,
 }
 
 pub struct App {
@@ -49,6 +52,7 @@ pub struct App {
     pub health: Arc<Health>,
     pub feedback: Arc<Feedback>,
     pub tasks: Arc<TaskRuntime>,
+    pub model: Arc<ModelControl>,
     /// Present when Telegram is configured.
     pub telegram: Option<Arc<TelegramPoller>>,
     pub state: SharedState,
@@ -97,18 +101,26 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
             }
         },
     };
+    let clock: Arc<dyn Clock> = overrides.clock.unwrap_or_else(|| Arc::new(SystemClock));
+    let model = ModelControl::new(
+        &cfg,
+        pool.clone(),
+        http.clone(),
+        clock.clone(),
+        overrides.model_process,
+    );
     let user_settings = UserSettingsStore::new(
         pool.clone(),
         &cfg.default_summary_language,
         &cfg.default_ui_language,
         cfg.digest_at,
-        cfg.model_hours(),
+        model.clone(),
     );
     let chat = ChatLog::new(
         pool.clone(),
         cfg.telegram_chat_id.as_deref().unwrap_or_default(),
     );
-    let llm = Arc::new(LlmClient::new(&cfg, Some(pool.clone())));
+    let llm = Arc::new(LlmClient::new(&cfg, Some(pool.clone())).with_control(model.clone()));
     let pipeline = Arc::new(Pipeline {
         pool: pool.clone(),
         bus: bus.clone(),
@@ -118,11 +130,8 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         llm: llm.clone(),
         notifier: notifier.clone(),
         user_settings: user_settings.clone(),
-        clock: overrides.clock.unwrap_or_else(|| Arc::new(SystemClock)),
-        hours: ModelHours {
-            on: cfg.model_on,
-            off: cfg.model_off,
-        },
+        clock,
+        model: model.clone(),
         llm_unavailable_retry: chrono::Duration::seconds(cfg.llm_unavailable_retry_s as i64),
         chat: chat.clone(),
     });
@@ -139,13 +148,14 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         registry: Registry::standard(),
         approval_ttl: chrono::Duration::hours(cfg.approval_ttl_h),
         llm_unavailable_retry: pipeline.llm_unavailable_retry,
+        model: model.clone(),
     });
     tasks.register();
     let health = Arc::new(Health {
         pool: pool.clone(),
         http: http.clone(),
         ready_url: cfg.llm_ready_url.clone(),
-        hours: pipeline.hours,
+        model: model.clone(),
         clock: pipeline.clock.clone(),
         notifier: notifier.clone(),
         user_settings: user_settings.clone(),
@@ -178,7 +188,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
             user_settings: user_settings.clone(),
             owner: cfg.allowed_email.clone(),
             problems: Some(health.clone()),
-            hours: cfg.model_hours(),
+            model: model.clone(),
         })),
         _ => None,
     };
@@ -207,6 +217,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         gmail,
         notifier_name: notifier.name(),
         bus: bus.clone(),
+        model: model.clone(),
     });
     Ok(App {
         cfg,
@@ -220,6 +231,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         health,
         feedback,
         tasks,
+        model,
         telegram,
         state,
     })
@@ -291,6 +303,8 @@ pub fn spawn_background(app: &App) {
             }
         }
     });
+    let model = app.model.clone();
+    supervise("model", move || model.clone().run());
     let scheduler = app.scheduler.clone();
     supervise("scheduler", move || scheduler.clone().run());
     let (pool, days) = (app.pool.clone(), app.cfg.retention_days);
@@ -350,6 +364,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     let pool = crate::db::connect(&cfg.database_url).await?;
     crate::db::migrate(&pool).await?;
     let app = build(cfg.clone(), pool, Overrides::default())?;
+    app.model.load(&cfg).await?;
     if cfg.run_background {
         app.bus.requeue_stale(chrono::Duration::zero()).await?;
         spawn_background(&app);

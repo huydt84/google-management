@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::clock::{Clock, ModelHours};
+use crate::clock::Clock;
 use crate::gmail::ingest::GmailIngestor;
 use crate::i18n::Tr;
 use crate::notify::{Notifier, OutgoingMessage};
@@ -54,10 +54,7 @@ pub fn lag_limit(pubsub_safety_poll_s: Option<u64>, pubsub_ok: bool) -> chrono::
 
 /// Whether the model server answers its readiness probe (2xx within 5 s).
 pub async fn model_ready(http: &reqwest::Client, ready_url: &str) -> bool {
-    matches!(
-        http.get(ready_url).timeout(Duration::from_secs(5)).send().await,
-        Ok(r) if r.status().is_success()
-    )
+    crate::model::probe(http, ready_url).await.is_some()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,7 +79,7 @@ pub struct Health {
     pub pool: PgPool,
     pub http: reqwest::Client,
     pub ready_url: String,
-    pub hours: ModelHours,
+    pub model: Arc<crate::model::ModelControl>,
     pub clock: Arc<dyn Clock>,
     pub notifier: Arc<dyn Notifier>,
     pub user_settings: UserSettingsStore,
@@ -113,7 +110,7 @@ impl Health {
         .fetch_all(&self.pool)
         .await?;
         let lag = lagging.map(|t| now - t);
-        let model = if self.hours.is_on(self.clock.now()) {
+        let model = if self.model.hours().is_on(self.clock.now()) {
             Some(!model_ready(&self.http, &self.ready_url).await)
         } else {
             None
@@ -147,7 +144,7 @@ impl Health {
 
     async fn send(&self, text: String) -> bool {
         // Silent at night: nothing gm watches needs the owner then; mail is queued, not lost.
-        let silent = !self.hours.is_on(self.clock.now());
+        let silent = !self.model.hours().is_on(self.clock.now());
         match self
             .notifier
             .send(&OutgoingMessage::text(text, silent))

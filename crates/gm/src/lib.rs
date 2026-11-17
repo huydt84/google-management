@@ -15,6 +15,7 @@ pub mod google;
 pub mod health;
 pub mod i18n;
 pub mod llm;
+pub mod model;
 pub mod notify;
 pub mod pipeline;
 pub mod recipes;

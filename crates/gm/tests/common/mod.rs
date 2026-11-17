@@ -62,6 +62,16 @@ pub async fn test_app(
     configure: impl FnOnce(&mut Config),
     now: Option<chrono::DateTime<Local>>,
 ) -> TestApp {
+    test_app_with(pool, configure, now, None).await
+}
+
+/// [`test_app`] with a fake model process (instead of the `mlx-air` CLI).
+pub async fn test_app_with(
+    pool: PgPool,
+    configure: impl FnOnce(&mut Config),
+    now: Option<chrono::DateTime<Local>>,
+    model_process: Option<Arc<dyn gm::model::ModelProcess>>,
+) -> TestApp {
     let server = MockServer::start().await;
     // The model is up unless a test says otherwise (low priority: `mock_ready` overrides it).
     Mock::given(method("GET"))
@@ -79,6 +89,7 @@ pub async fn test_app(
         Overrides {
             notifier: Some(notifier.clone()),
             clock: now.map(|t| Arc::new(FixedClock(t)) as Arc<dyn gm::clock::Clock>),
+            model_process,
         },
     )
     .unwrap();
@@ -530,4 +541,72 @@ pub fn gmail_message_with(
         hs.push(json!({"name": k, "value": v}));
     }
     m
+}
+
+// ------------------------------------------------------------------------- model residency
+
+/// A fake `mlx-air`: `start` and `stop` flip `up`, which the mounted `/ready` mock reports.
+#[derive(Default)]
+pub struct FakeModel {
+    pub up: std::sync::atomic::AtomicBool,
+    pub calls: std::sync::Mutex<Vec<String>>,
+}
+
+impl FakeModel {
+    pub fn new(up: bool) -> Arc<Self> {
+        let m = Arc::new(Self::default());
+        m.up.store(up, std::sync::atomic::Ordering::SeqCst);
+        m
+    }
+
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    pub fn is_up(&self) -> bool {
+        self.up.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Make `/ready` follow this fake (200 with the model id while up, else 503).
+    pub async fn mount_ready(self: &Arc<Self>, server: &MockServer) {
+        let me = self.clone();
+        Mock::given(method("GET"))
+            .and(path("/ready"))
+            .respond_with(move |_: &wiremock::Request| {
+                if me.is_up() {
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"ready": true, "model": "test-model"}))
+                } else {
+                    ResponseTemplate::new(503)
+                }
+            })
+            .with_priority(1)
+            .mount(server)
+            .await;
+    }
+}
+
+#[async_trait::async_trait]
+impl gm::model::ModelProcess for FakeModel {
+    async fn start(&self, instance: &str, model: &str, port: u16) -> anyhow::Result<()> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("start {instance} {model} {port}"));
+        self.up.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn stop(&self, instance: &str) -> anyhow::Result<()> {
+        self.calls.lock().unwrap().push(format!("stop {instance}"));
+        self.up.store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// Model hours 09:00–19:00 with gm managing the model.
+pub fn managed_day_hours(cfg: &mut Config) {
+    cfg.model_on = chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+    cfg.model_off = chrono::NaiveTime::from_hms_opt(19, 0, 0).unwrap();
+    cfg.model_manage = true;
 }

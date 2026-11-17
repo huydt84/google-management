@@ -46,7 +46,7 @@ pub struct TelegramPoller {
     pub owner: String,
     /// Current health problems for `/status`.
     pub problems: Option<Arc<dyn ProblemSource>>,
-    pub hours: crate::clock::ModelHours,
+    pub model: std::sync::Arc<crate::model::ModelControl>,
 }
 
 fn keyboard_of(message: &Value) -> Keyboard {
@@ -269,15 +269,7 @@ impl TelegramPoller {
                 .map(|(_, n)| *n)
                 .unwrap_or(0)
         };
-        let hours = if self.hours.on == self.hours.off {
-            tr.get("always")
-        } else {
-            format!(
-                "{}–{}",
-                self.hours.on.format("%H:%M"),
-                self.hours.off.format("%H:%M")
-            )
-        };
+        let hours = self.model.hours().label(&tr.get("always"));
         let problems = match &self.problems {
             Some(p) => p.problems(tr).await,
             None => vec![],

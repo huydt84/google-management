@@ -174,6 +174,7 @@ flowchart LR
 | [`gmail/`](../crates/gm/src/gmail/) | Ingestion (bootstrap, history sync, 404 recovery, poll loop), Pub/Sub loop (watch renewal, pull, ack) and MIME parsing (charsets incl. ISO-2022-JP, HTML → text). |
 | [`rules.rs`](../crates/gm/src/rules.rs) | Rules engine v2 ([ADR-0012](adr/0012-rules-engine-v2.md)): matchers, extractors, actions, examples, hot reload; `Action::as_str` / `parse_final` are the only action-name mapping. |
 | [`pipeline.rs`](../crates/gm/src/pipeline.rs) | Idempotent handlers `triage`, `classify`, `summarize`, `notify`; `route` (verdict → next topic); `model_step`, the shared steps of every model job (model hours, fetch or `gone`, owner language, wait while the model is unavailable). |
+| [`model.rs`](../crates/gm/src/model.rs) | Model residency ([ADR-0010](adr/0010-llm-client-lanes-residency.md)): the editable model controls, the loop that stops the model after hours and starts it in hours, the owner-request wake and idle timer, `mlx-air serve/stop` behind a `ModelProcess` trait. |
 | [`triage_model.rs`](../crates/gm/src/triage_model.rs) | Model triage for mail no rule covers (prompt, parse, fail-open verdict). |
 | [`digest.rs`](../crates/gm/src/digest.rs) | Digest items (`summarize_item`), building, sending and late edits of the morning digest. |
 | [`scheduler.rs`](../crates/gm/src/scheduler.rs) | Publishes `schedule.due` at each owner's `digest_at`; missed times fire once. |
@@ -272,7 +273,7 @@ leaves the job `dead`. The body is re-fetched in each step rather than stored.
 
 ### 5.3 Morning digest (Phase 2)
 
-At 09:00 the model loads, overnight `digest` events are summarized in the `batch` lane
+At 09:00 gm starts the model (`model.rs`), overnight `digest` events are summarized in the `batch` lane
 (`digest.item.summarize`), and at the user's `digest_at` (09:05) the scheduler publishes
 `schedule.due{digest}`. The builder claims the unsent `digest` events (`events.digest_id`), groups
 them by rule `section` in rule order with the model-triaged ones last, and sends one silent message.

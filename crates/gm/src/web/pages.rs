@@ -63,6 +63,14 @@ struct IndexPage {
     llm_model: String,
     llm_base_url: String,
     model_hours: String,
+    model_state: String,
+    model_manage: bool,
+    model_on: String,
+    model_off: String,
+    model_idle_min: u32,
+    model_grace_s: u32,
+    model_id: String,
+    model_banner: String,
     summary_language: String,
     notifier: String,
     job_stats: Vec<(String, i64)>,
@@ -174,6 +182,9 @@ async fn with_feedback(
 pub struct IndexQuery {
     #[serde(default)]
     eval: String,
+    /// Result of saving the model controls: `saved` or the Fluent id of the error.
+    #[serde(default)]
+    model: String,
 }
 
 pub async fn index(
@@ -195,14 +206,14 @@ pub async fn index(
     .fetch_optional(&state.pool)
     .await?;
     let tr = Tr::new(&prefs.ui_language);
-    let hours = if state.cfg.model_on == state.cfg.model_off {
-        tr.get("always")
+    let ms = state.model.settings();
+    let hours = ms.hours().label(&tr.get("always"));
+    let model_state = if !state.model.managing() {
+        tr.get("model-state-unmanaged")
+    } else if state.model.ready().await {
+        tr.get("model-state-running")
     } else {
-        format!(
-            "{}–{}",
-            state.cfg.model_on.format("%H:%M"),
-            state.cfg.model_off.format("%H:%M")
-        )
+        tr.get("model-state-stopped")
     };
     let poll_s = state.cfg.gmail_poll_interval_s;
     let (ingest, ingest_error) = match &state.cfg.pubsub {
@@ -243,9 +254,17 @@ pub async fn index(
         last_error: gs.and_then(|g| g.last_error).unwrap_or_default(),
         ingest,
         ingest_error,
-        llm_model: state.cfg.llm_model.clone(),
+        llm_model: state.model.request_model(),
         llm_base_url: state.cfg.llm_base_url.clone(),
         model_hours: hours,
+        model_state,
+        model_manage: ms.manage,
+        model_on: ms.on.format("%H:%M").to_string(),
+        model_off: ms.off.format("%H:%M").to_string(),
+        model_idle_min: ms.idle_min,
+        model_grace_s: ms.grace_s,
+        model_id: ms.model.clone(),
+        model_banner: q.model.clone(),
         summary_language: prefs.summary_language,
         notifier: if state.notifier_name == "telegram" {
             tr.get("telegram")
@@ -297,8 +316,8 @@ fn settings_page_for(
         digest_help: tr.args(
             "digest-time-help",
             &[
-                ("on", state.cfg.model_on.format("%H:%M").to_string()),
-                ("off", state.cfg.model_off.format("%H:%M").to_string()),
+                ("on", state.model.hours().on.format("%H:%M").to_string()),
+                ("off", state.model.hours().off.format("%H:%M").to_string()),
             ],
         ),
         digest_at: s.digest_at.clone(),
@@ -387,6 +406,51 @@ pub async fn save_settings(
             Ok((StatusCode::BAD_REQUEST, Html(page.render()?)).into_response())
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct ModelForm {
+    on: String,
+    off: String,
+    /// A checkbox: present only when ticked.
+    #[serde(default)]
+    manage: Option<String>,
+    idle_min: u32,
+    grace_s: u32,
+    model: String,
+}
+
+/// Save the model controls (hours, management switch, idle minutes, stop grace, model id).
+pub async fn save_model(
+    State(state): State<SharedState>,
+    jar: CookieJar,
+    Form(f): Form<ModelForm>,
+) -> Result<Response, AppError> {
+    let Some(email) = current_owner(&state, &jar) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let back = |what: &str| Redirect::to(&format!("/?model={what}")).into_response();
+    let time = |s: &str| chrono::NaiveTime::parse_from_str(s.trim(), "%H:%M").ok();
+    let (Some(on), Some(off)) = (time(&f.on), time(&f.off)) else {
+        return Ok(back("model-invalid-time"));
+    };
+    let new = crate::model::ModelSettings {
+        on,
+        off,
+        manage: f.manage.is_some(),
+        idle_min: f.idle_min,
+        grace_s: f.grace_s,
+        model: f.model.trim().to_string(),
+    };
+    // The digest needs the model, so the owner's digest time must stay inside the hours.
+    let digest_at = state.user_settings.get(&email).await?.digest_at;
+    if !crate::user_settings::parse_digest_at(&digest_at).is_some_and(|t| new.hours().contains(t)) {
+        return Ok(back("model-hours-digest"));
+    }
+    Ok(match state.model.save(new).await? {
+        Ok(()) => back("saved"),
+        Err(e) => back(e.message_id()),
+    })
 }
 
 pub async fn sync_now(
