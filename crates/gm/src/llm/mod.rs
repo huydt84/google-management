@@ -285,12 +285,6 @@ impl LlmClient {
         r
     }
 
-    /// Requests currently being processed by the model server (the residency controller waits for
-    /// this to reach zero before unloading).
-    pub fn inflight(&self) -> usize {
-        self.admission.inflight()
-    }
-
     pub async fn chat(
         &self,
         task: &str,

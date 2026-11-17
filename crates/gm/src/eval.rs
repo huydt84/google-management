@@ -20,10 +20,11 @@ use serde_json::Value;
 
 use crate::gmail::message::parse_message;
 use crate::llm::{CallRecord, Lane, LlmClient};
+use crate::pipeline::Pipeline;
 use crate::rules::{Action, RuleSet};
+use crate::topics;
 
 pub const MAX_CASES: usize = 200;
-const ACTIONS: [Action; 3] = [Action::Notify, Action::Digest, Action::Ignore];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalCase {
@@ -42,15 +43,6 @@ pub enum Added {
     New,
     Updated,
     Full,
-}
-
-fn action_name(a: Action) -> &'static str {
-    match a {
-        Action::Notify => "notify",
-        Action::Digest => "digest",
-        Action::Ignore => "ignore",
-        Action::Triage => "triage",
-    }
 }
 
 pub fn case_path(dir: &Path, message_id: &str) -> PathBuf {
@@ -169,17 +161,18 @@ pub async fn run(
             report.parsed("triage", d.parse_ok);
             verdict = d.verdict();
         }
-        let (expected, got) = (action_name(case.expected), action_name(verdict.action));
+        let (expected, got) = (case.expected.as_str(), verdict.action.as_str());
         *report.confusion.entry((expected, got)).or_default() += 1;
         if expected != got {
             report.wrong.push((case.message_id.clone(), expected, got));
         }
-        match verdict.action {
-            Action::Notify if verdict.summarize => {
+        // The summary the pipeline would run next for this verdict.
+        match Pipeline::route(&verdict).1 {
+            Some(topics::GMAIL_MESSAGE_SUMMARIZE) => {
                 let s = llm.summarize_email(&msg, language, Lane::Notify).await?;
                 report.parsed("summary", s.parse_ok);
             }
-            Action::Digest if verdict.summarize => {
+            Some(topics::DIGEST_ITEM_SUMMARIZE) => {
                 let section = verdict.section.clone().unwrap_or_default();
                 let s = crate::digest::summarize_item(llm, &msg, &section, language).await?;
                 report.parsed("digest", s["parse_ok"].as_bool().unwrap_or(false));
@@ -213,8 +206,8 @@ pub fn format_report(r: &Report, model: &str) -> String {
         r.cases
     );
     let (mut ok_all, mut n_all) = (0, 0);
-    for a in ACTIONS {
-        let e = action_name(a);
+    for a in Action::FINAL {
+        let e = a.as_str();
         let n: usize = r
             .confusion
             .iter()
@@ -228,11 +221,11 @@ pub fn format_report(r: &Report, model: &str) -> String {
     }
     out.push_str(&format!("  {:<8} {}\n", "overall", pct(ok_all, n_all)));
     out.push_str("\nConfusion (rows: expected, columns: got)\n          notify digest ignore\n");
-    for a in ACTIONS {
-        let e = action_name(a);
+    for a in Action::FINAL {
+        let e = a.as_str();
         out.push_str(&format!("  {e:<8}"));
-        for g in ACTIONS {
-            let c = r.confusion.get(&(e, action_name(g))).copied().unwrap_or(0);
+        for g in Action::FINAL {
+            let c = r.confusion.get(&(e, g.as_str())).copied().unwrap_or(0);
             out.push_str(&format!(" {c:>6}"));
         }
         out.push('\n');

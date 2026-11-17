@@ -24,6 +24,29 @@ pub enum Action {
     Triage,
 }
 
+impl Action {
+    /// The three outcomes a mail can end with (rules, model triage, eval cases); `triage` is only a
+    /// routing step.
+    pub const FINAL: [Action; 3] = [Action::Notify, Action::Digest, Action::Ignore];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Action::Ignore => "ignore",
+            Action::Digest => "digest",
+            Action::Notify => "notify",
+            Action::Triage => "triage",
+        }
+    }
+
+    /// One of [`Action::FINAL`] by name (case-insensitive, trimmed).
+    pub fn parse_final(s: &str) -> Option<Action> {
+        let s = s.trim();
+        Self::FINAL
+            .into_iter()
+            .find(|a| a.as_str().eq_ignore_ascii_case(s))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Priority {

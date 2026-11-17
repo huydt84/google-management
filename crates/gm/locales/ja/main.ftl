@@ -101,16 +101,6 @@ col-count = 件数
 col-last-subject = 最新の件名
 col-rule = 無視したルール
 
-# Residency (2D)
-model-state = モデル
-model-resident = 読み込み済み (/ready に応答)
-model-not-resident = 未読み込み
-residency = gm による読み込み/解放
-on = オン
-off = オフ
-turn-on = オンにする
-turn-off = オフにする
-residency-help = オンにすると、モデル稼働時間の開始時に gm がモデルを起動し、終了時に停止します (launchd エージェント com.gm.mlx)。
 
 # Feedback (2C)
 feedback = この処理は正しかったですか？

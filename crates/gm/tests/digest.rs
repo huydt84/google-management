@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use chrono::{Timelike, Utc};
 use common::*;
-use gm::clock::{FixedClock, ModelHours};
+use gm::clock::FixedClock;
 use gm::scheduler::Scheduler;
 use serde_json::{Value, json};
 use sqlx::PgPool;
@@ -309,17 +309,13 @@ async fn late_summary_edits_the_sent_digest(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
-async fn scheduler_fires_missed_times_once_and_residency_by_latest(pool: PgPool) {
+async fn scheduler_fires_missed_times_once(pool: PgPool) {
     let t = test_app(pool, day_hours, None).await;
     t.connect_owner().await;
     let sched = |now| Scheduler {
         pool: t.app.pool.clone(),
         bus: t.app.bus.clone(),
         clock: Arc::new(FixedClock(now)),
-        hours: ModelHours {
-            on: chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
-            off: chrono::NaiveTime::from_hms_opt(19, 0, 0).unwrap(),
-        },
         user_settings: t.app.state.user_settings.clone(),
         default_digest_at: chrono::NaiveTime::from_hms_opt(9, 5, 0).unwrap(),
     };
@@ -336,19 +332,12 @@ async fn scheduler_fires_missed_times_once_and_residency_by_latest(pool: PgPool)
         0,
         "first sight: record only"
     );
-    // Mac asleep from 08:00 until 14:00: the 09:05 digest and the 09:00 load fire once on wake.
-    assert_eq!(sched(local(14, 0)).tick().await.unwrap(), 2);
+    // Mac asleep from 08:00 until 14:00: the 09:05 digest fires once on wake.
+    assert_eq!(sched(local(14, 0)).tick().await.unwrap(), 1);
     assert_eq!(sched(local(14, 1)).tick().await.unwrap(), 0, "never twice");
     let jobs = due(t.app.pool.clone()).await;
-    let kinds: Vec<&str> = jobs.iter().map(|j| j["kind"].as_str().unwrap()).collect();
-    assert!(
-        kinds.contains(&"digest") && kinds.contains(&"load"),
-        "{kinds:?}"
-    );
-    // Asleep past 19:00 and past the next 09:00 load? Only the latest of load/unload fires.
-    assert_eq!(sched(local(22, 0)).tick().await.unwrap(), 1);
-    let jobs = due(t.app.pool.clone()).await;
-    assert_eq!(jobs.last().unwrap()["kind"], "unload");
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(jobs[0]["kind"], "digest");
     // The digest job builds the digest for that owner and date.
     t.drain().await;
     assert_eq!(

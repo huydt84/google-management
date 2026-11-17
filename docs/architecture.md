@@ -84,17 +84,18 @@ flowchart TB
             workers["bus workers ×2"]
             poll["Gmail: Pub/Sub pull<br/>+ safety poll"]
             house["housekeeping:<br/>stale-job requeue, retention"]
-            sched["scheduler: digest 09:05,<br/>residency (Phase 2)"]
+            sched["scheduler: digest 09:05"]
+            health["health checks (60 s)"]
         end
         pg[("Postgres 17<br/>Docker :5433")]
-        mlx["mlx-server-runtime :8000<br/>(launchd com.gm.mlx)"]
+        mlx["mlx-server-runtime :8000<br/>(mlx-air, launchd com.mlx-air.instance.gm)"]
         backup["pg_dump nightly<br/>(launchd com.gm.backup)"]
     end
     web --> pg
     workers --> pg
     poll --> pg
     workers --> mlx
-    sched -.-> mlx
+    health -.->|/ready| mlx
     backup --> pg
 ```
 
@@ -102,7 +103,7 @@ flowchart TB
 |---------|------|------------|
 | `gm serve` (web + workers + poller + housekeeping) | 127.0.0.1:8080 | launchd `com.gm.server` (KeepAlive) |
 | Postgres 17 | 127.0.0.1:5433 | Docker, `restart: unless-stopped` |
-| mlx-server-runtime (`mlx-air serve`) | 127.0.0.1:8000 | launchd `com.gm.mlx` |
+| mlx-server-runtime | 127.0.0.1:8000 | mlx-air (launchd `com.mlx-air.instance.gm`, KeepAlive); not managed by gm (decision N20) |
 | Backup (`scripts/backup.sh`) | — | launchd `com.gm.backup`, 03:30 |
 
 gm is one binary ([ADR-0009](adr/0009-rust-single-binary.md)); its background loops are tokio tasks
@@ -111,7 +112,7 @@ supervised by `app::supervise`, which restarts a crashed loop after a short dela
 
 ## 4. Modules inside the gm binary
 
-All code is in `crates/gm/src/`.
+All code is in [`crates/gm/src/`](../crates/gm/src/). Each row below links to its file.
 
 ```mermaid
 flowchart LR
@@ -158,22 +159,30 @@ flowchart LR
 
 | Module | Responsibility |
 |--------|---------------|
-| `config.rs` | `Config::from_env()`: non-secret settings from env/`.env`, secrets via `secrets.rs`; refuses a non-loopback bind. |
-| `secrets.rs` | Read secrets from env `GM_SECRET_<NAME>` or the Keychain (service `google-management`); `gm keychain set` stores them without putting the value in argv. |
-| `crypto.rs` | `SecretBox`: AES-256-GCM for refresh tokens, key = Keychain `master-key`. |
-| `db.rs`, `migrations/` | sqlx pool, embedded migrations, small typed queries, retention. |
-| `bus.rs` | Durable pub/sub on Postgres (§8). |
-| `google/` | OAuth (PKCE, id_token check), encrypted account store with access-token cache, thin Gmail REST client. |
-| `gmail/` | Ingestion (bootstrap, history sync, 404 recovery, poll loop), Pub/Sub loop (watch renewal, pull, ack) and MIME parsing (charsets incl. ISO-2022-JP, HTML → text). |
-| `google/pubsub.rs` | Pub/Sub REST: provision topic, publisher permission and subscription; pull; acknowledge. |
-| `rules.rs` | Rules engine v2 ([ADR-0012](adr/0012-rules-engine-v2.md)): matchers, extractors, actions, examples, hot reload. |
-| `pipeline.rs` | Idempotent handlers `triage`, `summarize`, `notify`; model-hours policy. |
-| `llm/` | The only way to call a model (§9). |
-| `notify.rs` | `Notifier` trait; Telegram (plain text, silent flag), log, recording (tests); notification formatting. |
-| `user_settings.rs`, `i18n.rs` | Per-user settings with validation; Fluent strings for en / vi / ja. |
-| `clock.rs` | `Clock` (system or fixed in tests) and `ModelHours`. |
-| `web/` | axum router, host/origin guard, owner session, askama pages. |
-| `app.rs` | Wiring (`build`), background tasks, tracing, `serve`. |
+| [`main.rs`](../crates/gm/src/main.rs) | CLI: `serve`, `migrate`, `gen-key`, `keychain`, `rules`, `eval`. |
+| [`app.rs`](../crates/gm/src/app.rs) | Wiring (`build`), background tasks under `supervise`, tracing, `serve`. |
+| [`config.rs`](../crates/gm/src/config.rs) | `Config::from_env()`: non-secret settings from env/`.env`, secrets via `secrets.rs`; refuses a non-loopback bind. `from_env_for_eval()` needs no secrets. |
+| [`secrets.rs`](../crates/gm/src/secrets.rs) | Read secrets from env `GM_SECRET_<NAME>` or the Keychain (service `google-management`); `gm keychain set` stores them without putting the value in argv. |
+| [`crypto.rs`](../crates/gm/src/crypto.rs) | `SecretBox`: AES-256-GCM for refresh tokens, key = Keychain `master-key`. |
+| [`db.rs`](../crates/gm/src/db.rs) | sqlx pool, embedded [`migrations/`](../crates/gm/migrations/), small typed queries, retention, `system_get`/`system_set`. |
+| [`bus.rs`](../crates/gm/src/bus.rs) | Durable pub/sub on Postgres (§8). |
+| [`google/`](../crates/gm/src/google/) | OAuth (PKCE, id_token check), encrypted account store with access-token cache, thin Gmail REST client, Pub/Sub REST (`pubsub.rs`). |
+| [`gmail/`](../crates/gm/src/gmail/) | Ingestion (bootstrap, history sync, 404 recovery, poll loop), Pub/Sub loop (watch renewal, pull, ack) and MIME parsing (charsets incl. ISO-2022-JP, HTML → text). |
+| [`rules.rs`](../crates/gm/src/rules.rs) | Rules engine v2 ([ADR-0012](adr/0012-rules-engine-v2.md)): matchers, extractors, actions, examples, hot reload; `Action::as_str` / `parse_final` are the only action-name mapping. |
+| [`pipeline.rs`](../crates/gm/src/pipeline.rs) | Idempotent handlers `triage`, `classify`, `summarize`, `notify`; `route` (verdict → next topic); `model_step`, the shared steps of every model job (model hours, fetch or `gone`, owner language, wait while the model is unavailable). |
+| [`triage_model.rs`](../crates/gm/src/triage_model.rs) | Model triage for mail no rule covers (prompt, parse, fail-open verdict). |
+| [`digest.rs`](../crates/gm/src/digest.rs) | Digest items (`summarize_item`), building, sending and late edits of the morning digest. |
+| [`scheduler.rs`](../crates/gm/src/scheduler.rs) | Publishes `schedule.due` at each owner's `digest_at`; missed times fire once. |
+| [`health.rs`](../crates/gm/src/health.rs) | Health checks (dead jobs, ingest lag, model `/ready`, reconnect), alerts after 15 min, recovery messages; feeds the dashboard panel, the digest System section and `/metrics`. |
+| [`feedback.rs`](../crates/gm/src/feedback.rs) | 👍/👎 storage (last tap wins) and keyboard redraw. |
+| [`telegram.rs`](../crates/gm/src/telegram.rs) | `getUpdates` long poll for button presses (minimal 3A). |
+| [`eval.rs`](../crates/gm/src/eval.rs) | Local eval set files and `gm eval` (runs rules → triage → the summary `Pipeline::route` picks). |
+| [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9). |
+| [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (plain text, silent flag, buttons, edits), log, recording (tests); notification formatting. |
+| [`user_settings.rs`](../crates/gm/src/user_settings.rs) | Per-user settings with validation; `tr(email)` gives UI strings in the owner's language. |
+| [`i18n.rs`](../crates/gm/src/i18n.rs) | Fluent strings for en / vi / ja ([`locales/`](../crates/gm/locales/)). |
+| [`clock.rs`](../crates/gm/src/clock.rs) | `Clock` (system or fixed in tests) and `ModelHours`. |
+| [`web/`](../crates/gm/src/web/) | axum router (`mod.rs`), host/origin guard, owner session, askama pages (`pages.rs`, [`templates/`](../crates/gm/templates/)). |
 
 ## 5. Key flows
 
@@ -411,8 +420,9 @@ All model calls go through `llm::LlmClient` ([ADR-0010](adr/0010-llm-client-lane
   text is kept with `parse_ok=false`. No `tools` / `response_format` (the runtime has neither).
 - **Accounting:** every call writes `llm_calls` (task, lane, model, tokens, latency, ok); `/metrics`
   exposes 24 h totals per lane.
-- **Residency (Phase 2):** the model is loaded 09:00–19:00 only; gm already defers work outside those
-  hours. Model: Qwen3-8B 4-bit now, Bonsai-27B 1-bit later
+- **Model hours:** gm runs model work 09:00–19:00 only and defers it otherwise
+  (`Pipeline::model_step` in [`pipeline.rs`](../crates/gm/src/pipeline.rs)). The model process is
+  mlx-air's: gm never starts or stops it (decision N20). Model: Qwen3-8B 4-bit now, Bonsai-27B 1-bit later
   ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md)).
 
 ## 10. Trust boundaries
@@ -471,7 +481,7 @@ Details: [security spec](spec/security.md).
 flowchart LR
     p0["Phase 0 (Python)<br/>ingest, rules,<br/>summary, Telegram"]
     p1["Phase 1<br/>Rust port<br/>rules v2, lanes<br/>Keychain, launchd, CI"]
-    p2["Phase 2<br/>digest 09:05<br/>model triage + feedback<br/>residency, gm eval"]
+    p2["Phase 2<br/>digest 09:05<br/>model triage + feedback<br/>health, gm eval"]
     p3["Phase 3<br/>Telegram in<br/>Translate / analyze / reply<br/>approvals + audit"]
     p4["Phase 4<br/>Calendar"]
     p0 --> p1 --> p2 --> p3 --> p4
@@ -481,7 +491,7 @@ flowchart LR
 |---------|---------|---------|---------|---------|
 | Triage | rules v2; unmatched → notify | + model triage, 👍/👎 feedback | same | same |
 | Output | Telegram notifications | + digest at 09:05, health alerts | + buttons, replies | + calendar notices |
-| LLM | summary (notify lane) | + batch lane, triage, residency controller | + interactive lane, thinking for reply/analyze | same |
+| LLM | summary (notify lane) | + batch lane, triage, digest items, `gm eval` | + interactive lane, thinking for reply/analyze | same |
 | Scopes | `gmail.readonly` | same | + `gmail.compose` | + `calendar.readonly` |
 | Owner → system | web dashboard, settings | same | Telegram buttons and replies | same |
 

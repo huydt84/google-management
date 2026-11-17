@@ -107,14 +107,59 @@ impl Pipeline {
         Ok(())
     }
 
-    pub(crate) async fn fetch(
+    /// Fetch the event's mail. A mail deleted meanwhile moves the event from `status` to `gone` and
+    /// returns `None`.
+    pub(crate) async fn fetch_or_gone(
         &self,
+        event_id: i64,
+        status: &str,
         account: &str,
         message_id: &str,
-    ) -> Result<ParsedMessage, GoogleError> {
-        Ok(parse_message(
-            &self.gmail.get_message(account, message_id).await?,
-        ))
+    ) -> anyhow::Result<Option<ParsedMessage>> {
+        match self.gmail.get_message(account, message_id).await {
+            Ok(raw) => Ok(Some(parse_message(&raw))),
+            Err(GoogleError::NotFound) => {
+                self.set_status(event_id, status, "gone").await?;
+                Ok(None)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// The steps every model job shares (decisions P4, L12): outside model hours the job waits for
+    /// them; the mail is fetched (deleted → `gone`); `call` runs with the owner's summary language;
+    /// while the model is unavailable the job waits `GM_LLM_UNAVAILABLE_RETRY_S` without using an
+    /// attempt. `Err(outcome)` means the job stops here with that outcome.
+    pub(crate) async fn model_step<T>(
+        &self,
+        event_id: i64,
+        status: &str,
+        account: &str,
+        message_id: &str,
+        task: &str,
+        call: impl AsyncFnOnce(&ParsedMessage, &str) -> anyhow::Result<T>,
+    ) -> anyhow::Result<Result<T, Outcome>> {
+        let now = self.clock.now();
+        if !self.hours.is_on(now) {
+            return Ok(Err(Outcome::Defer(self.hours.next_on(now))));
+        }
+        let Some(msg) = self
+            .fetch_or_gone(event_id, status, account, message_id)
+            .await?
+        else {
+            return Ok(Err(Outcome::Done));
+        };
+        let owner = self.accounts.owner_of(account).await?;
+        let prefs = self.user_settings.get(&owner).await?;
+        match call(&msg, &prefs.summary_language).await {
+            Ok(v) => Ok(Ok(v)),
+            Err(e) if LlmUnavailable::is(&e) => {
+                let retry_at = now.with_timezone(&chrono::Utc) + self.llm_unavailable_retry;
+                tracing::warn!(event_id, task, error = %e, %retry_at, "model unavailable; job queued");
+                Ok(Err(Outcome::Defer(retry_at)))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn triage(&self, payload: Value, _ctx: JobContext) -> anyhow::Result<Outcome> {
@@ -122,13 +167,11 @@ impl Pipeline {
         if self.status(p.event_id).await?.as_deref() != Some("new") {
             return Ok(Outcome::Done);
         }
-        let msg = match self.fetch(&p.account, &p.message_id).await {
-            Ok(m) => m,
-            Err(GoogleError::NotFound) => {
-                self.set_status(p.event_id, "new", "gone").await?; // deleted before we got to it
-                return Ok(Outcome::Done);
-            }
-            Err(e) => return Err(e.into()),
+        let Some(msg) = self
+            .fetch_or_gone(p.event_id, "new", &p.account, &p.message_id)
+            .await?
+        else {
+            return Ok(Outcome::Done);
         };
         let verdict = self.rules.get().evaluate(&msg);
         let mut extra = msg.brief();
@@ -201,30 +244,19 @@ impl Pipeline {
         if self.status(p.event_id).await?.as_deref() != Some("classify") {
             return Ok(Outcome::Done);
         }
-        let now = self.clock.now();
-        if !self.hours.is_on(now) {
-            return Ok(Outcome::Defer(self.hours.next_on(now)));
-        }
-        let msg = match self.fetch(&p.account, &p.message_id).await {
-            Ok(m) => m,
-            Err(GoogleError::NotFound) => {
-                self.set_status(p.event_id, "classify", "gone").await?;
-                return Ok(Outcome::Done);
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let owner = self.accounts.owner_of(&p.account).await?;
-        let prefs = self.user_settings.get(&owner).await?;
-        let decision = match crate::triage_model::classify(&self.llm, &msg, &prefs.summary_language)
-            .await
-        {
+        let step = self
+            .model_step(
+                p.event_id,
+                "classify",
+                &p.account,
+                &p.message_id,
+                "triage",
+                async |m, lang| crate::triage_model::classify(&self.llm, m, lang).await,
+            )
+            .await?;
+        let decision = match step {
             Ok(d) => d,
-            Err(e) if LlmUnavailable::is(&e) => {
-                let retry_at = now.with_timezone(&chrono::Utc) + self.llm_unavailable_retry;
-                tracing::warn!(event_id = p.event_id, error = %e, %retry_at, "model unavailable; triage queued");
-                return Ok(Outcome::Defer(retry_at));
-            }
-            Err(e) => return Err(e),
+            Err(outcome) => return Ok(outcome),
         };
         self.apply_verdict(
             p.event_id,
@@ -252,32 +284,19 @@ impl Pipeline {
         if ev.status != "triaged" {
             return Ok(Outcome::Done);
         }
-        let now = self.clock.now();
-        if !self.hours.is_on(now) {
-            return Ok(Outcome::Defer(self.hours.next_on(now)));
-        }
-        let msg = match self.fetch(&p.account, &p.message_id).await {
-            Ok(m) => m,
-            Err(GoogleError::NotFound) => {
-                self.set_status(p.event_id, "triaged", "gone").await?; // deleted meanwhile
-                return Ok(Outcome::Done);
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let owner = self.accounts.owner_of(&p.account).await?;
-        let prefs = self.user_settings.get(&owner).await?;
-        let summary = match self
-            .llm
-            .summarize_email(&msg, &prefs.summary_language, Lane::Notify)
-            .await
-        {
+        let step = self
+            .model_step(
+                p.event_id,
+                "triaged",
+                &p.account,
+                &p.message_id,
+                "summary",
+                async |m, lang| self.llm.summarize_email(m, lang, Lane::Notify).await,
+            )
+            .await?;
+        let summary = match step {
             Ok(s) => serde_json::to_value(s)?,
-            Err(e) if LlmUnavailable::is(&e) => {
-                let retry_at = now.with_timezone(&chrono::Utc) + self.llm_unavailable_retry;
-                tracing::warn!(event_id = p.event_id, error = %e, %retry_at, "model unavailable; summary queued");
-                return Ok(Outcome::Defer(retry_at));
-            }
-            Err(e) => return Err(e),
+            Err(outcome) => return Ok(outcome),
         };
         let mut tx = self.pool.begin().await?;
         let current: Option<String> =

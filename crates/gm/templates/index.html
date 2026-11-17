@@ -47,17 +47,6 @@
     <dl>
       <dt>{{ tr.get("llm") }}</dt><dd>{{ llm_model }}<br><span class="muted">{{ llm_base_url }}</span></dd>
       <dt>{{ tr.get("model-hours") }}</dt><dd>{{ model_hours }}</dd>
-      <dt>{{ tr.get("model-state") }}</dt>
-      <dd>{% if model_resident %}<span class="ok">{{ tr.get("model-resident") }}</span>{% else %}<span class="muted">{{ tr.get("model-not-resident") }}</span>{% endif %}</dd>
-      <dt>{{ tr.get("residency") }}</dt>
-      <dd>
-        {% if residency_on %}<span class="ok">{{ tr.get("on") }}</span>{% else %}<span class="muted">{{ tr.get("off") }}</span>{% endif %}
-        <form method="post" action="/model/residency">
-          <input type="hidden" name="on" value="{% if residency_on %}0{% else %}1{% endif %}">
-          <button class="btn">{% if residency_on %}{{ tr.get("turn-off") }}{% else %}{{ tr.get("turn-on") }}{% endif %}</button>
-        </form>
-        <br><span class="muted">{{ tr.get("residency-help") }}</span>
-      </dd>
       <dt>{{ tr.get("summary-language") }}</dt><dd>{{ summary_language }} <a href="/settings" class="muted">{{ tr.get("change") }}</a></dd>
       <dt>{{ tr.get("notifications") }}</dt><dd>{{ notifier }}</dd>
       <dt>{{ tr.get("queue") }}</dt>

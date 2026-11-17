@@ -54,39 +54,6 @@ pub struct TestApp {
     pub app: App,
     pub server: MockServer,
     pub notifier: Arc<RecordingNotifier>,
-    pub runner: Arc<FakeRunner>,
-}
-
-/// Records commands instead of running them; `id -u` answers 501.
-#[derive(Default)]
-pub struct FakeRunner {
-    pub calls: std::sync::Mutex<Vec<String>>,
-}
-
-#[async_trait::async_trait]
-impl gm::residency::CommandRunner for FakeRunner {
-    async fn run(&self, program: &str, args: &[String]) -> anyhow::Result<String> {
-        let cmd = format!("{program} {}", args.join(" "));
-        self.calls.lock().unwrap().push(cmd);
-        Ok(if program == "id" {
-            "501\n".into()
-        } else {
-            String::new()
-        })
-    }
-}
-
-impl FakeRunner {
-    /// Commands other than `id -u`.
-    pub fn launchctl(&self) -> Vec<String> {
-        self.calls
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|c| c.starts_with("launchctl"))
-            .cloned()
-            .collect()
-    }
 }
 
 /// Build the app against wiremock. `day_window` = Some((now, on, off)) enables model hours.
@@ -106,14 +73,12 @@ pub async fn test_app(
     let mut cfg = config(&server);
     configure(&mut cfg);
     let notifier = Arc::new(RecordingNotifier::default());
-    let runner = Arc::new(FakeRunner::default());
     let app = app::build(
         cfg,
         pool,
         Overrides {
             notifier: Some(notifier.clone()),
             clock: now.map(|t| Arc::new(FixedClock(t)) as Arc<dyn gm::clock::Clock>),
-            runner: Some(runner.clone()),
         },
     )
     .unwrap();
@@ -121,7 +86,6 @@ pub async fn test_app(
         app,
         server,
         notifier,
-        runner,
     }
 }
 

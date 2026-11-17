@@ -1,8 +1,6 @@
 //! Scheduler (workstream 2A): publishes `schedule.due {kind, at, owner?}` at fixed local times.
 //!
 //! - `digest`: per user at their `digest_at` (decision N4).
-//! - `load` / `unload`: model residency at `GM_MODEL_ON` / `GM_MODEL_OFF` (consumed by 2D). Only the
-//!   most recent of the two fires, so waking at 22:00 after a missed 19:00 unloads, never loads.
 //!
 //! `schedule_runs` keeps the last occurrence fired per schedule: a time missed while the Mac slept
 //! fires once on wake, never twice. A schedule seen for the first time is recorded without firing
@@ -17,7 +15,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 
 use crate::bus::Bus;
-use crate::clock::{Clock, ModelHours, latest_occurrence};
+use crate::clock::{Clock, latest_occurrence};
 use crate::topics;
 use crate::user_settings::{UserSettingsStore, parse_digest_at};
 
@@ -25,7 +23,6 @@ pub struct Scheduler {
     pub pool: PgPool,
     pub bus: Arc<Bus>,
     pub clock: Arc<dyn Clock>,
-    pub hours: ModelHours,
     pub user_settings: UserSettingsStore,
     pub default_digest_at: NaiveTime,
 }
@@ -45,17 +42,6 @@ impl Scheduler {
             let at = latest_occurrence(t, now);
             let payload = json!({"kind": "digest", "at": at.with_timezone(&Utc), "owner": owner});
             fired += usize::from(self.fire(&format!("digest:{owner}"), at, &payload).await?);
-        }
-        if self.hours.on != self.hours.off {
-            let load = latest_occurrence(self.hours.on, now);
-            let unload = latest_occurrence(self.hours.off, now);
-            let (kind, at) = if load > unload {
-                ("load", load)
-            } else {
-                ("unload", unload)
-            };
-            let payload = json!({"kind": kind, "at": at.with_timezone(&Utc)});
-            fired += usize::from(self.fire("residency", at, &payload).await?);
         }
         Ok(fired)
     }

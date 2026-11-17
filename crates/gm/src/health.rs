@@ -132,13 +132,6 @@ impl Health {
         ])
     }
 
-    async fn tr(&self) -> Tr {
-        match self.user_settings.get(&self.owner).await {
-            Ok(p) => Tr::new(&p.ui_language),
-            Err(_) => Tr::new(&self.user_settings.defaults().ui_language),
-        }
-    }
-
     async fn send(&self, text: String) -> bool {
         // Silent at night (decision N12).
         let silent = !self.hours.is_on(self.clock.now());
@@ -158,7 +151,7 @@ impl Health {
     /// One round: update incidents, alert after 15 minutes, announce recoveries.
     pub async fn tick(&self) -> anyhow::Result<()> {
         let now = self.now();
-        let tr = self.tr().await;
+        let tr = self.user_settings.tr(&self.owner).await;
         for r in self.evaluate().await? {
             match r.failing {
                 None => {}

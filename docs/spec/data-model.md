@@ -1,5 +1,7 @@
 # Spec: data model
 
+Code: [`migrations/`](../../crates/gm/migrations/), [`src/db.rs`](../../crates/gm/src/db.rs). Each table names its migration; the migrations are the source of truth.
+
 Postgres 17 (Docker, `127.0.0.1:5433`, db/user/password `gm`). Timestamps are `timestamptz`. The
 schema is managed by sqlx migrations in `crates/gm/migrations/`, embedded in the binary and applied by
 `gm serve` and `gm migrate`. Queries are written with `sqlx::query` / `query_as` (checked at runtime
@@ -121,7 +123,7 @@ Deleted after `GM_RETENTION_DAYS` like events.
 
 | Column | Type | Notes |
 |--------|------|-------|
-| `name` | text PK | `digest:<owner>`, `residency` |
+| `name` | text PK | `digest:<owner>` |
 | `last_at` | timestamptz | last occurrence fired (or recorded on first sight) |
 
 ### `health_state` (`0004_health.sql`)
@@ -137,12 +139,12 @@ One row per failing health check, deleted when it passes again.
 
 ### `system_settings` (`0005_system_settings.sql`)
 
-Machine-wide settings edited in the app (not per user).
+Machine-wide key-value state (not per user), read and written with `db::system_get` /
+`db::system_set` ([`db.rs`](../../crates/gm/src/db.rs)).
 
 | Key | Value | Notes |
 |-----|-------|-------|
-| `model_residency` | bool | residency controller switch (decision N10); missing = off |
-| `telegram_offset` | int | next `getUpdates` offset (2C) |
+| `telegram_offset` | int | next `getUpdates` offset ([`telegram.rs`](../../crates/gm/src/telegram.rs)) |
 
 ### `triage_feedback` (`0006_feedback.sql`)
 

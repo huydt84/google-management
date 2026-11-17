@@ -83,7 +83,7 @@ Rules live in `rules.yaml` (see R1). These rows are its initial content.
 |---|----------|--------|--------|-----|
 | L1 | Serving | mlx-server-runtime, called directly; **no LiteLLM / gateway**; gm's `LlmClient` tracks tokens and latency per task and lane | One model, one user; a gateway adds a hop for nothing | [0010](adr/0010-llm-client-lanes-residency.md) |
 | L2 | Model | **Qwen3-8B 4-bit** (~5 GB weights, ≤8 GB with KV cache) now; **Bonsai-27B 1-bit later** as a config change once mlx-server-runtime supports it | Fits 24 GB beside daily apps; Bonsai needs runtime work | [0011](adr/0011-model-qwen3-8b-now-bonsai-later.md) |
-| L3 | Residency | Model resident **09:00–19:00** only; unloaded at night | Free RAM and power at night | [0010](adr/0010-llm-client-lanes-residency.md) |
+| L3 | Model hours | gm runs model work only **09:00–19:00** (`GM_MODEL_ON`/`GM_MODEL_OFF`) and defers it otherwise. Loading, keeping alive and unloading the model process is **mlx-air's job**, not gm's (N20) | One owner per concern | [0010](adr/0010-llm-client-lanes-residency.md) |
 | L4 | Priority lanes | `interactive` (user requests, replies) > `notify` (triage + summary of incoming mail) > `batch` (digest items) | User-facing work never waits behind batch work | [0010](adr/0010-llm-client-lanes-residency.md) |
 | L5 | Triage tiers | Rules first; only unmatched mail reaches model triage (same main model, short output) | Most mail is decided for free | [0012](adr/0012-rules-engine-v2.md) |
 | L6 | Structured output | JSON in the prompt, tolerant parse + **1 retry**; constrained decoding later as an mlx-server-runtime feature | Runtime has no JSON mode | [0010](adr/0010-llm-client-lanes-residency.md) |
@@ -109,8 +109,8 @@ Decided by the owner in a structured interview on 2026-11-17, before Phase 2 was
 | N7 | Digest delivery | Silent (`disable_notification`) | Nothing in the digest is urgent by definition |
 | N8 | Feedback on digest items | Model items numbered `[1]`, `[2]`…; one row `👍 n` `👎 n` per item under the digest, at most 8 rows (the rest on the dashboard) | One message, works on the phone, low volume |
 | N9 | After a feedback tap | Buttons stay; the chosen one is marked ✅; tapping the other changes the answer (last tap wins) | A mis-tap can be fixed in place |
-| N10 | Residency switch | A machine-wide setting (`system_settings`), switched On/Off on the dashboard, **off by default**. Off: gm never runs `launchctl` (it still reports whether `/ready` answers). Turning it on applies the current state immediately (start in model hours, stop outside) | The mlx agent is not installed yet; the switch is per machine, not per user |
-| N11 | Unload wait | At 19:00 wait for in-flight model requests for at most **5 minutes**, then stop mlx anyway | Longer than 2× the 120 s request timeout; RAM is free by 19:05 |
+| ~~N10~~ | ~~Residency switch~~ (superseded by N20) | A machine-wide setting (`system_settings`), switched On/Off on the dashboard, **off by default**. Off: gm never runs `launchctl` (it still reports whether `/ready` answers). Turning it on applies the current state immediately (start in model hours, stop outside) | The mlx agent is not installed yet; the switch is per machine, not per user |
+| ~~N11~~ | ~~Unload wait~~ (superseded by N20) | At 19:00 wait for in-flight model requests for at most **5 minutes**, then stop mlx anyway | Longer than 2× the 120 s request timeout; RAM is free by 19:05 |
 | N12 | Health alerts at night | Silent 19:00–09:00, with sound by day | Nothing gm watches needs the owner at night; mail is queued, not lost |
 | N13 | Health in the digest | A "System" section only when something is unhealthy at digest time | Reminder for open issues without daily noise |
 | N14 | First digest | Covers digest items from the last 24 hours; older unsent items are skipped (still on the dashboard) | Avoids a huge first message |
@@ -119,6 +119,8 @@ Decided by the owner in a structured interview on 2026-11-17, before Phase 2 was
 | N17 | `/senders` | All ignored mail of the last 30 days grouped by sender: count, last subject, the rule (or `model`) that ignored it | Also shows when a rule or the model ignores something wanted |
 | N18 | Dead jobs | `/jobs?status=dead`: Retry per job and "Retry all" | Handlers are idempotent, so a retry can't double-act |
 | N19 | Git | One `phase2` branch, one commit per workstream | Single sequential session |
+| N20 | Model process | gm never starts, stops or supervises the model. mlx-air owns it (instance `gm`, launchd `com.mlx-air.instance.gm`, its own config, limits and metrics). The residency controller (2D), `GM_MLX_LAUNCHD_LABEL`, `deploy/launchd/com.gm.mlx.plist`, the dashboard switch and `gm_model_resident` were removed. gm only probes `/ready` for the health check | They duplicated mlx-air; re-pointing the label would still be duplication (owner, 2026-11-17) |
+| N21 | No duplication, docs follow code | Before adding code, look for an existing module, helper or external tool that already does it and reuse it; no parallel implementations or workarounds. Docs change in the same commit as the code and link to the files that implement them | Owner rule, 2026-11-17; recorded in CLAUDE.md |
 
 ## Pending, owned elsewhere
 
@@ -158,10 +160,12 @@ Decided by the owner in a structured interview on 2026-11-17, before Phase 2 was
   `digests` plus `events.digest_id`; ADR-0017's `gm eval add` CLI became the dashboard button (N15).
 - 2026-11-17, still to review (technical details set while building Phase 2, no owner question):
   model triage output cap 80 tokens and body cap 1,500 tokens (from the plan); digest line cap
-  150 tokens, job list cap 600 tokens; model load timeout 5 min; the "model down" health check is
+  150 tokens, job list cap 600 tokens; the "model down" health check is
   skipped outside model hours (an open incident stays open, no recovery message at 19:00); in
   Pub/Sub mode the ingest-lag threshold is the safety-poll interval + 10 min (a quiet mailbox would
-  otherwise alarm every 15 min); Telegram long poll 25 s; the residency controller also reconciles
-  every 10 minutes (restarts a crashed model by day, stops one started at night); the mlx plist is
-  `RunAtLoad` without `KeepAlive`, so with the switch off the model starts at login and runs until
-  stopped.
+  otherwise alarm every 15 min); Telegram long poll 25 s.
+- 2026-11-17: N20 and N21 (owner). The residency controller duplicated mlx-air and was removed with
+  its switch, label setting, plist and metric (N10, N11 superseded). Duplicated code was merged: one
+  helper for the three model jobs (`Pipeline::model_step`), one `Action` name mapping
+  (`Action::as_str` / `parse_final`), one owner-language helper (`UserSettingsStore::tr`), and
+  `gm eval` follows `Pipeline::route`.

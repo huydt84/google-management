@@ -31,12 +31,7 @@ pub struct TriageDecision {
 
 pub fn parse_triage(text: &str) -> Option<TriageDecision> {
     let obj = parse_json_object(text)?;
-    let action = match obj.get("action")?.as_str()?.trim().to_lowercase().as_str() {
-        "notify" => Action::Notify,
-        "digest" => Action::Digest,
-        "ignore" => Action::Ignore,
-        _ => return None,
-    };
+    let action = Action::parse_final(obj.get("action")?.as_str()?)?;
     let reason: String = obj
         .get("reason")
         .and_then(Value::as_str)

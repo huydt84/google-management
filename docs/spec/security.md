@@ -27,6 +27,8 @@ Trust-boundary diagram: [architecture §10](../architecture.md#10-trust-boundari
 
 ## Threats and controls
 
+Code for the main controls: host/origin guard and session in [`web/`](../../crates/gm/src/web/), OAuth checks in [`google/oauth.rs`](../../crates/gm/src/google/oauth.rs), token encryption in [`crypto.rs`](../../crates/gm/src/crypto.rs), secrets in [`secrets.rs`](../../crates/gm/src/secrets.rs), loopback check in [`config.rs`](../../crates/gm/src/config.rs), `<email>` delimiting in [`llm/`](../../crates/gm/src/llm/), Telegram chat and callback checks in [`telegram.rs`](../../crates/gm/src/telegram.rs) and [`feedback.rs`](../../crates/gm/src/feedback.rs).
+
 | # | Threat | Control | Phase |
 |---|--------|---------|-------|
 | T1 | **Prompt injection** in mail makes the system act | The model that reads mail has **no tools**; targets come only from headers, config or the owner's words; every external action needs approval with a full preview; mail is delimited and the delimiter cannot be closed (`clean::sanitize_delimiters`). | 1–3 |

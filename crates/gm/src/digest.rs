@@ -21,9 +21,8 @@ use serde_json::{Value, json};
 use crate::bus::{JobContext, Outcome};
 use crate::db::Event;
 use crate::gmail::message::ParsedMessage;
-use crate::google::GoogleError;
 use crate::i18n::Tr;
-use crate::llm::{Lane, LlmClient, LlmUnavailable, parse_json_object};
+use crate::llm::{Lane, LlmClient, parse_json_object};
 use crate::notify::{Keyboard, OutgoingMessage, feedback_row, split_message};
 use crate::pipeline::Pipeline;
 use crate::rules::Verdict;
@@ -420,29 +419,20 @@ impl Digest {
         let Some(v) = verdict(&ev).filter(|v| v.summarize) else {
             return Ok(Outcome::Done);
         };
-        let now = p.clock.now();
-        if !p.hours.is_on(now) {
-            return Ok(Outcome::Defer(p.hours.next_on(now)));
-        }
-        let msg = match p.fetch(&ev.account, &ev.external_id).await {
-            Ok(m) => m,
-            Err(GoogleError::NotFound) => {
-                p.set_status(ev.id, "digest", "gone").await?;
-                return Ok(Outcome::Done);
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let owner = p.accounts.owner_of(&ev.account).await?;
-        let prefs = p.user_settings.get(&owner).await?;
         let section = v.section.unwrap_or_default();
-        let summary = match summarize_item(&p.llm, &msg, &section, &prefs.summary_language).await {
+        let step = p
+            .model_step(
+                ev.id,
+                "digest",
+                &ev.account,
+                &ev.external_id,
+                "digest item",
+                async |m, lang| summarize_item(&p.llm, m, &section, lang).await,
+            )
+            .await?;
+        let summary = match step {
             Ok(s) => s,
-            Err(e) if LlmUnavailable::is(&e) => {
-                let retry_at = now.with_timezone(&Utc) + p.llm_unavailable_retry;
-                tracing::warn!(event_id = ev.id, error = %e, %retry_at, "model unavailable; digest item queued");
-                return Ok(Outcome::Defer(retry_at));
-            }
-            Err(e) => return Err(e),
+            Err(outcome) => return Ok(outcome),
         };
         let mut tx = p.pool.begin().await?;
         let row: Option<(String, bool, Option<i64>)> = sqlx::query_as(

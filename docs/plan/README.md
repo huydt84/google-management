@@ -12,7 +12,7 @@ options and a recommendation, then record the answer in `docs/decisions.md`.
 |-------|------|------|
 | 0 | (done in Python, commit `145de43`, removed) | Gmail → rules → summary → Telegram |
 | 1 | [phase-1.md](phase-1.md) | Rust port to parity, rules engine v2, operations baseline |
-| 2 | [phase-2.md](phase-2.md) | Morning digest, model triage + feedback, residency controller, `gm eval`, health alerts |
+| 2 | [phase-2.md](phase-2.md) | Morning digest, model triage + feedback, `gm eval`, health alerts |
 | 3 | [phase-3.md](phase-3.md) | Two-way Telegram: Translate / Analyze / Reply with approvals and audit |
 | 4 | [phase-4.md](phase-4.md) | Calendar notifications and today's calendar in the digest |
 
@@ -33,7 +33,7 @@ Update this table in the same commit that completes the workstream.
 | 2A | Digest builder + scheduler + digest lane | Phase 1 | done |
 | 2B | Model triage | Phase 1 | done |
 | 2C | Feedback buttons (needs Telegram callbacks from 3A) | 2B, 3A-min | done |
-| 2D | Residency controller | Phase 1 | done |
+| 2D | Residency controller | Phase 1 | removed (N20: mlx-air owns the model process) |
 | 2E | Health alerts, health panel, dead-letter page, ignored-sender counts | Phase 1 | done |
 | 2F | `gm eval` and the local eval set | 2B | done |
 | 3A | Telegram client + poller (callbacks, replies, commands) | Phase 1 | partial: `getUpdates` loop for button presses (`src/telegram.rs`) built in Phase 2 |
@@ -66,7 +66,9 @@ Workstreams in the same phase run in parallel when they own different files (lis
 - A migration if the schema changed; the app starts on an empty DB and on the previous DB.
 - New config is in `.env.example` and `docs/spec/interfaces.md`; new user-visible strings are in all
   three locale files (a test checks key parity).
-- Specs in `docs/spec/` match the code; new decisions are in `docs/decisions.md`.
+- Specs in `docs/spec/` match the code and link to the files that implement them; docs for removed
+  code are deleted; new decisions are in `docs/decisions.md`.
+- No duplicated logic: existing helpers and external tools are reused, not re-implemented (N21).
 - None of the invariants below is broken.
 
 ## Architecture invariants (must not break)

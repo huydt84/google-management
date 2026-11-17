@@ -1,4 +1,4 @@
-//! Time and the model residency window (ADR-0010, ADR-0015).
+//! Time and model hours: when gm runs model work (ADR-0010, ADR-0015).
 
 use chrono::{DateTime, Duration, Local, NaiveTime, TimeZone, Utc};
 

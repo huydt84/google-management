@@ -101,16 +101,6 @@ col-count = Count
 col-last-subject = Last subject
 col-rule = Ignored by
 
-# Residency (2D)
-model-state = Model
-model-resident = loaded (answering /ready)
-model-not-resident = not loaded
-residency = Load/unload by gm
-on = On
-off = Off
-turn-on = Turn on
-turn-off = Turn off
-residency-help = When on, gm starts the model at the start of model hours and stops it at the end (launchd agent com.gm.mlx).
 
 # Feedback (2C)
 feedback = Was this handled right?

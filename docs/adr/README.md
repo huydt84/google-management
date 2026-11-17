@@ -17,7 +17,7 @@ record.
 | [0007](0007-sheets-for-notes-and-ledger.md) | Google Sheets via `drive.file` for the ledger instead of Keep | Deferred (backlog) |
 | [0008](0008-per-user-settings.md) | Settings stored per user and edited in the app; deployment stays single-user | Accepted |
 | [0009](0009-rust-single-binary.md) | Rust single binary replaces the Python implementation | Accepted |
-| [0010](0010-llm-client-lanes-residency.md) | Direct LLM client with priority lanes and scheduled residency; no gateway | Accepted |
+| [0010](0010-llm-client-lanes-residency.md) | Direct LLM client with priority lanes and model hours; no gateway | Accepted |
 | [0011](0011-model-qwen3-8b-now-bonsai-later.md) | Qwen3-8B 4-bit now; Bonsai-27B 1-bit when the runtime supports it | Accepted |
 | [0012](0012-rules-engine-v2.md) | Rules engine v2: YAML, first match wins, extractors, tested examples | Accepted |
 | [0013](0013-ops-launchd-keychain-tailscale.md) | launchd services, Keychain secrets, Tailscale for remote access | Accepted |

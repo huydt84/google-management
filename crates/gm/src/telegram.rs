@@ -13,7 +13,6 @@ use sqlx::PgPool;
 
 use crate::bus::Bus;
 use crate::feedback::{FeedbackReceived, parse_data};
-use crate::i18n::Tr;
 use crate::notify::{Button, Keyboard, Notifier, TelegramNotifier};
 use crate::topics;
 use crate::user_settings::UserSettingsStore;
@@ -57,13 +56,6 @@ fn keyboard_of(message: &Value) -> Keyboard {
 }
 
 impl TelegramPoller {
-    async fn tr(&self) -> Tr {
-        match self.user_settings.get(&self.owner).await {
-            Ok(p) => Tr::new(&p.ui_language),
-            Err(_) => Tr::new("en"),
-        }
-    }
-
     /// Handle one update. Unknown update kinds and foreign chats are ignored.
     pub async fn handle_update(&self, update: &Value) -> anyhow::Result<()> {
         let cq = &update["callback_query"];
@@ -80,7 +72,7 @@ impl TelegramPoller {
             self.notifier.answer_callback(cq_id, "").await?;
             return Ok(());
         }
-        let tr = self.tr().await;
+        let tr = self.user_settings.tr(&self.owner).await;
         let data = cq["data"].as_str().unwrap_or_default();
         let Some((event_id, label)) = parse_data(data) else {
             self.notifier

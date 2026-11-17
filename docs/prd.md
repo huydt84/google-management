@@ -101,7 +101,7 @@ carried over to Phase 1.
 | US-2.2 | LinkedIn job alerts appear once, deduplicated. | Title / company / location / link list. |
 | US-2.3 | Mail no rule covers is judged by the model. | notify / digest / ignore with a reason, visible on the dashboard. |
 | US-2.4 | I tell it when it got it wrong. | 👍/👎 buttons; feedback stored; shown in `gm eval`. |
-| US-2.5 | The model only uses memory during the day. | Residency controller starts mlx at 09:00, stops it at 19:00. |
+| US-2.5 | Model work happens during the day. | gm runs model work 09:00–19:00 only; the model process itself is managed by mlx-air (decision N20). |
 | US-2.6 | I can measure model quality before changing models or prompts. | `gm eval` on the local eval set (≤ 200 mails). |
 | US-2.7 | I'm alerted if the system is unhealthy. | Telegram alert after 15 minutes of dead jobs, ingest lag, model down or token invalid; dashboard health panel. |
 | US-2.8 | I can retry failed jobs. | Dead-letter page. |
@@ -227,7 +227,7 @@ Bonsai-27B 1-bit model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md))
 |-------|-------|---------------|
 | 0 ✅ | See what matters (Python) | Shipped in commit `145de43`; replaced by Phase 1. |
 | 1 | Rust port, rules v2, operations | Parity with Phase 0; rules from the mail analysis with examples; Keychain, launchd files, backups, CI, metrics; Python removed. |
-| 2 | Digest and model triage | Digest at 09:05; model triage with feedback; residency controller; `gm eval`; health alerts; dead-letter page. |
+| 2 | Digest and model triage | Digest at 09:05; model triage with feedback; `gm eval`; health alerts; dead-letter page. |
 | 3 | Act, with approval | Translate, analyze, reply from Telegram; approvals and audit; prompt-injection end-to-end test. |
 | 4 | Calendar | Invitations and changes; today's calendar in the digest. |
 

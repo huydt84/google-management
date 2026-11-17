@@ -13,6 +13,11 @@ use super::{AppError, SharedState, current_owner};
 use crate::i18n::{Tr, UI_LANGUAGES};
 use crate::user_settings::{COMMON_LANGUAGES, UserSettings};
 
+/// A UTC time shown in the Mac's local time zone.
+fn local_time(t: &chrono::DateTime<chrono::Utc>, fmt: &str) -> String {
+    t.with_timezone(&chrono::Local).format(fmt).to_string()
+}
+
 fn render<T: Template>(t: &T) -> Result<Response, AppError> {
     Ok(Html(t.render()?).into_response())
 }
@@ -56,8 +61,6 @@ struct IndexPage {
     llm_model: String,
     llm_base_url: String,
     model_hours: String,
-    model_resident: bool,
-    residency_on: bool,
     summary_language: String,
     notifier: String,
     job_stats: Vec<(String, i64)>,
@@ -85,11 +88,7 @@ async fn health_rows(state: &SharedState, tr: &Tr) -> Result<Vec<HealthRow>, App
             let since = incidents
                 .iter()
                 .find(|(n, _)| n == r.name)
-                .map(|(_, t)| {
-                    t.with_timezone(&chrono::Local)
-                        .format("%m-%d %H:%M")
-                        .to_string()
-                })
+                .map(|(_, t)| local_time(t, "%m-%d %H:%M"))
                 .unwrap_or_default();
             HealthRow {
                 state: match r.failing {
@@ -130,11 +129,7 @@ fn event_row(e: crate::db::Event) -> EventRow {
     let summary = e.summary.clone().unwrap_or(Value::Null);
     EventRow {
         id: e.id,
-        time: e
-            .created_at
-            .with_timezone(&chrono::Local)
-            .format("%m-%d %H:%M")
-            .to_string(),
+        time: local_time(&e.created_at, "%m-%d %H:%M"),
         from: s(&e.data["from"]),
         subject: e.data["subject"]
             .as_str()
@@ -236,11 +231,7 @@ pub async fn index(
         last_sync: gs
             .as_ref()
             .and_then(|g| g.last_sync_at)
-            .map(|t| {
-                t.with_timezone(&chrono::Local)
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
-            })
+            .map(|t| local_time(&t, "%Y-%m-%d %H:%M:%S"))
             .unwrap_or_else(|| "—".into()),
         last_error: gs.and_then(|g| g.last_error).unwrap_or_default(),
         ingest,
@@ -248,8 +239,6 @@ pub async fn index(
         llm_model: state.cfg.llm_model.clone(),
         llm_base_url: state.cfg.llm_base_url.clone(),
         model_hours: hours,
-        model_resident: state.residency.resident().await,
-        residency_on: state.residency.enabled().await?,
         summary_language: prefs.summary_language,
         notifier: if state.notifier_name == "telegram" {
             tr.get("telegram")
@@ -489,10 +478,6 @@ pub async fn metrics(
             "# TYPE gm_ingest_lag_seconds gauge\ngm_ingest_lag_seconds {lag:.0}\n"
         ));
     }
-    out.push_str(&format!(
-        "# TYPE gm_model_resident gauge\ngm_model_resident {}\n",
-        u8::from(state.residency.resident().await)
-    ));
     out.push_str("# TYPE gm_health_failing gauge\n");
     for r in state.health.evaluate().await? {
         if let Some(f) = r.failing {
@@ -652,10 +637,7 @@ pub async fn jobs_page(
                     subscriber,
                     status,
                     attempts,
-                    updated: updated
-                        .with_timezone(&chrono::Local)
-                        .format("%m-%d %H:%M")
-                        .to_string(),
+                    updated: local_time(&updated, "%m-%d %H:%M"),
                     error: error.unwrap_or_default(),
                 },
             )
@@ -739,42 +721,11 @@ pub async fn senders_page(
                 address,
                 count,
                 last_subject: subject.unwrap_or_default(),
-                last_seen: last
-                    .with_timezone(&chrono::Local)
-                    .format("%m-%d")
-                    .to_string(),
+                last_seen: local_time(&last, "%m-%d"),
                 rules: rules.unwrap_or_default(),
             })
             .collect(),
     })
-}
-
-#[derive(Deserialize)]
-pub struct ResidencyForm {
-    on: String,
-}
-
-/// Turn the residency controller on or off (decision N10).
-pub async fn set_residency(
-    State(state): State<SharedState>,
-    jar: CookieJar,
-    Form(f): Form<ResidencyForm>,
-) -> Result<Response, AppError> {
-    if current_owner(&state, &jar).is_none() {
-        return Ok(StatusCode::UNAUTHORIZED.into_response());
-    }
-    let on = f.on == "1";
-    // Turning it on may start the model and wait for it: don't hold the request for minutes.
-    crate::db::system_set(&state.pool, crate::residency::SETTING, &json!(on)).await?;
-    if on {
-        let r = state.residency.clone();
-        tokio::spawn(async move {
-            if let Err(e) = r.set_enabled(true).await {
-                tracing::error!(error = %e, "residency reconcile failed");
-            }
-        });
-    }
-    Ok(Redirect::to("/").into_response())
 }
 
 #[derive(Deserialize)]
@@ -815,11 +766,8 @@ pub async fn event_eval(
     if current_owner(&state, &jar).is_none() {
         return Ok(StatusCode::UNAUTHORIZED.into_response());
     }
-    let expected = match f.expected.as_str() {
-        "notify" => crate::rules::Action::Notify,
-        "digest" => crate::rules::Action::Digest,
-        "ignore" => crate::rules::Action::Ignore,
-        _ => return Ok(StatusCode::BAD_REQUEST.into_response()),
+    let Some(expected) = crate::rules::Action::parse_final(&f.expected) else {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
     };
     let back =
         |outcome: &str| Redirect::to(&format!("/?eval={outcome}#event-{id}")).into_response();

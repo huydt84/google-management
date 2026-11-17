@@ -16,10 +16,10 @@ Before starting, confirm with the owner anything this plan leaves open (marked *
 ## 2A Digest builder and scheduler
 
 **Owns:** `src/digest.rs` (new), `src/scheduler.rs` (new), `prompts/digest.md`, `prompts/jobs.md`,
-migration `0002_digest.sql`, digest strings in `locales/*/main.ftl`, `templates/digest.html`.
+migration `0003_digest.sql`, digest strings in `locales/*/main.ftl`, `templates/digest.html`.
 
 1. **Scheduler** (`scheduler.rs`): a background loop that publishes `schedule.due {kind, at}` at fixed
-   local times (`digest` at 09:05; residency `load` 09:00 and `unload` 19:00 for 2D). Missed times
+   local times (`digest` at 09:05). Missed times
    (sleep) fire once on wake. Times come from config (`GM_DIGEST_AT`, default `09:05`).
 2. **Per-item summaries** (`digest.item.summarize`, batch lane): `triage` publishes it for `digest`
    events whose verdict has `summarize: true`. During model hours it runs on arrival; at night it
@@ -63,19 +63,11 @@ poller.
    model-triaged mail is an eval case for 2F. **Ask** whether 👎 should also offer "mute this sender"
    (which would write rules from the app; rules are currently a file under version control).
 
-## 2D Residency controller
+## 2D Residency controller (removed)
 
-**Owns:** `src/residency.rs` (new), `deploy/launchd/com.gm.mlx.plist` (switch from KeepAlive to
-on-demand).
-
-1. On `schedule.due{load}`: `launchctl kickstart gui/<uid>/com.gm.mlx`, then poll `GET /ready` on the
-   runtime until ready (timeout → health alert). On `unload`: wait for in-flight requests (the
-   admission counter), then `launchctl kill TERM gui/<uid>/com.gm.mlx`.
-2. On startup inside model hours, ensure the model is up; outside, ensure it is down.
-3. `ModelHours` remains the single source of truth; the pipeline already defers outside them.
-4. Expose `gm_model_resident` in `/metrics` and the state on the dashboard.
-
-Tests: fake `launchctl` command runner and wiremock `/ready`; unload waits for in-flight requests.
+Built, then removed on 2026-11-17 (decision N20): starting and stopping the model with `launchctl`
+duplicated mlx-air, which owns the model process. gm keeps only model hours (deferring model work)
+and the `/ready` health check ([`health.rs`](../../crates/gm/src/health.rs)).
 
 ## 2E Health, dead letters, sender counts
 
@@ -104,5 +96,5 @@ panel.
 ## Phase 2 is done when
 
 The digest arrives at 09:05 with correct sections; unmatched mail is classified with reasons;
-feedback is recorded; mlx runs only during model hours; health alerts fire in a test; `gm eval`
+feedback is recorded; model work runs only during model hours; health alerts fire in a test; `gm eval`
 produces a report.

@@ -1,8 +1,8 @@
 # Google Management
 
 Personal, single-user server on the owner's Mac: ingests Gmail (Calendar later), triages it with a
-tested rules file, summarizes with a local LLM (mlx-server-runtime, Qwen3-8B 4-bit, called directly),
-and notifies via Telegram. Only `GM_ALLOWED_EMAIL` can log in. Rust (one binary `gm`) + axum + sqlx +
+tested rules file, summarizes with a local LLM (mlx-server-runtime, Qwen3-8B 4-bit, called directly;
+the model process is run by mlx-air, never by gm), and notifies via Telegram. Only `GM_ALLOWED_EMAIL` can log in. Rust (one binary `gm`) + axum + sqlx +
 Postgres. Docs, code, comments and UI source strings are in English; the UI is localized (en / vi /
 ja) and LLM output follows each user's language setting (`crates/gm/src/user_settings.rs`).
 
@@ -19,11 +19,17 @@ cargo run -- rules rules.yaml              # validate rules and their examples
 
 ## Where things are
 
+The full module map, one row per file, is in [docs/architecture.md §4](docs/architecture.md#4-modules-inside-the-gm-binary).
+
 - `crates/gm/src/app.rs`: wiring (`build`), background tasks, `serve`.
 - `crates/gm/src/bus.rs`: durable pub/sub on Postgres.
-- `crates/gm/src/pipeline.rs`: triage → summarize → notify handlers, night policy.
+- `crates/gm/src/pipeline.rs`: triage → classify → summarize → notify handlers, `route`, and
+  `model_step` (the shared steps of every model job).
 - `crates/gm/src/rules.rs` + `rules.yaml`: rules engine v2.
 - `crates/gm/src/llm/`: the only way to call a model (lanes, prompt layout, parsing).
+- `crates/gm/src/digest.rs`, `scheduler.rs`, `health.rs`, `feedback.rs`, `telegram.rs`,
+  `triage_model.rs`, `eval.rs`: Phase 2 (digest, schedules, health alerts, 👍/👎, model triage,
+  `gm eval`).
 - `crates/gm/src/gmail/`, `crates/gm/src/google/`: ingestion, parsing, OAuth, Gmail client.
 - `crates/gm/migrations/`: schema. `crates/gm/locales/`: UI strings. `crates/gm/prompts/`: prompts.
 - `crates/gm/tests/common/mod.rs`: `test_app`, wiremock helpers, `RecordingNotifier`, `FixedClock`.
@@ -36,7 +42,21 @@ cargo run -- rules rules.yaml              # validate rules and their examples
 then recorded there.
 
 For the big picture, see [docs/README.md](docs/README.md): decision log, PRD, architecture, specs and
-ADRs. Keep them in sync when your change alters behavior, data model, topics, config or interfaces.
+ADRs.
+
+**No duplication.** Before writing code, search for something that already does the job and reuse
+it: a module or helper in this repo (e.g. `Pipeline::model_step`, `Pipeline::route`,
+`Action::as_str`/`parse_final`, `UserSettingsStore::tr`) or an external tool the owner already runs
+(mlx-air owns the model process, launchd owns restarts, Postgres owns scheduling state). Don't build
+a parallel implementation, a second copy of a mapping, or a workaround around an existing component;
+extend or fix the original instead. When you find duplication, remove it. (Decisions N20, N21.)
+
+**Docs follow the code.** Any change to behavior, data model, topics, config, routes, CLI or modules
+updates the docs in the same commit, and deletes docs for removed code. Docs point to the files that
+implement them (Hugging Face style: a `Code:` line or a link per section, e.g.
+[`pipeline.rs`](crates/gm/src/pipeline.rs)), so the next agent can open the code and check the doc
+against it. Before finishing, check that every route, `GM_*` variable, topic and table in the code
+appears in `docs/spec/` and that every doc link resolves.
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and

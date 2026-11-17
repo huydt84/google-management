@@ -5,6 +5,8 @@ rules file and the LLM contracts.
 
 ## HTTP
 
+Code: [`src/web/mod.rs`](../../crates/gm/src/web/mod.rs), [`src/web/pages.rs`](../../crates/gm/src/web/pages.rs), [`src/web/auth.rs`](../../crates/gm/src/web/auth.rs), [`templates/`](../../crates/gm/templates/).
+
 Served on `127.0.0.1:${GM_PORT}` (8080). Code: `crates/gm/src/web/`.
 
 Guards on every request (`web::guard`):
@@ -33,7 +35,8 @@ Guards on every request (`web::guard`):
 
 Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 `gm_llm_prompt_tokens_24h`, `gm_llm_completion_tokens_24h`, `gm_llm_latency_ms_sum_24h` (per task and lane),
-`gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode), `gm_health_failing{check}`, `gm_model_resident` (Phase 2). Counts only, no content.
+`gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode), `gm_health_failing{check}` (Phase 2). Counts only, no content. Model-server metrics come from
+mlx-air's own `/metrics`.
 
 ### Implemented (Phase 2)
 
@@ -43,7 +46,6 @@ Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 | GET | `/jobs[?status=dead|pending|running|done]` | session | Jobs by status (default `dead`, latest 200) with their last error |
 | POST | `/events/{id}/feedback` | session | Form `label=up|down`: 👍/👎 from the dashboard (2C); redirect to the event row |
 | POST | `/events/{id}/eval` | session | Form `expected=notify|digest|ignore`: fetch the raw mail from Gmail and add it to the local eval set, or update its expected action (2F). Redirect to `/?eval=added|updated|full|gone#event-{id}` |
-| POST | `/model/residency` | session | Form `on=1|0`: the residency switch (decision N10); turning it on reconciles in the background; redirect to `/` |
 | POST | `/jobs/{id}/retry`, `/jobs/retry-dead` | session | A dead job (or all of them) back to `pending` with attempts reset; redirect to `/jobs` |
 | GET | `/senders` | session | Ignored mail of the last 30 days grouped by sender address: count, last subject, the rule(s) that ignored it |
 
@@ -54,6 +56,8 @@ Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 | GET | `/tasks`, POST `/approvals/{id}/approve` · `/reject` | 3 | Tasks and web approvals |
 
 ## Telegram
+
+Code: [`src/notify.rs`](../../crates/gm/src/notify.rs), [`src/telegram.rs`](../../crates/gm/src/telegram.rs), [`src/feedback.rs`](../../crates/gm/src/feedback.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/health.rs`](../../crates/gm/src/health.rs).
 
 The bot sends to exactly one chat, `GM_TELEGRAM_CHAT_ID`. Messages are plain text (no `parse_mode`),
 ≤ 4096 characters, link previews disabled. Strings are localized with the owner's `ui_language`;
@@ -141,6 +145,8 @@ retried the next minute. Incidents live in `health_state`.
 
 ## CLI
 
+Code: [`src/main.rs`](../../crates/gm/src/main.rs).
+
 `gm <command>` (`crates/gm/src/main.rs`):
 
 | Command | Purpose |
@@ -154,6 +160,8 @@ retried the next minute. Incidents live in `health_state`.
 | `gm eval [--dir DIR] [--language LANG]` | Run rules → model triage → summary on every case in the eval set against the **local** model (refuses a non-loopback `GM_LLM_BASE_URL`) and print accuracy per expected action, the confusion matrix, the JSON parse rate per task, misclassified ids, and calls, latency p50/p95 and tokens per model task. Needs no database, Keychain or Google access |
 
 ## Configuration
+
+Code: [`src/config.rs`](../../crates/gm/src/config.rs), [`src/secrets.rs`](../../crates/gm/src/secrets.rs), [`.env.example`](../../.env.example).
 
 Non-secret settings come from the environment or `.env` (prefix `GM_`); see
 [.env.example](../../.env.example). Secrets come from the Keychain (service `google-management`), or
@@ -187,7 +195,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_RULES_PATH` | `rules.yaml` | Rules file |
 | `GM_LLM_BASE_URL` | `http://127.0.0.1:8000/v1` | OpenAI-compatible endpoint |
 | `GM_LLM_API_KEY` | `not-needed` | Bearer token for it |
-| `GM_LLM_READY_URL` | base URL without `/v1` + `/ready` | Readiness probe of mlx-server-runtime (health check, residency) |
+| `GM_LLM_READY_URL` | base URL without `/v1` + `/ready` | Readiness probe of the model server (`model_down` health check) |
 | `GM_LLM_MODEL` | `mlx-community/Qwen3-8B-4bit` | Model name |
 | `GM_LLM_TIMEOUT_S` | 120 | Request timeout |
 | `GM_LLM_MAX_INFLIGHT` | 2 | Concurrent model requests across lanes |
@@ -196,7 +204,6 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_NO_THINK_TAG` | `/no_think` | Appended to the system prompt; empty to disable |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
 | `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on) |
-| `GM_MLX_LAUNCHD_LABEL` | `com.gm.mlx` | launchd agent the residency controller starts and stops (`gui/<uid>/<label>`) |
 | `GM_EVAL_DIR` | `~/.local/share/gm/eval` | Local eval set folder (mode 0700, files 0600, at most 200 cases) |
 | `GM_DIGEST_AT` | `09:05` | Default morning digest time; each user can change it in Settings (inside model hours) |
 | `GM_DEFAULT_SUMMARY_LANGUAGE` | `Vietnamese` | Default summary language |
@@ -209,6 +216,8 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LOG_DIR` | — | JSON log directory (daily files, 7 kept); stderr only if unset |
 
 ## Rules file (`rules.yaml`)
+
+Code: [`src/rules.rs`](../../crates/gm/src/rules.rs), [`rules.yaml`](../../rules.yaml).
 
 Specified in [ADR-0012](../adr/0012-rules-engine-v2.md); the header of [rules.yaml](../../rules.yaml)
 is the reference. Summary:
@@ -224,6 +233,8 @@ is the reference. Summary:
 
 ## Eval case file
 
+Code: [`src/eval.rs`](../../crates/gm/src/eval.rs).
+
 One file per case, `GM_EVAL_DIR/<gmail id>.json` (decision N16):
 
 ```json
@@ -235,6 +246,8 @@ Files that don't parse or whose `expected` isn't one of the three actions are sk
 Removing a case means deleting its file.
 
 ## LLM contracts
+
+Code: [`src/llm/mod.rs`](../../crates/gm/src/llm/mod.rs), [`prompts/`](../../crates/gm/prompts/), [`src/triage_model.rs`](../../crates/gm/src/triage_model.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs).
 
 All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) through `LlmClient`. No
 `tools`, `response_format` or JSON mode is assumed.

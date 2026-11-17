@@ -22,7 +22,6 @@ use crate::health::Health;
 use crate::llm::LlmClient;
 use crate::notify::{LogNotifier, Notifier, TelegramNotifier};
 use crate::pipeline::Pipeline;
-use crate::residency::{CommandRunner, Residency, SystemRunner};
 use crate::rules::RuleFile;
 use crate::scheduler::Scheduler;
 use crate::telegram::TelegramPoller;
@@ -33,8 +32,6 @@ use crate::web::{self, AppState, SharedState, session::Signer};
 pub struct Overrides {
     pub notifier: Option<Arc<dyn Notifier>>,
     pub clock: Option<Arc<dyn Clock>>,
-    /// Runs `launchctl` / `id` for the residency controller (a fake in tests).
-    pub runner: Option<Arc<dyn CommandRunner>>,
 }
 
 pub struct App {
@@ -48,7 +45,6 @@ pub struct App {
     pub digest: Arc<Digest>,
     pub scheduler: Arc<Scheduler>,
     pub health: Arc<Health>,
-    pub residency: Arc<Residency>,
     pub feedback: Arc<Feedback>,
     /// Present when Telegram is configured.
     pub telegram: Option<Arc<TelegramPoller>>,
@@ -164,22 +160,10 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         feedback: Some(feedback.clone()),
     });
     digest.register();
-    let residency = Arc::new(Residency::new(
-        pool.clone(),
-        http.clone(),
-        &cfg.llm_ready_url,
-        &cfg.mlx_launchd_label,
-        overrides.runner.unwrap_or_else(|| Arc::new(SystemRunner)),
-        pipeline.llm.clone(),
-        pipeline.hours,
-        pipeline.clock.clone(),
-    ));
-    residency.register(&bus);
     let scheduler = Arc::new(Scheduler {
         pool: pool.clone(),
         bus: bus.clone(),
         clock: pipeline.clock.clone(),
-        hours: pipeline.hours,
         user_settings: user_settings.clone(),
         default_digest_at: cfg.digest_at,
     });
@@ -192,7 +176,6 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         user_settings,
         signer: Signer::new(&cfg.session_secret),
         health: health.clone(),
-        residency: residency.clone(),
         gmail,
         notifier_name: notifier.name(),
     });
@@ -206,7 +189,6 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         digest,
         scheduler,
         health,
-        residency,
         feedback,
         telegram,
         state,
@@ -265,8 +247,6 @@ pub fn spawn_background(app: &App) {
     if let Some(poller) = app.telegram.clone() {
         supervise("telegram-updates", move || poller.clone().run());
     }
-    let residency = app.residency.clone();
-    supervise("residency", move || residency.clone().run());
     let health = app.health.clone();
     supervise("health", move || health.clone().run());
     let scheduler = app.scheduler.clone();

@@ -148,6 +148,14 @@ impl UserSettingsStore {
         &self.defaults
     }
 
+    /// UI strings in the user's language (the default language if their settings can't be read).
+    pub async fn tr(&self, email: &str) -> crate::i18n::Tr {
+        match self.get(email).await {
+            Ok(p) => crate::i18n::Tr::new(&p.ui_language),
+            Err(_) => crate::i18n::Tr::new(&self.defaults.ui_language),
+        }
+    }
+
     pub async fn get(&self, email: &str) -> anyhow::Result<UserSettings> {
         let row: Option<serde_json::Value> =
             sqlx::query_scalar("SELECT settings FROM user_settings WHERE email = $1")

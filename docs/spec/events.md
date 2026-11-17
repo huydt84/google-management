@@ -6,6 +6,8 @@ topic constants in `crates/gm/src/lib.rs` (`topics`).
 
 ## Delivery semantics (all topics)
 
+Code: [`src/bus.rs`](../../crates/gm/src/bus.rs).
+
 | Property | Rule |
 |----------|------|
 | Publish | `bus.publish(&mut conn, topic, &payload)` inside the producer's transaction. Messages exist only if it commits. |
@@ -25,6 +27,8 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 
 ## Topic catalog
 
+Code: [`src/lib.rs`](../../crates/gm/src/lib.rs), [`src/pipeline.rs`](../../crates/gm/src/pipeline.rs), [`src/digest.rs`](../../crates/gm/src/digest.rs), [`src/feedback.rs`](../../crates/gm/src/feedback.rs), [`src/telegram.rs`](../../crates/gm/src/telegram.rs). Topic names are the constants in `gm::topics` (`lib.rs`); each handler is registered next to its implementation.
+
 ### Phase 1 (implemented)
 
 | Topic | Producer | Subscriber | Payload | Idempotency check |
@@ -39,7 +43,7 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 |-------|----------|------------|---------|-------------------|
 | `gmail.message.classify` | `triage` (action `triage`) | `classify` (model triage, notify lane) | as `gmail.message.received` | event status `classify` (row locked) |
 | `digest.item.summarize` | `triage` / `classify` (digest with `summarize: true`) | `digest_summarize` (batch lane) | `{event_id}` | status `digest` and `summary IS NULL` (row locked) |
-| `schedule.due` | scheduler | `digest_build` (kind `digest`), `residency` (kinds `load` / `unload`, only while the switch is on) | `{kind: digest|load|unload, at, owner?}` | one `digests` row per (owner, date) |
+| `schedule.due` | scheduler | `digest_build` (kind `digest`) | `{kind: digest, at, owner}` | one `digests` row per (owner, date) |
 | `feedback.received` | Telegram poller (`callback_query` `f:<id>:up|down` from the owner's chat) | `feedback` | `{event_id, label, tapped_at, message_id?, keyboard}` | upsert keeps the latest `tapped_at`; keyboard redraw is idempotent |
 | `digest.refresh` | `digest_summarize` (item of a sent digest) | `digest_refresh` | `{digest_id}` | digest `sent`, same local day, inside model hours; skipped if the text is unchanged |
 
@@ -63,6 +67,8 @@ for commands to a stage (`gmail.message.summarize`, `notify.email`).
 | `calendar.event.invitation` / `.changed` / `.cancelled` | Calendar source | `notify_calendar` | `{event_id, account, calendar_event_id}` |
 
 ## Event record (`events` table)
+
+Code: [`src/db.rs`](../../crates/gm/src/db.rs), [`src/pipeline.rs`](../../crates/gm/src/pipeline.rs).
 
 Each Google object becomes one row, keyed by `(source, external_id)`.
 
@@ -92,6 +98,8 @@ ignore, section: "model" for digest, reason}`. Diagram: [architecture §6](../ar
 
 ## Gmail ingestion contract
 
+Code: [`src/gmail/ingest.rs`](../../crates/gm/src/gmail/ingest.rs), [`src/gmail/pubsub.rs`](../../crates/gm/src/gmail/pubsub.rs), [`src/google/gmail.rs`](../../crates/gm/src/google/gmail.rs), [`src/google/pubsub.rs`](../../crates/gm/src/google/pubsub.rs).
+
 | Step | Behavior |
 |------|----------|
 | Bootstrap | On connect: `users.getProfile` → store `historyId`; only later changes are processed. |
@@ -108,8 +116,7 @@ ignore, section: "model" for digest, reason}`. Diagram: [architecture §6](../ar
 
 ## Scheduler
 
-`src/scheduler.rs` checks every 30 s. Schedules: `digest:<owner>` at the owner's `digest_at`, and
-`residency` at `GM_MODEL_ON` (`load`) / `GM_MODEL_OFF` (`unload`), of which only the most recent
-occurrence fires. `schedule_runs.last_at` records the last occurrence fired: an occurrence later than
+[`scheduler.rs`](../../crates/gm/src/scheduler.rs) checks every 30 s. Schedules: `digest:<owner>`
+at the owner's `digest_at`. `schedule_runs.last_at` records the last occurrence fired: an occurrence later than
 it fires once (also after sleep), and a schedule seen for the first time is recorded without firing.
 The record and the publish share one transaction.

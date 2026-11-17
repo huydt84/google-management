@@ -1,4 +1,4 @@
-# 0010. Direct LLM client with priority lanes and scheduled model residency; no gateway
+# 0010. Direct LLM client with priority lanes and model hours; no gateway
 
 - Status: Accepted
 - Date: 2026-11-16
@@ -21,12 +21,15 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
   mail) > `batch` (digest items). A small in-process scheduler admits at most
   `GM_LLM_MAX_INFLIGHT` requests (default 2), always from the highest non-empty lane. Batch work
   yields to the other lanes.
-- **Residency:** the residency controller starts the mlx-server-runtime launchd job at
-  `GM_MODEL_ON` (09:00) and stops it at `GM_MODEL_OFF` (19:00), in the user's timezone. Jobs that
-  need the model while it is off are deferred (`run_after` = next on-time), not failed.
-  *Amended 2026-11-17 (decision N10, N11):* the controller acts only while the machine-wide switch
-  "Load/unload by gm" (dashboard, off by default) is on; it waits at most 5 minutes for in-flight
-  requests before stopping the model.
+- **Model hours:** gm runs model work only between `GM_MODEL_ON` (09:00) and `GM_MODEL_OFF`
+  (19:00), local time. Jobs that need the model outside them are deferred (`run_after` = next
+  on-time), not failed ([`clock.rs`](../../crates/gm/src/clock.rs) `ModelHours`,
+  [`pipeline.rs`](../../crates/gm/src/pipeline.rs) `Pipeline::model_step`).
+- **Model process:** owned by mlx-air (instance `gm`, its own launchd agent with KeepAlive). gm
+  never starts or stops it; it only probes `GM_LLM_READY_URL` for the health check.
+  *Amended 2026-11-17 (decision N20):* the Phase 2 residency controller that started and stopped
+  the model with `launchctl` duplicated mlx-air and was removed. Whether the model is unloaded at
+  night is now an mlx-air setting.
 - **Prompt shape:** a shared, stable system prefix (role, untrusted-content rules, output rules),
   then the task block, then user settings, then the mail last inside `<email>` delimiters that the
   content cannot close. Prompts are versioned files under `prompts/`. This maximizes prefix-cache
@@ -49,5 +52,8 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
 
 - **LiteLLM proxy:** budgets, keys and fallbacks for many models and teams; unnecessary for one model
   and one user.
-- **Always-resident model:** simpler, but holds ~8 GB of RAM around the clock.
+- **gm starting and stopping the model (built in Phase 2, removed):** duplicated mlx-air's
+  process management (N20).
+- **Always-resident model:** simpler, but holds ~8 GB of RAM around the clock (the current mlx-air
+  setup).
 - **Load on demand:** frees the most RAM, but adds a 20–30 s cold start to every first request.
