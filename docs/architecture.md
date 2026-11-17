@@ -179,7 +179,7 @@ flowchart LR
 | [`calendar/`](../crates/gm/src/calendar/) | Primary-calendar sync tokens and snapshots, five-minute polling, template notifications (`message.rs`: hierarchy and Telegram entity spans), and the live digest agenda. [Contract](spec/calendar.md). |
 | [`digest.rs`](../crates/gm/src/digest.rs) | Digest items (`summarize_item`), building, sending and late edits of the morning digest. |
 | [`scheduler.rs`](../crates/gm/src/scheduler.rs) | Publishes `schedule.due` at each owner's `digest_at`; missed times fire once. |
-| [`health.rs`](../crates/gm/src/health.rs) | Health checks (dead jobs, ingest lag, model `/ready`, reconnect), alerts after 15 min, recovery messages; feeds the dashboard panel, the digest System section and `/metrics`. |
+| [`health.rs`](../crates/gm/src/health.rs) | Health checks (dead jobs, ingest lag, model `/ready`, reconnect), alerts after 15 min, recovery messages; feeds the dashboard panel, the digest System section and `/metrics`. Sync lag stays local and never produces Telegram failure, recovery or digest messages. |
 | [`feedback.rs`](../crates/gm/src/feedback.rs) | 👍/👎 storage (last tap wins) and keyboard redraw. |
 | [`telegram/`](../crates/gm/src/telegram/) | Bot API client (`client.rs`, the `Notifier`), the `getUpdates` poller (`poller.rs`: taps, replies, commands, foreign-chat filter, stored offset), callback data, the `chat_messages` map (`ChatLog`), `/pause` flag. |
 | [`tasks/`](../crates/gm/src/tasks/) | Owner tasks: `Intent`, bus payloads, `Recipe` / `Executor` traits, canonical JSON hash (`mod.rs`); intent router with keyword fast path (`router.rs`); approvals and audit (`approvals.rs`); the runtime that runs instructions, decisions and replies (`runtime.rs`); `Registry` (`registry.rs`). |

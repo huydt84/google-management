@@ -191,6 +191,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
             user_settings: user_settings.clone(),
             owner: cfg.allowed_email.clone(),
             problems: Some(health.clone()),
+            ingestor: ingestor.clone(),
             model: model.clone(),
         })),
         _ => None,

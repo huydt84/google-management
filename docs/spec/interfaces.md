@@ -21,6 +21,19 @@ status as read-only text (hover or focus it for what its route does). The 👍 /
 buttons appear when the row is hovered or focused, and always on touch screens; a given 👍 / 👎
 and eval membership stay visible as notes under the status. Pages use system fonts only and load nothing from outside gm.
 
+The dashboard's recent event list shows 50 events per page, newest ID first, including Gmail and
+Calendar. Older and Newer links above and below the list use exclusive `before` and `after` event
+IDs in the query string. Newer selects the nearest 50 IDs above its cursor and displays them newest
+first. New arrivals do not shift an older page, and a cursor still works after its event is deleted.
+Route counts describe the mail on the displayed page. Controls show the number of events on the
+page, disable unavailable directions, and offer Latest events while browsing history. A single page
+needs no controls; an empty cursor page offers a return to the latest events. Navigation targets the
+list heading. Cursors must be positive signed 64-bit integers; supplying both directions or an invalid
+cursor returns 400. Feedback and eval form actions carry the current cursor in their query string
+and preserve it on redirect, along with the event anchor and any eval outcome.
+Code: [`src/db.rs`](../../crates/gm/src/db.rs), [`src/web/pages.rs`](../../crates/gm/src/web/pages.rs),
+[`templates/index.html`](../../crates/gm/templates/index.html).
+
 Guards on every request (`web::guard`):
 
 - `Host` must be `localhost`, `127.0.0.1`, or the host of `GM_BASE_URL` / `GM_PUBLIC_URL`;
@@ -32,7 +45,7 @@ Guards on every request (`web::guard`):
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model state and hours, queue counts, health panel (Phase 2), last 50 events with their route, a key of the three routes (notify, digest, ignore) with how many of those mails took each, and a closed "How mail is sorted" disclosure explaining them (its toggle stays at the right end of the heading row; the panel opens as the full-width row below). A mail row shows its summary and its suggested actions as a list, a linked action with its host; a calendar row shows the calendar notification text with its links and emphasis, and its title links to the event |
+| GET | `/` | session, else the sign-in page | Dashboard: Gmail connection, cursor, last sync and error, ingestion mode and Pub/Sub status, model state and hours, queue counts, health panel (Phase 2), 50 events per page (`?before=<id>` or `?after=<id>`) with their route, a key of the three routes (notify, digest, ignore) with how many of the displayed mails took each, and a closed "How mail is sorted" disclosure explaining them (its toggle stays at the right end of the heading row; the panel opens as the full-width row below). A mail row shows its summary and its suggested actions as a list, a linked action with its host; a calendar row shows the calendar notification text with its links and emphasis, and its title links to the event |
 | GET | `/auth/login` | — | Start sign-in (OIDC, PKCE, signed `gm_oauth` state cookie) |
 | GET | `/auth/callback` | — | Finish sign-in; 403 on state mismatch or unless the verified email equals `GM_ALLOWED_EMAIL` |
 | POST | `/auth/logout` | — | Clear the session |
@@ -185,7 +198,8 @@ reviewed, tested file.
 
 | Command | Effect |
 |---------|--------|
-| `/status` | Notifications on or paused, model hours, queue counts (pending, running, dead), current health problems |
+| `/status` | Notifications on or paused, model hours, queue counts (pending, running, dead), current health problems other than Gmail sync lag |
+| `/sync` | Check the owner's Gmail now, at any hour, and reply with the number of newly ingested emails or a short connection/error message. Uses the normal ingestion lock, deduplication and mail notification rules; does not start the model or bypass `/pause` |
 | `/pause` | Hold mail notifications until `/resume`; the digest, health alerts and task answers still come |
 | `/resume` | Send what was held, at once |
 | `/language [name]` | Show, or set, the summary language (2–40 letters, as in Settings) |
@@ -203,7 +217,7 @@ first appearance (titles from `digest-section-<name>` in the locale files, else 
 - jobs: one line per posting `• <title> — <company> · <location>` plus the link, deduplicated by
   (title, company) across the digest;
 - model items: `[n] <sender>: <line>` and `↳ <reason>`, with a `👍 n` / `👎 n` row each (at most 8);
-- `⚠️ System` with the current health problems, only when there are any.
+- `⚠️ System` with the current health problems other than Gmail sync lag, only when there are any.
 
 Nothing is sent when there is nothing to say (the run is still recorded on `/digest`). The digest
 covers digest mail not yet in a digest; the first one only takes the last 24 hours. Until model hours
@@ -216,7 +230,11 @@ Checked every minute (`src/health.rs`): `dead_jobs` (any job `dead`), `ingest_la
 account not synced for more than 10 min; in Pub/Sub mode while it works, the safety-poll interval +
 10 min), `model_down` (`GM_LLM_READY_URL` not 2xx within 5 s; only checked during model hours, an open
 incident stays open outside them), `needs_reconnect` (an account whose refresh token was rejected).
-After 15 minutes of the same failure: one message `🩺 Problem for <n> min: <problem>`, and
+Gmail sync lag is diagnostic only: it stays on the dashboard, `/metrics`, `gm status` and in
+`health_state`, without Telegram failure or recovery messages, including incidents previously
+announced by an older build. It is excluded from the digest System section and Telegram `/status`.
+The owner can explicitly check Gmail with `/sync`; only that command's response reports its result.
+For the other checks, after 15 minutes of the same failure: one message `🩺 Problem for <n> min: <problem>`, and
 `✅ Resolved: <problem>` when it passes. Silent 19:00–09:00, with sound by day. A failed send is
 retried the next minute. Incidents live in `health_state`.
 

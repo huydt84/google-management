@@ -19,8 +19,11 @@ Google, Telegram or LLM endpoints.
 - **Observability:** `tracing` JSON logs to `~/Library/Logs/gm/` with daily rotation (7 files);
   Prometheus text at `/metrics` behind a bearer token (events by state, jobs by status, LLM latency and
   tokens per lane, ingest lag, model health); a health panel on the dashboard; a Telegram alert
-  when health stays bad for 15 minutes (dead jobs, ingest lag over 10 minutes, model down during
-  model hours, Google token invalid).
+  when health stays bad for 15 minutes (dead jobs, model down during model hours, Google token
+  invalid). Gmail sync lag remains visible locally, without automatic Telegram failure or recovery
+  messages or digest warnings. The owner's `/sync` command checks Gmail on demand and replies with
+  its result. Code: [`health.rs`](../../crates/gm/src/health.rs),
+  [`telegram/poller.rs`](../../crates/gm/src/telegram/poller.rs).
 - **Backups:** nightly `pg_dump -Fc` via launchd to `~/Backups/google-management/`, keep 14, with a
   documented `pg_restore` procedure. The master key is in the Keychain, so a dump alone cannot decrypt
   tokens.

@@ -108,11 +108,11 @@ Code: [`src/gmail/ingest.rs`](../../crates/gm/src/gmail/ingest.rs), [`src/gmail/
 | Step | Behavior |
 |------|----------|
 | Bootstrap | On connect: `users.getProfile` → store `historyId`; only later changes are processed. |
-| Triggers | Pub/Sub notification (mode `pubsub`), the poll loop, and `POST /api/gmail/sync`. The poll loop runs every `GM_GMAIL_POLL_INTERVAL_S` (60 s) in `poll` mode or while Pub/Sub is unhealthy, and every `GM_GMAIL_SAFETY_POLL_INTERVAL_S` (900 s) while Pub/Sub is healthy. |
+| Triggers | Pub/Sub notification (mode `pubsub`), the poll loop, `POST /api/gmail/sync`, and the owner's Telegram `/sync` command. The poll loop runs every `GM_GMAIL_POLL_INTERVAL_S` (60 s) in `poll` mode or while Pub/Sub is unhealthy, and every `GM_GMAIL_SAFETY_POLL_INTERVAL_S` (900 s) while Pub/Sub is healthy. |
 | Sync | `history.list(startHistoryId, historyTypes=messageAdded)`, all pages; keep messages whose labels intersect `GM_GMAIL_LABEL_IDS` (default `INBOX`). |
 | Commit | One transaction: insert events (`ON CONFLICT DO NOTHING`), publish `gmail.message.received` for new rows, `history_id = GREATEST(old, new)`, clear `last_error`. |
 | Expired cursor (404) | Re-anchor at the profile `historyId`; list `in:inbox newer_than:2d` (max 50), oldest first; dedupe applies. |
-| Errors | Stored in `gmail_state.last_error` and shown on the dashboard; `invalid_grant` marks the account `needs_reconnect`. |
+| Errors | Stored in `gmail_state.last_error` and shown on the dashboard; `invalid_grant` marks the account `needs_reconnect`. Sync lag and recovery do not send Telegram messages. `/sync` replies with a short result because the owner requested it; account reconnection alerts remain enabled. |
 | Concurrency | One lock per account; Pub/Sub, poll and manual syncs never overlap. |
 | Pub/Sub provisioning | With the token of an account that granted the `pubsub` scope: create topic `GM_GMAIL_PUBSUB_TOPIC` in `GM_GOOGLE_PROJECT_ID` (409 = exists), add `roles/pubsub.publisher` for `serviceAccount:gmail-api-push@system.gserviceaccount.com` to its IAM policy if missing, create pull subscription `GM_GMAIL_PUBSUB_SUBSCRIPTION` (ack deadline 60 s, retention 7 days). |
 | Watch | `users.watch` on each active mailbox for `GM_GMAIL_LABEL_IDS`; renewed when less than 6 days remain (checked before every pull); expiration in `gmail_state.watch_expiration`. |

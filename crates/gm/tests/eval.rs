@@ -70,10 +70,23 @@ async fn dashboard_adds_updates_and_limits_the_eval_set(pool: PgPool) {
     );
 
     // Adding again updates the expected action.
-    let (_, headers, _) = send(&router, post_form(&url, &cookie, "expected=ignore")).await;
-    assert_eq!(headers["location"], format!("/?eval=updated#event-{id}"));
+    let (_, headers, _) = send(
+        &router,
+        post_form(&format!("{url}?before=2"), &cookie, "expected=ignore"),
+    )
+    .await;
+    assert_eq!(
+        headers["location"],
+        format!("/?eval=updated&before=2#event-{id}")
+    );
     assert_eq!(gm::eval::load(&dir).unwrap()[0].expected, Action::Ignore);
-    let (_, _, body) = send(&router, get("/?eval=updated", Some(&cookie))).await;
+    let location = headers["location"]
+        .to_str()
+        .unwrap()
+        .split('#')
+        .next()
+        .unwrap();
+    let (_, _, body) = send(&router, get(location, Some(&cookie))).await;
     assert!(body.contains("Eval case updated."));
     assert!(body.contains("In the eval set"));
 

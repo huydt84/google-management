@@ -29,7 +29,10 @@ digest material.
   model hours). One **silent** Telegram message (nothing in it is urgent), also shown on `/digest`.
   Sections follow `rules.yaml`; mail the model put in the digest comes last as "Other mail" with the
   model's reason, so its decisions are easy to check. A "System" section appears only while a health
-  check is failing. An empty digest sends nothing. The first digest only covers the last 24 hours.
+  check other than Gmail sync lag is failing. Sync lag and recovery produce no automatic Telegram
+  messages; the owner can request a Gmail check with `/sync`
+  ([0016](0016-operations-baseline.md)). An empty digest sends nothing. The first digest only covers
+  the last 24 hours.
 - **Feedback in the digest:** model items are numbered, with one 👍/👎 row each under the message (at
   most 8; the rest are rated on the dashboard).
 - **Batch timing:** daytime digest items are summarized on arrival in the `batch` lane and stored.

@@ -184,13 +184,27 @@ async fn dashboard_feedback_and_hints(pool: PgPool) {
     let model_ev = event(&t, "model").await;
     let router = gm::web::router(t.app.state.clone());
     let cookie = session_cookie(&t, OWNER);
-    for id in [rule_ev, model_ev] {
-        let (status, _, _) = send(
+    for (id, query) in [(rule_ev, ""), (model_ev, "?after=1")] {
+        let (status, headers, _) = send(
             &router,
-            post_form(&format!("/events/{id}/feedback"), &cookie, "label=down"),
+            post_form(
+                &format!("/events/{id}/feedback{query}"),
+                &cookie,
+                "label=down",
+            ),
         )
         .await;
         assert_eq!(status, 303);
+        assert_eq!(headers["location"], format!("/{query}#event-{id}"));
+        let location = headers["location"]
+            .to_str()
+            .unwrap()
+            .split('#')
+            .next()
+            .unwrap();
+        let (_, _, returned) = send(&router, get(location, Some(&cookie))).await;
+        assert!(returned.contains(&format!(r#"id="event-{id}""#)));
+        assert!(returned.contains("You marked 👎"));
     }
     let (status, _, _) = send(
         &router,

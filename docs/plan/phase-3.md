@@ -78,7 +78,7 @@ log is kept forever (metadata only).
      `chat_messages` row and the publish share one transaction (unique key dedupes re-polled updates).
    - `i:` callback → `user.instruction{intent}`; `a:` callback → `approval.decision`, then remove the
      buttons; `f:` callback → feedback (2C).
-   - Commands: `/help`, `/status`, `/pause`, `/resume` (flag in `system_settings`; `notify` defers
+   - Commands: `/help`, `/status`, `/sync` (check Gmail now and reply with its result), `/pause`, `/resume` (flag in `system_settings`; `notify` defers
      while it is on, `/resume` releases the held jobs), `/language [name]` (same validation as the
      Settings page).
    - A message that replies to nothing gets the usage text, without a model call.

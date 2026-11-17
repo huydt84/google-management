@@ -59,14 +59,47 @@ pub async fn event(pool: &PgPool, id: i64) -> sqlx::Result<Option<Event>> {
     .await
 }
 
-pub async fn recent_events(pool: &PgPool, limit: i64) -> sqlx::Result<Vec<Event>> {
-    sqlx::query_as::<_, Event>(
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum EventCursor {
+    #[default]
+    Latest,
+    Before(i64),
+    After(i64),
+}
+
+/// The nearest `limit` events in the requested direction, displayed newest first.
+pub async fn recent_events(
+    pool: &PgPool,
+    limit: i64,
+    cursor: EventCursor,
+) -> sqlx::Result<Vec<Event>> {
+    let mut query = sqlx::QueryBuilder::new(
         "SELECT id, account, source, kind, external_id, status, rule, data, summary, created_at
-         FROM events ORDER BY id DESC LIMIT $1",
-    )
-    .bind(limit)
-    .fetch_all(pool)
-    .await
+         FROM events",
+    );
+    match cursor {
+        EventCursor::Latest => {}
+        EventCursor::Before(id) => {
+            query.push(" WHERE id < ").push_bind(id);
+        }
+        EventCursor::After(id) => {
+            query.push(" WHERE id > ").push_bind(id);
+        }
+    }
+    query.push(if matches!(cursor, EventCursor::After(_)) {
+        " ORDER BY id ASC LIMIT "
+    } else {
+        " ORDER BY id DESC LIMIT "
+    });
+    let mut events = query
+        .push_bind(limit)
+        .build_query_as::<Event>()
+        .fetch_all(pool)
+        .await?;
+    if matches!(cursor, EventCursor::After(_)) {
+        events.reverse();
+    }
+    Ok(events)
 }
 
 pub async fn count_by(pool: &PgPool, table: &str) -> sqlx::Result<Vec<(String, i64)>> {

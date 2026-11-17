@@ -93,7 +93,7 @@ async fn model_check_only_in_model_hours_and_alerts_are_silent_at_night(pool: Pg
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
-async fn lag_and_reconnect_show_in_the_digest_system_section(pool: PgPool) {
+async fn digest_reports_reconnect_but_not_sync_lag(pool: PgPool) {
     let t = test_app(pool, |_| {}, None).await;
     mock_ready(&t.server, true).await;
     t.connect_owner().await;
@@ -129,7 +129,63 @@ async fn lag_and_reconnect_show_in_the_digest_system_section(pool: PgPool) {
         .await
         .unwrap();
     let text = &t.sent()[0].text;
-    assert!(text.contains("⚠️ System\n• Gmail not synced for 25 min\n• Gmail needs to be reconnected: other@example.com"), "{text}");
+    assert!(
+        text.contains("⚠️ System\n• Gmail needs to be reconnected: other@example.com"),
+        "{text}"
+    );
+    assert!(!text.contains("not synced"), "{text}");
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn sync_lag_and_recovery_never_send_automatic_telegram_messages(pool: PgPool) {
+    for hour in [10, 23] {
+        let t = test_app(pool.clone(), day_hours, Some(local(hour, 0))).await;
+        t.connect_owner().await;
+        let stale = local(hour, 0).with_timezone(&chrono::Utc) - chrono::Duration::hours(1);
+        sqlx::query(
+            "INSERT INTO gmail_state (email, history_id, last_sync_at) VALUES ($1, 1, $2)
+                     ON CONFLICT (email) DO UPDATE SET last_sync_at = EXCLUDED.last_sync_at",
+        )
+        .bind(OWNER)
+        .bind(stale)
+        .execute(&pool)
+        .await
+        .unwrap();
+        t.app.health.tick().await.unwrap();
+        age_incident(&t, "ingest_lag", 20).await;
+        t.app.health.tick().await.unwrap();
+        assert!(
+            t.sent().is_empty(),
+            "sync lag must not interrupt the owner at {hour}:00"
+        );
+        assert!(
+            t.app
+                .health
+                .incidents()
+                .await
+                .unwrap()
+                .iter()
+                .any(|(name, _)| name == "ingest_lag")
+        );
+
+        // An incident announced by an older build must also recover without sending a message.
+        sqlx::query("UPDATE health_state SET alerted_at = $1 WHERE check_name = 'ingest_lag'")
+            .bind(stale)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE gmail_state SET last_sync_at = $1")
+            .bind(local(hour, 0).with_timezone(&chrono::Utc))
+            .execute(&pool)
+            .await
+            .unwrap();
+        t.app.health.tick().await.unwrap();
+        assert!(
+            t.sent().is_empty(),
+            "sync recovery must not interrupt the owner"
+        );
+        assert!(t.app.health.incidents().await.unwrap().is_empty());
+    }
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]

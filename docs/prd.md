@@ -103,7 +103,7 @@ carried over to Phase 1.
 | US-2.4 | I tell it when it got it wrong. | 👍/👎 buttons; feedback stored; shown in `gm eval`. |
 | US-2.5 | Model work happens during the day. | gm runs model work 09:00–19:00 only; the model process itself is managed by mlx-air. |
 | US-2.6 | I can measure model quality before changing models or prompts. | `gm eval` on the local eval set (≤ 200 mails). |
-| US-2.7 | I'm alerted if the system is unhealthy. | Telegram alert after 15 minutes of dead jobs, ingest lag, model down or token invalid; dashboard health panel. |
+| US-2.7 | I'm alerted if action is needed to restore the system. | Telegram alert after 15 minutes of dead jobs, model down or token invalid; sync lag stays on the dashboard without Telegram failure or recovery messages. |
 | US-2.8 | I can retry failed jobs. | Dead-letter page. |
 | US-2.9 | I can see which ignored senders are frequent. | Ignored-sender counts; promote one to the newsletter list. |
 
@@ -114,7 +114,7 @@ carried over to Phase 1.
 | US-3.1 | I tap **Translate** and get the full mail in my translation language. | Reply in the same chat, at any hour. |
 | US-3.2 | I tap **Analyze** and get key points, deadlines, amounts and phishing warnings. | Structured reply. |
 | US-3.3 | I reply "tell them Tuesday works" and get a draft to approve. | Draft in the right thread to the original sender; sent only after Approve; re-checked before sending; I can ask for changes by replying to the preview. |
-| US-3.4 | `/pause`, `/resume`, `/status`, `/language` work from my chat only. | Other chats ignored. `/pause` holds notifications until `/resume`; the digest and alerts still come. |
+| US-3.4 | `/pause`, `/resume`, `/status`, `/sync`, `/language` work from my chat only. | Other chats ignored. `/sync` checks Gmail and replies with its result at any hour, preserving mail notification rules. `/pause` holds notifications until `/resume`; the digest and alerts still come. |
 | US-3.5 | Approvals I ignore expire. | 24 h. |
 | US-3.6 | A message that isn't about a mail gets help, not a guess. | Usage text, no model call. |
 | US-3.7 | I can approve from the dashboard too and see what was sent. | `/tasks`: pending approvals, recent tasks, audit log. |

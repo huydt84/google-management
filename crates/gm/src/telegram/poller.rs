@@ -9,7 +9,7 @@
 //! - A reply to a bot message → `user.instruction` with the owner's words for the mail, task or
 //!   approval that message belongs to (`chat_messages`). The incoming message is recorded in the
 //!   same transaction as the publish, so a re-polled update is not handled twice.
-//! - Commands: `/help`, `/status`, `/pause`, `/resume`, `/language [name]`.
+//! - Commands: `/help`, `/status`, `/sync`, `/pause`, `/resume`, `/language [name]`.
 //! - Anything else gets a short usage hint.
 
 use std::sync::Arc;
@@ -23,6 +23,8 @@ use super::{Callback, ChatLog, MessageRefs, PAUSED_KEY, TelegramClient, parse_ca
 use crate::bus::Bus;
 use crate::digest::ProblemSource;
 use crate::feedback::FeedbackReceived;
+use crate::gmail::ingest::GmailIngestor;
+use crate::google::GoogleError;
 use crate::i18n::Tr;
 use crate::notify::{Button, Keyboard, Notifier, OutgoingMessage};
 use crate::tasks::{ApprovalDecision, UserInstruction};
@@ -44,6 +46,7 @@ pub struct TelegramPoller {
     pub chat: ChatLog,
     pub user_settings: UserSettingsStore,
     pub owner: String,
+    pub ingestor: Arc<GmailIngestor>,
     /// Current health problems for `/status`.
     pub problems: Option<Arc<dyn ProblemSource>>,
     pub model: std::sync::Arc<crate::model::ModelControl>,
@@ -259,6 +262,16 @@ impl TelegramPoller {
                 tr.args("cmd-resumed", &[("count", n.to_string())])
             }
             "status" => self.status_text(tr).await?,
+            "sync" => match self.ingestor.sync(&self.owner).await {
+                Ok(count) => tr.args("cmd-sync-done", &[("count", count.to_string())]),
+                Err(GoogleError::NotConnected(_) | GoogleError::NeedsReconnect(_)) => {
+                    tr.get("cmd-sync-connect")
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Telegram manual Gmail sync failed");
+                    tr.get("cmd-sync-failed")
+                }
+            },
             "language" => {
                 let mut s = self.user_settings.get(&self.owner).await?;
                 if arg.is_empty() {

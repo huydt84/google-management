@@ -1,9 +1,9 @@
 //! Health checks and alerts (workstream 2E, ADR-0016).
 //!
 //! Every minute: dead jobs, ingest lag, model down during model hours, accounts needing a
-//! reconnect. A check failing for 15 minutes sends one Telegram alert per incident (silent at
-//! night), and a recovery message when it passes again. The dashboard panel and the digest's
-//! "System" section show the same checks.
+//! reconnect. Checks other than ingest lag send one Telegram alert after 15 minutes (silent at
+//! night), and a recovery message when they pass again. Ingest lag stays on the dashboard and
+//! in `gm status`, without automatic Telegram messages.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -67,6 +67,10 @@ pub struct CheckResult {
 }
 
 impl CheckResult {
+    fn alerts_telegram(&self) -> bool {
+        self.name != "ingest_lag"
+    }
+
     pub fn message(&self, tr: &Tr) -> String {
         tr.args(
             &format!("health-{}", self.name.replace('_', "-")),
@@ -163,6 +167,7 @@ impl Health {
         let now = self.now();
         let tr = self.user_settings.tr(&self.owner).await;
         for r in self.evaluate().await? {
+            let alerts_telegram = r.alerts_telegram();
             match r.failing {
                 None => {}
                 Some(true) => {
@@ -177,7 +182,7 @@ impl Health {
                     .bind(&msg)
                     .fetch_one(&self.pool)
                     .await?;
-                    if alerted.is_none() && now - since >= ALERT_AFTER {
+                    if alerts_telegram && alerted.is_none() && now - since >= ALERT_AFTER {
                         let minutes = (now - since).num_minutes().to_string();
                         let text = tr.args(
                             "health-alert",
@@ -202,7 +207,7 @@ impl Health {
                     .bind(r.name)
                     .fetch_optional(&self.pool)
                     .await?;
-                    if let Some((Some(_), detail)) = gone {
+                    if let Some((Some(_), detail)) = gone.filter(|_| alerts_telegram) {
                         tracing::info!(check = r.name, "health recovered");
                         self.send(tr.args("health-recovered", &[("problem", detail)]))
                             .await;
@@ -238,7 +243,7 @@ impl crate::digest::ProblemSource for Health {
         match self.evaluate().await {
             Ok(results) => results
                 .iter()
-                .filter(|r| r.failing == Some(true))
+                .filter(|r| r.failing == Some(true) && r.alerts_telegram())
                 .map(|r| r.message(tr))
                 .collect(),
             Err(e) => {

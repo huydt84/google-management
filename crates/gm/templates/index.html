@@ -1,4 +1,16 @@
 {% extends "base.html" %}
+{% macro pagination() %}
+{% if paginated %}
+<nav class="pagination" aria-label="{{ tr.get("events-pagination") }}">
+  <span class="muted">{{ tr.args("events-shown", [("count", events.len().to_string())]) }}</span>
+  <div class="pagination-links">
+    {% if browsing_history %}<a href="/#events-title">{{ tr.get("events-latest") }}</a>{% endif %}
+    {% if newer_url.is_empty() %}<span class="btn" aria-disabled="true">{{ tr.get("events-newer") }}</span>{% else %}<a class="btn" rel="prev" href="{{ newer_url }}">{{ tr.get("events-newer") }}</a>{% endif %}
+    {% if older_url.is_empty() %}<span class="btn" aria-disabled="true">{{ tr.get("events-older") }}</span>{% else %}<a class="btn" rel="next" href="{{ older_url }}">{{ tr.get("events-older") }}</a>{% endif %}
+  </div>
+</nav>
+{% endif %}
+{% endmacro %}
 {% block style %}
   /* Status row: four facts, one line each, no cards. */
   .status { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); border:1px solid var(--rule);
@@ -40,6 +52,12 @@
   /* Mail list. Left: the mail. Right: a read-only record of where it went (colour = route).
      Only the row below, under its question, holds buttons. */
   .events { list-style:none; margin:0; padding:0; border-top:1px solid var(--rule); }
+  .pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin:12px 0; font-size:14px; }
+  .pagination-links { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  .pagination-links > a:not(.btn) { display:inline-flex; align-items:center; min-height:44px; margin-right:8px; }
+  .pagination .btn { min-height:44px; }
+  .pagination [aria-disabled="true"] { color:var(--graphite); background:var(--paper); cursor:default; }
+  #events-title { scroll-margin-top:16px; }
   .ev { position:relative; padding:14px 0 14px 18px; border-bottom:1px solid var(--rule-soft);
         display:grid; grid-template-columns:minmax(0,1fr) auto 230px; gap:2px 16px; }
   .ev-main { grid-column:1; grid-row:1 / span 2; }
@@ -192,8 +210,9 @@
       </div>
     </details>
   </div>
+  {% call pagination() %}
   {% if events.is_empty() %}
-    <p class="empty">{{ tr.get("no-events") }}</p>
+    <p class="empty">{% if browsing_history %}{{ tr.get("events-page-empty") }}{% else %}{{ tr.get("no-events") }}{% endif %}</p>
   {% else %}
   <ol class="events">
     {% for e in events %}
@@ -228,11 +247,11 @@
           {% else %}<p class="hint">{{ tr.args("feedback-rule-hint", [("rule", e.rule.clone())]) }}</p>{% endif %}
         {% endif %}
         <div class="ev-act" role="group" aria-label="{{ tr.get("feedback") }}">
-          <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="up"><button class="btn" title="{{ tr.get("feedback") }}" aria-label="👍 {{ tr.get("feedback") }}" aria-pressed="{% if e.feedback == "up" %}true{% else %}false{% endif %}">👍</button></form>
-          <form method="post" action="/events/{{ e.id }}/feedback"><input type="hidden" name="label" value="down"><button class="btn" title="{{ tr.get("feedback") }}" aria-label="👎 {{ tr.get("feedback") }}" aria-pressed="{% if e.feedback == "down" %}true{% else %}false{% endif %}">👎</button></form>
+          <form method="post" action="/events/{{ e.id }}/feedback{{ page_query }}"><input type="hidden" name="label" value="up"><button class="btn" title="{{ tr.get("feedback") }}" aria-label="👍 {{ tr.get("feedback") }}" aria-pressed="{% if e.feedback == "up" %}true{% else %}false{% endif %}">👍</button></form>
+          <form method="post" action="/events/{{ e.id }}/feedback{{ page_query }}"><input type="hidden" name="label" value="down"><button class="btn" title="{{ tr.get("feedback") }}" aria-label="👎 {{ tr.get("feedback") }}" aria-pressed="{% if e.feedback == "down" %}true{% else %}false{% endif %}">👎</button></form>
           <details class="eval">
             <summary class="btn">{% if e.in_eval %}{{ tr.get("eval-update") }}{% else %}{{ tr.get("eval-add") }}{% endif %}</summary>
-            <form method="post" action="/events/{{ e.id }}/eval" class="row eval-form">
+            <form method="post" action="/events/{{ e.id }}/eval{{ page_query }}" class="row eval-form">
               <label for="expected-{{ e.id }}">{{ tr.get("eval-expected") }}</label>
               <select id="expected-{{ e.id }}" name="expected">
                 <option value="notify">{{ tr.get("eval-notify") }}</option>
@@ -247,6 +266,7 @@
     </li>
     {% endfor %}
   </ol>
+  {% call pagination() %}
   {% endif %}
 </section>
 

@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{AppError, Nav, SharedState, current_owner};
+use crate::db::EventCursor;
 use crate::i18n::{Tr, UI_LANGUAGES};
 use crate::user_settings::{COMMON_LANGUAGES, UserSettings};
 
@@ -102,6 +103,11 @@ struct IndexPage {
     /// Mail events among `events`, the base of the route counts.
     mail_total: usize,
     events: Vec<EventRow>,
+    page_query: String,
+    newer_url: String,
+    older_url: String,
+    paginated: bool,
+    browsing_history: bool,
     /// Outcome of "Add to eval": message key, or empty.
     banner: String,
 }
@@ -267,6 +273,27 @@ async fn model_state(state: &SharedState) -> &'static str {
 pub struct IndexQuery {
     #[serde(default)]
     eval: String,
+    before: Option<i64>,
+    after: Option<i64>,
+}
+
+impl IndexQuery {
+    fn cursor(&self) -> Option<EventCursor> {
+        match (self.before, self.after) {
+            (None, None) => Some(EventCursor::Latest),
+            (Some(id), None) if id > 0 => Some(EventCursor::Before(id)),
+            (None, Some(id)) if id > 0 => Some(EventCursor::After(id)),
+            _ => None,
+        }
+    }
+}
+
+fn page_query(cursor: EventCursor) -> String {
+    match cursor {
+        EventCursor::Latest => String::new(),
+        EventCursor::Before(id) => format!("?before={id}"),
+        EventCursor::After(id) => format!("?after={id}"),
+    }
 }
 
 pub async fn index(
@@ -278,6 +305,9 @@ pub async fn index(
         return render(&LoginPage {
             tr: Tr::new(&state.user_settings.defaults().ui_language),
         });
+    };
+    let Some(cursor) = q.cursor() else {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
     };
     let prefs = state.user_settings.get(&email).await?;
     let account = state.accounts.get(&email).await?;
@@ -312,12 +342,25 @@ pub async fn index(
     let missing_scopes = account
         .as_ref()
         .is_some_and(|a| required.iter().any(|r| !a.scopes.0.iter().any(|g| g == r)));
-    let events = with_feedback(
-        &state,
-        crate::db::recent_events(&state.pool, 50).await?,
-        &tr,
-    )
-    .await?;
+    let events = crate::db::recent_events(&state.pool, 50, cursor).await?;
+    let (mut newer_url, mut older_url) = (String::new(), String::new());
+    if let (Some(first), Some(last)) = (events.first(), events.last()) {
+        let (has_newer, has_older): (bool, bool) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM events WHERE id > $1),
+                    EXISTS(SELECT 1 FROM events WHERE id < $2)",
+        )
+        .bind(first.id)
+        .bind(last.id)
+        .fetch_one(&state.pool)
+        .await?;
+        if has_newer {
+            newer_url = format!("/{}#events-title", page_query(EventCursor::After(first.id)));
+        }
+        if has_older {
+            older_url = format!("/{}#events-title", page_query(EventCursor::Before(last.id)));
+        }
+    }
+    let events = with_feedback(&state, events, &tr).await?;
     let health = health_rows(&state, &tr).await?;
     let mail_total = events.iter().filter(|e| e.is_gmail).count();
     let routes = crate::rules::Action::FINAL
@@ -373,6 +416,11 @@ pub async fn index(
         routes,
         mail_total,
         events,
+        page_query: page_query(cursor),
+        paginated: cursor != EventCursor::Latest || !newer_url.is_empty() || !older_url.is_empty(),
+        browsing_history: cursor != EventCursor::Latest,
+        newer_url,
+        older_url,
         banner: match q.eval.as_str() {
             "added" | "updated" | "full" | "gone" => format!("eval-{}", q.eval),
             _ => String::new(),
@@ -622,7 +670,10 @@ pub async fn events_json(
         )
             .into_response());
     }
-    Ok(Json(crate::db::recent_events(&state.pool, 100).await?).into_response())
+    Ok(
+        Json(crate::db::recent_events(&state.pool, 100, EventCursor::Latest).await?)
+            .into_response(),
+    )
 }
 
 pub async fn healthz(State(state): State<SharedState>) -> Response {
@@ -956,6 +1007,7 @@ pub async fn event_feedback(
     State(state): State<SharedState>,
     jar: CookieJar,
     axum::extract::Path(id): axum::extract::Path<i64>,
+    Query(q): Query<IndexQuery>,
     Form(f): Form<FeedbackForm>,
 ) -> Result<Response, AppError> {
     if current_owner(&state, &jar).is_none() {
@@ -964,8 +1016,11 @@ pub async fn event_feedback(
     if !matches!(f.label.as_str(), "up" | "down") {
         return Ok(StatusCode::BAD_REQUEST.into_response());
     }
+    let Some(cursor) = q.cursor() else {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    };
     crate::feedback::record(&state.pool, id, &f.label, "web", chrono::Utc::now()).await?;
-    Ok(Redirect::to(&format!("/#event-{id}")).into_response())
+    Ok(Redirect::to(&format!("/{}#event-{id}", page_query(cursor))).into_response())
 }
 
 #[derive(Deserialize)]
@@ -979,6 +1034,7 @@ pub async fn event_eval(
     State(state): State<SharedState>,
     jar: CookieJar,
     axum::extract::Path(id): axum::extract::Path<i64>,
+    Query(q): Query<IndexQuery>,
     Form(f): Form<EvalForm>,
 ) -> Result<Response, AppError> {
     if current_owner(&state, &jar).is_none() {
@@ -987,8 +1043,13 @@ pub async fn event_eval(
     let Some(expected) = crate::rules::Action::parse_final(&f.expected) else {
         return Ok(StatusCode::BAD_REQUEST.into_response());
     };
-    let back =
-        |outcome: &str| Redirect::to(&format!("/?eval={outcome}#event-{id}")).into_response();
+    let Some(cursor) = q.cursor() else {
+        return Ok(StatusCode::BAD_REQUEST.into_response());
+    };
+    let query = page_query(cursor).replace('?', "&");
+    let back = |outcome: &str| {
+        Redirect::to(&format!("/?eval={outcome}{query}#event-{id}")).into_response()
+    };
     let Some(ev) = crate::db::event(&state.pool, id).await? else {
         return Ok(back("gone"));
     };

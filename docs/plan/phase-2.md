@@ -77,7 +77,7 @@ panel.
 
 1. Health checks every minute: dead jobs > 0, ingest lag > 10 min, model down during model hours,
    account `needs_reconnect`. A Telegram alert after 15 minutes of the same failure, one message per
-   incident, and a recovery message.
+   incident, and a recovery message, except ingest lag which is only shown locally.
 2. Dashboard health panel with the same checks.
 3. `/jobs?status=dead` with Retry (back to `pending`, attempts reset).
 4. `/senders`: counts of ignored mail by sender over 30 days, so a sender can be promoted to the

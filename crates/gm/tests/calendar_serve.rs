@@ -9,13 +9,11 @@ use gm::google::CALENDAR_READONLY;
 use serde_json::{Value, json};
 use sqlx::{ConnectOptions, PgPool};
 use tokio::process::Command;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{body_partial_json, method, path, query_param};
 use wiremock::{Mock, ResponseTemplate};
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
-async fn server_polls_calendar_delivers_telegram_and_shows_the_event_on_the_dashboard(
-    pool: PgPool,
-) {
+async fn server_delivers_calendar_and_manual_sync_without_automatic_sync_alerts(pool: PgPool) {
     let t = test_app(pool, |_| {}, None).await;
     t.connect_owner().await;
     t.app
@@ -26,6 +24,15 @@ async fn server_polls_calendar_delivers_telegram_and_shows_the_event_on_the_dash
         .unwrap();
     sqlx::query("INSERT INTO calendar_state (email, calendar_id, sync_token) VALUES ($1, 'primary', 'baseline')")
         .bind(OWNER).execute(&t.app.pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO gmail_state (email, history_id, last_sync_at) VALUES ($1, 100, now())",
+    )
+    .bind(OWNER)
+    .execute(&t.app.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO health_state (check_name, failing_since, alerted_at, detail) VALUES ('ingest_lag', now() - interval '20 minutes', now() - interval '5 minutes', 'Gmail not synced for 30 min')")
+        .execute(&t.app.pool).await.unwrap();
     let event = json!({"id": "live-invitation", "updated": "2026-11-17T01:00:00Z",
         "status": "confirmed", "summary": "<b>🚀 Server calendar smoke</b>",
         "htmlLink": "https://www.google.com/calendar/event?eid=fixture",
@@ -46,8 +53,17 @@ async fn server_polls_calendar_delivers_telegram_and_shows_the_event_on_the_dash
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"items": []})))
         .mount(&t.server)
         .await;
-    Mock::given(path("/gmail/v1/users/me/profile"))
+    Mock::given(path("/gmail/v1/users/me/history"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"historyId": "100"})))
+        .mount(&t.server)
+        .await;
+    Mock::given(path("/bottest-token/getUpdates"))
+        .and(body_partial_json(json!({"offset": 0})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "ok": true, "result": [text_update(1, 123, "/sync", None)]
+        })))
+        .expect(1)
+        .up_to_n_times(1)
         .mount(&t.server)
         .await;
     Mock::given(path("/bottest-token/getUpdates"))
@@ -56,6 +72,7 @@ async fn server_polls_calendar_delivers_telegram_and_shows_the_event_on_the_dash
                 .set_delay(Duration::from_millis(500))
                 .set_body_json(json!({"ok": true, "result": []})),
         )
+        .with_priority(10)
         .mount(&t.server)
         .await;
     Mock::given(method("POST"))
@@ -117,7 +134,19 @@ async fn server_polls_calendar_delivers_telegram_and_shows_the_event_on_the_dash
             .fetch_one(&t.app.pool)
             .await
             .unwrap();
-            if notified == 1 {
+            let requests = t.server.received_requests().await.unwrap();
+            let sync_replied = requests.iter().any(|r| {
+                r.url.path().ends_with("/sendMessage")
+                    && r.body_json::<Value>().unwrap()["text"]
+                        == "Gmail checked. New emails found: 0."
+            });
+            let incidents: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM health_state WHERE check_name = 'ingest_lag'",
+            )
+            .fetch_one(&t.app.pool)
+            .await
+            .unwrap();
+            if notified == 1 && sync_replied && incidents == 0 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -181,6 +210,11 @@ async fn server_polls_calendar_delivers_telegram_and_shows_the_event_on_the_dash
             .filter(|r| r.url.path().ends_with("/sendMessage"))
             .map(|r| serde_json::from_slice(&r.body).unwrap())
             .collect();
+        assert_eq!(
+            messages.len(),
+            2,
+            "only the calendar notice and requested sync result: {messages:?}"
+        );
         let calendar = messages
             .iter()
             .find(|m| {
