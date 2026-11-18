@@ -381,6 +381,9 @@ All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) throug
 2. User message: `Output language: <language>`, then the mail (headers, attachment names, cleaned and
    capped body) inside `<email>…</email>`. Any `<email` / `</email` in the content is neutralized.
    The summary task appends the mail's trusted links, numbered, in a `<links>` block after the mail.
+3. Tasks that answer in the owner's language (summary, digest line, translate, analyze; `Task::in_owner_language`)
+   end the user message by restating it: `Output language: <language>. Write every value in the JSON
+   in <language>.` A thinking model otherwise tends to answer in the language it reasoned in.
 
 ### Inference profile
 
@@ -404,8 +407,10 @@ models:
     tiers:
       easy:   {thinking: false}
       medium: {thinking: false}
-      hard:   {thinking: true, thinking_budget: 1024, language_check: true}
+      hard:   {thinking: true, thinking_budget: 1024}
 ```
+
+Per tier, `language_check: true` (default `false`) turns on the language check below.
 
 Unknown keys, a missing tier, `thinking` without a `thinking_budget` above 0 and a budget without
 `thinking` are errors. A model without a section, or no file, gets the built-in defaults (the values
@@ -418,8 +423,8 @@ How a task runs (`LlmClient::run`), with the task's answer cap from the tables b
   thinking (`<task>-nothink`, answer cap, temperature 0.2, plus its format retry).
 - **No thinking:** one call with the tag at temperature 0.2; output that doesn't parse is asked once
   more with a format reminder at temperature 0 (`<task>-retry`).
-- **Language check** (only for tasks whose output is in the owner's language: summary, digest line,
-  translate, analyze): a parsed answer in another language is asked once more with the same prompt
+- **Language check** (when the tier sets it, and only for tasks whose output is in the owner's
+  language: summary, digest line, translate, analyze): a parsed answer in another language is asked once more with the same prompt
   at temperature 0 (`<task>-language`) when not thinking. The last answer is used whatever its
   language.
 

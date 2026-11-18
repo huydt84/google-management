@@ -116,6 +116,7 @@ question the premise instead of trying a third.
 | Test timestamps use the clock read by the code under test | Use `Utc::now()` or `FixedClock` for host-clock comparisons, not Postgres `now()` |
 | Feature verification includes the actual runtime flow | Run the relevant command or service and inspect its result; report observations in chat |
 | Build freshness comparisons account for second-resolution process times | `a_build_in_the_same_second_as_the_start_is_not_stale` in `status.rs` |
+| The repo's `llm.yaml` is a valid profile with a section for the default model | `the_repo_profile_is_valid_and_covers_the_default_model` in `llm/profile.rs` |
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and

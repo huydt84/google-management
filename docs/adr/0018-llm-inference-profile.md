@@ -23,7 +23,7 @@ Qwen3-8B also tends to answer in English when asked for Vietnamese or Japanese.
   `no_think_tag`, and per tier `thinking`, `thinking_budget` (output tokens added to the task's
   answer cap) and `language_check` (an answer in another language than the owner's is asked again).
 - Each call uses the section of the model it is sent to. A missing file or section gives built-in
-  defaults (Qwen3: hard thinks with 1,024 tokens and checks language) with a warning; an invalid file
+  defaults (Qwen3: hard thinks with 1,024 tokens; no tier checks language) with a warning; an invalid file
   stops `gm serve`. `gm status` shows the active profile in one line.
 - Code calls `LlmClient::run(task, …)` with the answer cap only; it never chooses thinking,
   temperature or retries itself. A failed thinking answer falls back to the answer without thinking;
@@ -33,8 +33,10 @@ Qwen3-8B also tends to answer in English when asked for Vietnamese or Japanese.
 
 - Answer caps in code are the answer alone; a thinking task's `max_tokens` is the cap plus the
   tier's budget (analyze 1,024 + 1,024, reply 512 + 1,024 by default).
-- A wrong-language thinking answer costs a second call. Turning thinking off for the hard tier in
-  `llm.yaml` trades that for less careful analysis.
+- Answers in the owner's language end their prompt by restating that language after the mail,
+  which keeps a thinking answer in that language most of the time. A tier can also set
+  `language_check` to redo a wrong-language answer, at the cost of a second call; the Qwen3 profile
+  leaves it off and accepts an occasional answer in another language.
 - Moving a task to another tier is a code change (with tests); tuning a tier is a file edit and a
   restart.
 

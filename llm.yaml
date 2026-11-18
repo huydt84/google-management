@@ -16,4 +16,4 @@ models:
     tiers:
       easy:   {thinking: false}
       medium: {thinking: false}
-      hard:   {thinking: true, thinking_budget: 1024, language_check: true}
+      hard:   {thinking: true, thinking_budget: 1024}
