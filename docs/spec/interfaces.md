@@ -180,6 +180,7 @@ reviewed, tested file.
   chunks of about 1,200 tokens, at most 6; the rest is marked as not translated.
 - **Analyze** → the subject, a verdict (`✅ Looks safe.` / `⚠️ Looks suspicious.` / `🚨 Looks like
   phishing.`), then the non-empty sections Key points, Deadlines, Amounts, Warning signs, Next steps.
+  The headings follow the UI language; the items are in the summary language.
 - **Reply** without words (the button) asks "What should the reply say?"; the answer to that question
   continues the task. With words, gm writes a Gmail draft in the thread and sends a preview:
 
@@ -192,13 +193,20 @@ reviewed, tested file.
 
   You can edit the draft in Gmail before approving, or answer this message with changes.
   [✅ Approve] [✖️ Reject]          (callback data a:<approval_id>:y|n)
+  [📝 Use my exact words]           (callback data a:<approval_id>:w)
   ```
 
-  Answering the preview with changes expires that approval, rewrites the same draft and sends a new
-  preview. Approve sends the draft as it is in Gmail if it still matches the preview; if it was
+  The body keeps the owner's words when they already read as the message in the reply's language;
+  otherwise the model writes the short message they describe. It adds no thanks, promises, questions
+  or facts the owner did not give, and a greeting or closing only when the owner's words have one or
+  the mail is formal and the body was written from a description. Answering the preview with changes
+  supersedes that approval, rewrites the same draft and sends a new preview headed `🔄 Updated draft.
+  The previous one can no longer be approved.` **Use my exact words** does the same without the
+  model: the owner's latest message for this reply (the change request, else the original words)
+  becomes the body as written. Approve sends the draft as it is in Gmail if it still matches the preview; if it was
   edited in Gmail, nothing is sent and the new version is proposed again (`⚠️ The draft changed in
-  Gmail…`). Then `✅ Sent to <to>: <subject>`. Reject leaves the draft in Gmail. Approve/Reject
-  buttons are removed once decided, expired or replaced. Approvals expire after `GM_APPROVAL_TTL_H`.
+  Gmail…`). Then `✅ Sent to <to>: <subject>`. Reject leaves the draft in Gmail. The preview's
+  buttons are removed once it is decided, expired or superseded. Approvals expire after `GM_APPROVAL_TTL_H`.
 - Owner requests run whenever the model answers, at any hour; if it isn't answering, the owner is
   told once ("⏳ The model isn't answering…") and the task retries every `GM_LLM_UNAVAILABLE_RETRY_S`.
 
@@ -419,12 +427,27 @@ Batch lane. Stored in `events.summary`.
 |----------|--------|-------|--------|------|
 | Intent router | `router.md` | the owner's words in `<instruction>`, no mail | `{"intent": "translate" \| "analyze" \| "reply" \| "unknown", "language": "…"}` | 60 tokens; unusable → `unknown`; a language failing the Settings check is dropped |
 | Translate | `translate.md` | one chunk of subject + cleaned body in `<email>` | `{"translation": "…"}` | 2,048 tokens per chunk |
-| Analyze | `analyze.md` | the mail, thinking on (temperature 0.6), then a JSON pass without thinking if needed | `{"key_points", "deadlines", "amounts", "risks", "next_steps": [..], "verdict": "safe" \| "suspicious" \| "phishing"}` | 2,048 tokens |
-| Reply body | `reply.md` | the owner's words (trusted) before the mail; on an edit, the current draft and the requested change | `{"body": "…"}`: the body only. Recipients, subject and threading headers are set by code from the original mail | 1,536 tokens |
+| Analyze | `analyze.md` | the mail, thinking on (temperature 0.6), then a JSON pass without thinking if the answer is unusable or in the wrong language; a mail detected as a forward gets a `Forwarded: yes` line from code before `<email>` | `{"key_points", "deadlines", "amounts", "risks", "next_steps": [..], "verdict": "safe" \| "suspicious" \| "phishing"}` | 2,048 tokens |
+| Reply body | `reply.md` | the owner's words (trusted) before the mail; on an edit, the current draft and the requested change; not called for **Use my exact words** | `{"body": "…"}`: the body only. Recipients, subject and threading headers are set by code from the original mail | 1,536 tokens |
 
 A reply cut off mid-JSON keeps the text recovered so far; other output that still isn't JSON after the
 retry is used as plain text (thinking removed). For Reply the owner sees it in the preview before
 anything can be sent.
+
+Analyze's language check ([`recipes/mod.rs`](../../crates/gm/src/recipes/mod.rs) `in_language`)
+recognizes Vietnamese (at least a fifth of the words carry Vietnamese-only marks), Japanese (kana
+present, kana and kanji at least half the letters), Korean, Chinese and Thai (their script at least
+half the letters). A thinking answer in another language is replaced by the answer without thinking,
+which is used whatever its language. Other output languages are not checked.
+
+Forward detection ([`gmail/message.rs`](../../crates/gm/src/gmail/message.rs) `is_forward`): a
+`Fwd:` / `FW:` / `転送:` subject, or a forward marker line in the body (`---------- Forwarded message
+---------`, `転送メッセージ` / `転送されたメッセージ`, `Thư được chuyển tiếp`, `Begin forwarded message:`).
+The fact line carries no mail text; the original sender is read inside `<email>`.
+
+`system.md` forbids guessing anyone's gender, age or relationship: Vietnamese output uses neutral
+forms of address (`bạn`, `quý khách`, or the name with no title) and Japanese keeps the mail's own
+honorific.
 
 ## Calendar notifications and agenda
 

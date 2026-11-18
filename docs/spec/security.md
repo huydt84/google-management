@@ -45,7 +45,7 @@ Code for the main controls: host/origin guard and session in [`web/`](../../crat
 | T12 | A settings value injects text into prompts | Settings are writable only by the signed-in owner; language names must match `^\p{L}[\p{L}\p{M} ()'\-]*$`, 2–40 characters; `ui_language` from a fixed list. | 1 |
 | T18 | Pub/Sub messages forged or replayed | A notification only names a mailbox to sync; gm then reads Gmail itself, so a forged message can at most cause an extra sync. Only active accounts are synced; malformed messages are dropped. The subscription lives in the owner's project, readable only with the owner's token. | 1 |
 | T13 | A bad `rules.yaml` edit hides security mail | Security rules are first in the file; `gm rules` and CI check every rule's examples; an invalid file keeps the previous rules. | 1 |
-| T14 | Stranger controls the bot | Only updates (presses, replies, commands) from `GM_TELEGRAM_CHAT_ID` are processed; others are logged and never answered with content. Callback data is parsed strictly (`f:<id>:up|down`, `i:<id>:translate|analyze|reply`, `a:<id>:y|n`, ids of at most 18 digits) and carries ids only; the handler loads everything else from the database. | 2 (buttons), 3 |
+| T14 | Stranger controls the bot | Only updates (presses, replies, commands) from `GM_TELEGRAM_CHAT_ID` are processed; others are logged and never answered with content. Callback data is parsed strictly (`f:<id>:up|down`, `i:<id>:translate|analyze|reply`, `a:<id>:y|n|w`, ids of at most 18 digits) and carries ids only; the handler loads everything else from the database. | 2 (buttons), 3 |
 | T15 | An action executes something other than what was approved | The approval payload is written once with the sha256 of its canonical JSON; the hash is checked again on approval (a mismatch refuses it). The send executor re-reads the live Gmail draft and sends only if recipients, subject, body hash and thread still match the preview; otherwise it proposes the new version instead. Approvals expire after `GM_APPROVAL_TTL_H` (24 h) and when the owner asks for a change. | 3 |
 | T16 | Replay / double execution | The approval row is locked and must be `pending`; the approving job records itself in `executing_job` and only that job may run or resume the executor; a draft that is gone but whose body is already in the thread as a sent message counts as sent. Every incoming Telegram message is recorded once; a re-polled tap or reply does nothing. | 3 |
 | T17 | Model invents a recipient or header | Recipients come only from the original mail's `Reply-To` / `From` (bare addresses, checked); subject, `In-Reply-To`, `References` and thread from its headers; header values are stripped of line breaks. The model writes only the body, which the owner reads in the preview. Nothing is sent without Approve. Tested end to end with a mail that asks to be forwarded. | 3 |
@@ -94,6 +94,9 @@ configuration. Tests and CI use `GM_SECRET_<NAME>` environment variables with th
 
 - Malware running as the owner can read the database and ask the Keychain for the master key.
 - A misleading but well-formed summary can still mislead; the original mail is one tap away.
+- Summaries, translations and analyses can repeat secrets the mail contains (passwords, one-time
+  codes); they then sit in the owner's Telegram chat like any other mail content. No masking is
+  applied.
 - Mail older than Gmail's history window during a long outage is only recovered for the last 2 days.
 - The OAuth app is the owner's own unverified Google Cloud project; it must be "In production" or
   refresh tokens expire after 7 days.

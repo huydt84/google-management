@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{owner_words, think_json};
+use super::{in_language, owner_words, think_json};
 use crate::i18n::Tr;
 use crate::llm::{parse_json_object, strip_think};
 use crate::tasks::{Intent, Recipe, RecipeContext, RecipeResult};
@@ -14,6 +14,24 @@ pub const ANALYZE_TASK: &str = include_str!("../../prompts/analyze.md");
 pub const MAX_OUTPUT_TOKENS: u32 = 2048;
 
 const SECTIONS: &[&str] = &["key_points", "deadlines", "amounts", "risks", "next_steps"];
+
+/// Told to the model before the mail when [`ParsedMessage::is_forward`] holds (`prompts/analyze.md`
+/// says how to judge it).
+///
+/// [`ParsedMessage::is_forward`]: crate::gmail::message::ParsedMessage::is_forward
+pub const FORWARDED: &str = "Forwarded: yes. The sender in \"From\" forwarded this mail; the \
+original sender is in the forwarded part.\n\n";
+
+/// Every item of every section, for the language check.
+pub fn analysis_text(o: &serde_json::Map<String, Value>) -> String {
+    SECTIONS
+        .iter()
+        .filter_map(|k| o.get(*k).and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 /// The model's JSON, if it has at least one known section or a verdict.
 pub fn parse_analysis(text: &str) -> Option<serde_json::Map<String, Value>> {
@@ -76,15 +94,22 @@ impl Recipe for Analyze {
                 owner_words(focus)
             ));
         }
+        if m.is_forward() {
+            // A fact from code only: Google content stays inside `<email>`.
+            block.push_str(FORWARDED);
+        }
         block.push_str(&cx.llm.email_block(&m, usize::MAX));
+        let language = &cx.settings.summary_language;
         let reply = think_json(
             cx.llm,
             "analyze",
             ANALYZE_TASK,
-            &cx.settings.summary_language,
+            language,
             &block,
             MAX_OUTPUT_TOKENS,
             parse_analysis,
+            // The thinking model can drift into English: retry without thinking.
+            |o| in_language(language, &analysis_text(o)) != Some(false),
         )
         .await?;
         let text = match reply.parsed {

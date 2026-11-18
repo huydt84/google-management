@@ -28,6 +28,9 @@ pub enum Callback {
     Intent { event_id: i64, intent: Intent },
     /// `a:<approval_id>:y|n`: Approve / Reject under a proposed action.
     Approval { approval_id: i64, approve: bool },
+    /// `a:<approval_id>:w`: "Use my exact words" under a reply draft: the owner's latest message
+    /// becomes the body, with no model.
+    ExactWords { approval_id: i64 },
     /// `f:<event_id>:up|down`: triage feedback ([`crate::feedback`]).
     Feedback { event_id: i64, label: &'static str },
 }
@@ -35,7 +38,7 @@ pub enum Callback {
 static INTENT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^i:(\d{1,18}):(translate|analyze|reply)$").unwrap());
 static APPROVAL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^a:(\d{1,18}):(y|n)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^a:(\d{1,18}):(y|n|w)$").unwrap());
 
 pub fn parse_callback(data: &str) -> Option<Callback> {
     if let Some(c) = INTENT_RE.captures(data) {
@@ -45,8 +48,12 @@ pub fn parse_callback(data: &str) -> Option<Callback> {
         });
     }
     if let Some(c) = APPROVAL_RE.captures(data) {
+        let approval_id = c[1].parse().ok()?;
+        if &c[2] == "w" {
+            return Some(Callback::ExactWords { approval_id });
+        }
         return Some(Callback::Approval {
-            approval_id: c[1].parse().ok()?,
+            approval_id,
             approve: &c[2] == "y",
         });
     }
@@ -65,9 +72,10 @@ pub fn intent_row(tr: &Tr, event_id: i64) -> Vec<Button> {
         .collect()
 }
 
-/// `[Approve] [Reject]` under a proposed action.
-pub fn approval_row(tr: &Tr, approval_id: i64) -> Vec<Button> {
-    vec![
+/// `[Approve] [Reject]` under a proposed action, and `[Use my exact words]` on its own row under a
+/// reply draft (`exact_words`).
+pub fn approval_rows(tr: &Tr, approval_id: i64, exact_words: bool) -> Vec<Vec<Button>> {
+    let mut rows = vec![vec![
         Button {
             text: tr.get("button-approve"),
             data: format!("a:{approval_id}:y"),
@@ -76,7 +84,14 @@ pub fn approval_row(tr: &Tr, approval_id: i64) -> Vec<Button> {
             text: tr.get("button-reject"),
             data: format!("a:{approval_id}:n"),
         },
-    ]
+    ]];
+    if exact_words {
+        rows.push(vec![Button {
+            text: tr.get("button-exact-words"),
+            data: format!("a:{approval_id}:w"),
+        }]);
+    }
+    rows
 }
 
 /// What a Telegram message refers to.
@@ -244,6 +259,10 @@ mod tests {
             })
         );
         assert_eq!(
+            parse_callback("a:7:w"),
+            Some(Callback::ExactWords { approval_id: 7 })
+        );
+        assert_eq!(
             parse_callback("f:3:up"),
             Some(Callback::Feedback {
                 event_id: 3,
@@ -269,7 +288,7 @@ mod tests {
         let max_id = 999_999_999_999_999_999; // 18 digits, the most the parser accepts
         for b in intent_row(&tr, max_id)
             .into_iter()
-            .chain(approval_row(&tr, max_id))
+            .chain(approval_rows(&tr, max_id, true).into_iter().flatten())
         {
             assert!(b.data.len() <= 64, "{}", b.data);
             assert!(parse_callback(&b.data).is_some(), "{}", b.data);

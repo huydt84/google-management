@@ -68,6 +68,20 @@ impl ParsedMessage {
             .collect()
     }
 
+    /// Whether the mail is a forward: a forward marker in the body (Gmail, Apple Mail and
+    /// Thunderbird, in English, Japanese and Vietnamese) or a `Fwd:` / `FW:` / `転送:` subject.
+    pub fn is_forward(&self) -> bool {
+        static SUBJECT: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?i)^\s*(fwd?|転送)\s*[:：]").unwrap());
+        static MARKER: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(
+                r"(?im)^\s*(-{2,}\s*(forwarded message|転送(された)?メッセージ|thư được chuyển tiếp)\s*-{2,}|begin forwarded message:)",
+            )
+            .unwrap()
+        });
+        SUBJECT.is_match(&self.subject) || MARKER.is_match(&self.body_text)
+    }
+
     pub fn gmail_link(&self, account: &str) -> String {
         format!(
             "https://mail.google.com/mail/?authuser={account}#all/{}",

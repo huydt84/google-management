@@ -26,7 +26,7 @@ use crate::google::gmail::GmailClient;
 use crate::i18n::Tr;
 use crate::llm::{LlmClient, LlmUnavailable};
 use crate::notify::{Keyboard, Notifier, OutgoingMessage, split_message};
-use crate::telegram::{ChatLog, MessageRefs, approval_row};
+use crate::telegram::{ChatLog, MessageRefs, approval_rows};
 use crate::topics;
 use crate::user_settings::UserSettingsStore;
 
@@ -141,6 +141,11 @@ impl TaskRuntime {
                     return Ok(Some(task_id)); // a redelivered job: already applied
                 }
                 let origin = json!({"last_origin": ins.origin_key});
+                let edit = match (text, ins.exact) {
+                    (Some(t), _) => Some(json!({"edit": t, "exact": false})),
+                    (None, true) => Some(json!({"exact": true})),
+                    (None, false) => None,
+                };
                 match (status.as_str(), text) {
                     ("needs_input", Some(t)) => {
                         sqlx::query(
@@ -158,11 +163,12 @@ impl TaskRuntime {
                         tx.commit().await?;
                         return Ok(Some(task_id));
                     }
-                    ("awaiting_approval", Some(t)) => {
-                        // An edit request in reply to the preview: the old approval can no longer
-                        // be approved; the recipe updates the draft and proposes again.
+                    ("awaiting_approval", _) if edit.is_some() => {
+                        // A change request in reply to the preview, or "Use my exact words": the
+                        // old approval is superseded; the recipe updates the draft and proposes
+                        // again.
                         let old: Vec<i64> = sqlx::query_scalar(
-                            "UPDATE approvals SET status = 'expired', updated_at = now()
+                            "UPDATE approvals SET status = 'superseded', updated_at = now()
                              WHERE task_id = $1 AND status = 'pending' RETURNING id",
                         )
                         .bind(task_id)
@@ -173,7 +179,7 @@ impl TaskRuntime {
                                 .publish(
                                     &mut tx,
                                     topics::TASK_REPLY,
-                                    &TaskReply::payload(task_id, ReplyKind::Expired, Some(id)),
+                                    &TaskReply::payload(task_id, ReplyKind::Superseded, Some(id)),
                                 )
                                 .await?;
                         }
@@ -182,7 +188,7 @@ impl TaskRuntime {
                                  reply_to = COALESCE($4, reply_to), updated_at = now() WHERE id = $1",
                         )
                         .bind(task_id)
-                        .bind(json!({"edit": t}))
+                        .bind(edit)
                         .bind(&origin)
                         .bind(ins.reply_to)
                         .execute(&mut *tx)
@@ -194,6 +200,10 @@ impl TaskRuntime {
                     _ => {}
                 }
             }
+        }
+        if ins.exact {
+            // The draft was decided or replaced meanwhile: the button has nothing to act on.
+            return Ok(None);
         }
         let Some(event_id) = event_id else {
             tracing::warn!(origin = %ins.origin_key, "instruction without a mail; ignored");
@@ -694,7 +704,8 @@ impl TaskRuntime {
                 if a.status != "pending" {
                     return Ok(Outcome::Done);
                 }
-                (a.preview, vec![approval_row(&tr, a.id)])
+                let exact_words = a.action == crate::recipes::reply::SEND_DRAFT;
+                (a.preview, approval_rows(&tr, a.id, exact_words))
             }
             ReplyKind::Done => (s("done"), vec![]),
             ReplyKind::Failed => (
@@ -705,7 +716,8 @@ impl TaskRuntime {
                 vec![],
             ),
             ReplyKind::Rejected => (tr.get("approval-rejected"), vec![]),
-            ReplyKind::Expired => return Ok(Outcome::Done),
+            // Buttons are gone (above); a superseded preview is followed by the new one.
+            ReplyKind::Expired | ReplyKind::Superseded => return Ok(Outcome::Done),
             ReplyKind::Unknown => (tr.get("chat-help-mail"), vec![]),
             ReplyKind::ModelStarting => (tr.get("task-model-starting"), vec![]),
             ReplyKind::Waiting => (tr.get("task-waiting"), vec![]),
