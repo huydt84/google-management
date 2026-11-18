@@ -51,7 +51,7 @@ A default you pick without asking goes under "Open questions" in
 
 For the big picture, see [docs/README.md](docs/README.md): PRD, architecture, ADRs, specs and plan.
 
-Several agent sessions can work on this repo at once. Always work under the assumption that the git history will be contaminated by other agents at any moment, so check carefully before each write-level git operation
+Several agent sessions can work on this repo at once. Always work under the assumption that the git history will be contaminated or your working branch will contain uncommitted changes by other agents at any moment, so check carefully before each write-level git operation, only stage and commit your changes.
 
 **No duplication.** Before writing code, search for something that already does the job and reuse
 it: a module or helper in this repo (e.g. `Pipeline::model_step`, `Pipeline::route`,
