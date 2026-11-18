@@ -307,8 +307,11 @@ fn parse_action(item: &Value, links: &[String]) -> Option<SuggestedAction> {
     })
 }
 
-/// A task's messages. With `think` the no-think `tag` is simply not appended.
+/// A task's messages. With `think` the no-think `tag` is simply not appended. A task that answers in
+/// the owner's language gets that language restated after the mail, the last thing the model reads
+/// (a thinking model otherwise tends to answer in the language it reasoned in).
 fn task_messages(
+    task: Task,
     tag: &str,
     prompt: &str,
     language: &str,
@@ -319,9 +322,15 @@ fn task_messages(
     if !think && !tag.is_empty() {
         system.push_str(&format!("\n{tag}"));
     }
+    let mut user = format!("Output language: {language}\n\n{email_block}");
+    if task.in_owner_language() {
+        user.push_str(&format!(
+            "\n\nOutput language: {language}. Write every value in the JSON in {language}."
+        ));
+    }
     vec![
         json!({"role": "system", "content": system}),
-        json!({"role": "user", "content": format!("Output language: {language}\n\n{email_block}")}),
+        json!({"role": "user", "content": user}),
     ]
 }
 
@@ -568,7 +577,14 @@ impl LlmClient {
     ) -> Vec<Value> {
         let profile = self.profile();
         let think = profile.params(task).thinking;
-        task_messages(&profile.no_think_tag, prompt, language, email_block, think)
+        task_messages(
+            task,
+            &profile.no_think_tag,
+            prompt,
+            language,
+            email_block,
+            think,
+        )
     }
 
     /// `links` are the mail's trusted links ([`ParsedMessage::trusted_links`]), listed after the
@@ -621,13 +637,13 @@ impl LlmClient {
             params.language_check
                 && checked.is_some_and(|f| language::in_language(language, &f(v)) == Some(false))
         };
-        let plain = task_messages(&profile.no_think_tag, prompt, language, block, false);
+        let plain = task_messages(task, &profile.no_think_tag, prompt, language, block, false);
         if params.thinking {
             let first = self
                 .chat(
                     name,
                     lane,
-                    &task_messages(&profile.no_think_tag, prompt, language, block, true),
+                    &task_messages(task, &profile.no_think_tag, prompt, language, block, true),
                     answer_cap + params.thinking_budget,
                     0.6,
                 )

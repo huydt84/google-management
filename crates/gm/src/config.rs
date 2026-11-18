@@ -33,6 +33,9 @@ impl PubSubConfig {
     }
 }
 
+/// `GM_LLM_MODEL` when unset; `llm.yaml` in the repo must have a section for it.
+pub const DEFAULT_LLM_MODEL: &str = "mlx-community/Qwen3-8B-4bit";
+
 #[derive(Clone, Debug)]
 pub struct Config {
     // Web (bind to localhost only; remote access goes through Tailscale)
@@ -255,7 +258,7 @@ impl Config {
             llm_base_url,
             llm_ready_url,
             llm_api_key: env_or("LLM_API_KEY", "not-needed"),
-            llm_model: env_or("LLM_MODEL", "mlx-community/Qwen3-8B-4bit"),
+            llm_model: env_or("LLM_MODEL", DEFAULT_LLM_MODEL),
             llm_timeout_s: parse("LLM_TIMEOUT_S", 120)?,
             llm_max_inflight: parse("LLM_MAX_INFLIGHT", 2)?,
             llm_max_input_tokens: parse("LLM_MAX_INPUT_TOKENS", 2000)?,

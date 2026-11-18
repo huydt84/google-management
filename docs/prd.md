@@ -126,6 +126,15 @@ carried over to Phase 1.
 | US-4.1 | I'm told about new invitations and changes to upcoming events. | Calendar source with sync tokens; `calendar.readonly`. |
 | US-4.2 | Today's calendar is part of the digest. | Digest section. |
 
+### Phase 5: Voice
+
+| ID | Story | Acceptance |
+|----|-------|------------|
+| US-5.1 | I send a voice note instead of typing a command or a reply instruction. | Notes up to 60 s; the bot first echoes what it heard, then handles it like typed text; approvals unchanged. |
+| US-5.2 | When I ask by voice, I hear the answer. | Text answer plus a voice clip in the language of the answer (en / vi / ja). |
+| US-5.3 | I can hear any answer to my requests on demand. | 🔊 button on answers to my requests, not on notifications or the digest. |
+| US-5.4 | Voice never blocks me. | If voice fails, I get the text answer or a request to type. |
+
 ### Backlog
 
 Expense ledger (Sheets), Drive notifications, free-form agent and automations with undo,
@@ -240,6 +249,7 @@ Bonsai-27B 1-bit model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md))
 | 2 | Digest and model triage | Digest at 09:05; model triage with feedback; `gm eval`; health alerts; dead-letter page. |
 | 3 | Act, with approval | Translate, analyze, reply from Telegram; approvals and audit; prompt-injection end-to-end test. |
 | 4 | Calendar | Invitations and changes; today's calendar in the digest. |
+| 5 | Voice | Voice notes in, spoken answers out, with speech models served by mlx-air ([ADR-0019](adr/0019-voice-through-mlx-air.md)). |
 
 Details: [plan](plan/README.md). Why this order: most daily mail is digest-bound, so the digest delivers value before reply and
 actions ([ADR-0015](adr/0015-notification-policy-and-digest.md)).

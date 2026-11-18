@@ -72,7 +72,12 @@ fn prompt_keeps_a_stable_prefix_and_puts_the_mail_last() {
     assert!(a[0]["content"].as_str().unwrap().ends_with("/no_think"));
     let user = a[1]["content"].as_str().unwrap();
     assert!(user.starts_with("Output language: Vietnamese"));
-    assert!(user.trim_end().ends_with("</email>"));
+    assert!(
+        user.ends_with(
+            "</email>\n\nOutput language: Vietnamese. Write every value in the JSON in Vietnamese."
+        ),
+        "the mail last, then the language restated: {user}"
+    );
     assert!(!user.contains("> quoted"));
     assert_eq!(
         user.matches("</email>").count(),
@@ -83,8 +88,9 @@ fn prompt_keeps_a_stable_prefix_and_puts_the_mail_last() {
     assert_eq!(linked[0], a[0], "links do not change the shared prefix");
     let user = linked[1]["content"].as_str().unwrap();
     assert!(
-        user.trim_end()
-            .ends_with("<links>\n[1] https://github.com/a\n</links>")
+        user.contains(
+            "<links>\n[1] https://github.com/a\n</links>\n\nOutput language: Vietnamese."
+        )
     );
 }
 

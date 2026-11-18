@@ -116,6 +116,7 @@ question the premise instead of trying a third.
 | Test timestamps use the clock read by the code under test | Use `Utc::now()` or `FixedClock` for host-clock comparisons, not Postgres `now()` |
 | Feature verification includes the actual runtime flow | Run the relevant command or service and inspect its result; report observations in chat |
 | Build freshness comparisons account for second-resolution process times | `a_build_in_the_same_second_as_the_start_is_not_stale` in `status.rs` |
+| The repo's `llm.yaml` is a valid profile with a section for the default model | `the_repo_profile_is_valid_and_covers_the_default_model` in `llm/profile.rs` |
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and
@@ -126,7 +127,8 @@ lane and no reliance on `tools`/`response_format`; model work deferred outside m
 literal text with app-owned formatting spans; every rule has redacted examples.
 
 Per-phase plans: [phase-1.md](docs/plan/phase-1.md) (done), [phase-2.md](docs/plan/phase-2.md),
-[phase-3.md](docs/plan/phase-3.md), [phase-4.md](docs/plan/phase-4.md).
+[phase-3.md](docs/plan/phase-3.md), [phase-4.md](docs/plan/phase-4.md),
+[phase-5.md](docs/plan/phase-5.md).
 
 Tests must never call real Google, Telegram, or LLM endpoints. Raw mail never goes into git.
 

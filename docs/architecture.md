@@ -560,20 +560,21 @@ flowchart LR
     p2["Phase 2<br/>digest 09:05<br/>model triage + feedback<br/>health, gm eval"]
     p3["Phase 3<br/>Telegram in<br/>Translate / analyze / reply<br/>approvals + audit"]
     p4["Phase 4<br/>Calendar"]
-    p0 --> p1 --> p2 --> p3 --> p4
+    p5["Phase 5 (planned)<br/>Telegram voice"]
+    p0 --> p1 --> p2 --> p3 --> p4 --> p5
 ```
 
-| Concern | Phase 1 | Phase 2 | Phase 3 | Phase 4 |
-|---------|---------|---------|---------|---------|
-| Triage | rules v2; unmatched → notify | + model triage, 👍/👎 feedback | same | same |
-| Output | Telegram notifications | + digest at 09:05, health alerts | + buttons, replies | + calendar notices |
-| LLM | summary (notify lane) | + batch lane, triage, digest items, `gm eval` | + interactive lane, per-model inference profile (hard tier thinks) | same |
-| Scopes | `gmail.readonly` | same | + `gmail.compose` | + `calendar.readonly` |
-| Owner → system | web dashboard, settings | same | Telegram buttons and replies | same |
+| Concern | Phase 1 | Phase 2 | Phase 3 | Phase 4 | Phase 5 (planned) |
+|---------|---------|---------|---------|---------|---------|
+| Triage | rules v2; unmatched → notify | + model triage, 👍/👎 feedback | same | same | same |
+| Output | Telegram notifications | + digest at 09:05, health alerts | + buttons, replies | + calendar notices | + voice clips for answers, 🔊 |
+| LLM | summary (notify lane) | + batch lane, triage, digest items, `gm eval` | + interactive lane, per-model inference profile (hard tier thinks) | same | + speech-to-text and text-to-speech instances in mlx-air |
+| Scopes | `gmail.readonly` | same | + `gmail.compose` | + `calendar.readonly` | same |
+| Owner → system | web dashboard, settings | same | Telegram buttons and replies | same | + Telegram voice notes |
 
 Backlog: expense ledger (Sheets), Drive, free-form agent and automations, Bonsai-27B.
 
 ## 13. Key decisions
 
-Significant decisions are recorded as ADRs ([index](adr/README.md), 0001–0017); smaller choices are
+Significant decisions are recorded as ADRs ([index](adr/README.md), 0001–0019); smaller choices are
 written into the spec or doc they govern.

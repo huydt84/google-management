@@ -331,17 +331,11 @@ async fn exact_words_replace_the_body_without_the_model(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
-async fn an_analysis_in_the_wrong_language_is_redone_without_thinking(pool: PgPool) {
+async fn an_analysis_thinks_once_with_the_language_restated_after_the_mail(pool: PgPool) {
     let (t, id) = app_with(pool, "Your invoice is attached.", &[]).await;
-    // Mounted first: the answer without thinking (the summary language is Vietnamese in tests).
-    t.mock_llm_for(
-        r"not a sign of phishing.\n/no_think",
-        r#"{"key_points": ["Hóa đơn được đính kèm trong thư"], "verdict": "safe"}"#,
-    )
-    .await;
     t.mock_llm_for(
         ANALYZE,
-        r#"<think>English reasoning</think>{"key_points": ["The invoice is attached"], "verdict": "safe"}"#,
+        r#"<think>English reasoning</think>{"key_points": ["Hóa đơn được đính kèm trong thư"], "verdict": "safe"}"#,
     )
     .await;
     t.update(tap_update(
@@ -354,8 +348,17 @@ async fn an_analysis_in_the_wrong_language_is_redone_without_thinking(pool: PgPo
     t.drain().await;
     let text = t.last_sent().text;
     assert!(text.contains("• Hóa đơn được đính kèm trong thư"), "{text}");
-    assert!(!text.contains("The invoice is attached"));
-    assert_eq!(llm_requests(&t, ANALYZE).await.len(), 2);
+    // The summary language is Vietnamese in tests; the default profile thinks on the hard tier.
+    let sent = llm_requests(&t, ANALYZE).await;
+    assert_eq!(sent.len(), 1, "no second call without thinking");
+    assert!(!sent[0].contains("/no_think"));
+    let reminder = sent[0]
+        .find("Output language: Vietnamese. Write every value in the JSON in Vietnamese.")
+        .expect("language restated");
+    assert!(
+        reminder > sent[0].rfind("</email>").unwrap(),
+        "after the mail"
+    );
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]

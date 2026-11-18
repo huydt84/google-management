@@ -66,6 +66,15 @@ impl Task {
         }
     }
 
+    /// Whether the answer is written in the owner's language (or the translation language): its
+    /// prompt restates that language after the mail.
+    pub fn in_owner_language(&self) -> bool {
+        matches!(
+            self,
+            Task::Summary | Task::DigestLine | Task::Translate | Task::Analyze
+        )
+    }
+
     pub fn tier(&self) -> Tier {
         match self {
             Task::Router | Task::Triage | Task::DigestLine => Tier::Easy,
@@ -201,7 +210,7 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// Qwen3's switch; the hard tier thinks with 1,024 tokens of reasoning and checks the language.
+    /// Qwen3's switch; the hard tier thinks with 1,024 tokens of reasoning; no tier checks language.
     pub fn defaults(model: &str, why: impl Into<String>) -> Self {
         let plain = TierParams {
             thinking: false,
@@ -218,7 +227,7 @@ impl Profile {
                 hard: TierParams {
                     thinking: true,
                     thinking_budget: 1024,
-                    language_check: true,
+                    language_check: false,
                 },
             },
         }
@@ -333,6 +342,15 @@ models:
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn the_repo_profile_is_valid_and_covers_the_default_model() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../llm.yaml");
+        let p = Profiles::load(&path)
+            .unwrap()
+            .for_model(crate::config::DEFAULT_LLM_MODEL);
+        assert!(matches!(p.source, Source::File(_)), "{:?}", p.source);
     }
 
     #[test]
