@@ -18,6 +18,7 @@ documentation. A default you had to pick without asking goes under
 | 2 | [phase-2.md](phase-2.md) | Morning digest, model triage + feedback, `gm eval`, health alerts |
 | 3 | [phase-3.md](phase-3.md) | Two-way Telegram: Translate / Analyze / Reply with approvals and audit |
 | 4 | [phase-4.md](phase-4.md) | Calendar notifications and today's calendar in the digest |
+| 5 | [phase-5.md](phase-5.md) | Telegram voice: voice notes in, spoken answers out |
 
 ## Workstream status
 
@@ -44,6 +45,9 @@ Update this table in the same commit that completes the workstream.
 | 3C | Recipes: translate, analyze, reply (+ `gmail.compose`) | 3B interface | done |
 | 3Z | Phase 3 integration + prompt-injection end-to-end test | 3A–3C | implemented; coverage in [`actions_e2e.rs`](../../crates/gm/tests/actions_e2e.rs) |
 | 4A | Calendar source + notifications + digest section | Phase 2 | implemented |
+| 5A | Speech runtime in mlx-air (listening check, audio endpoints) | — | planned |
+| 5B | Voice in: voice notes, transcription, transcript echo | 5A, Phase 3 | planned |
+| 5C | Voice out: spoken answers, 🔊 button | 5B | planned |
 
 Workstreams in the same phase run in parallel when they own different files (listed in each plan).
 

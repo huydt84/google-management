@@ -29,6 +29,7 @@ Start here to understand Google Management at a high level, then go deeper as ne
 | 2 | ✅ done | Morning digest at 09:05, model triage + feedback, `gm eval`, health alerts |
 | 3 | implemented | Telegram buttons and replies: Translate, Analyze, Reply, with approvals and audit |
 | 4 | implemented | Primary-calendar notifications; today's live agenda in the digest |
+| 5 | planned | Telegram voice: voice notes transcribed, answers read aloud |
 
 Backlog: expense ledger, Drive, free-form agent and automations, Bonsai-27B.
 

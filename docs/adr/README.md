@@ -27,6 +27,7 @@ record.
 | [0016](0016-operations-baseline.md) | Operations baseline: CI, tests, observability, backups | Accepted |
 | [0017](0017-eval-data-handling.md) | Evaluation data: redacted fixtures in git, raw set local only | Accepted |
 | [0018](0018-llm-inference-profile.md) | LLM inference profile: task tiers, parameters per model in llm.yaml | Accepted |
+| [0019](0019-voice-through-mlx-air.md) | Telegram voice: speech models served by mlx-air, called through llm/ | Accepted |
 
 Template for new records:
 

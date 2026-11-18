@@ -126,7 +126,8 @@ lane and no reliance on `tools`/`response_format`; model work deferred outside m
 literal text with app-owned formatting spans; every rule has redacted examples.
 
 Per-phase plans: [phase-1.md](docs/plan/phase-1.md) (done), [phase-2.md](docs/plan/phase-2.md),
-[phase-3.md](docs/plan/phase-3.md), [phase-4.md](docs/plan/phase-4.md).
+[phase-3.md](docs/plan/phase-3.md), [phase-4.md](docs/plan/phase-4.md),
+[phase-5.md](docs/plan/phase-5.md).
 
 Tests must never call real Google, Telegram, or LLM endpoints. Raw mail never goes into git.
 
