@@ -110,6 +110,22 @@ col-sender = Người gửi
 col-count = Số thư
 col-last-subject = Tiêu đề gần nhất
 col-rule = Bỏ qua bởi
+rules = Quy tắc email
+rules-help = Các quy tắc được kiểm tra từ trên xuống. Quy tắc khớp đầu tiên quyết định cách xử lý email. Thay đổi áp dụng cho email được phân loại sau khi lưu.
+rules-matches = Điều kiện khớp
+rules-use-default = Mặc định ({ $route })
+rules-notify = Thông báo Telegram
+rules-digest = Bản tin hằng ngày
+rules-unmatched = Khi không có quy tắc nào khớp
+rules-model-triage = Mô hình quyết định
+rules-invalid = Quy tắc hoặc cách xử lý này không khả dụng. Hãy chọn trong danh sách rồi lưu lại.
+rules-match-from = Địa chỉ người gửi
+rules-match-from-name = Mẫu tên người gửi
+rules-match-subject = Mẫu tiêu đề
+rules-match-body = Mẫu nội dung
+rules-match-labels-any = Có ít nhất một nhãn Gmail sau
+rules-match-labels-none = Không có nhãn Gmail nào sau đây
+rules-match-list-unsubscribe = Có tiêu đề thư List-Unsubscribe
 
 
 # Feedback (2C)

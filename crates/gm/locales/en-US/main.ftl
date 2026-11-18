@@ -110,6 +110,22 @@ col-sender = Sender
 col-count = Count
 col-last-subject = Last subject
 col-rule = Ignored by
+rules = Mail rules
+rules-help = Rules are checked from top to bottom. The first match decides where the mail goes. Changes apply to mail sorted after you save.
+rules-matches = Match conditions
+rules-use-default = Default ({ $route })
+rules-notify = Telegram alert
+rules-digest = Daily digest
+rules-unmatched = When no rule matches
+rules-model-triage = Model decides
+rules-invalid = That rule or route is unavailable. Choose one from the list and save again.
+rules-match-from = Sender address
+rules-match-from-name = Sender name pattern
+rules-match-subject = Subject pattern
+rules-match-body = Body pattern
+rules-match-labels-any = Any of these Gmail labels
+rules-match-labels-none = None of these Gmail labels
+rules-match-list-unsubscribe = Has a List-Unsubscribe header
 
 
 # Feedback (2C)

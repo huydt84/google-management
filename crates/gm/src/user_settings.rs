@@ -1,13 +1,16 @@
-//! Per-user settings (ADR-0008), edited on the Settings page. One JSONB document per user so new
+//! Per-user preferences (ADR-0008), edited in the web UI. One JSONB document per user so new
 //! preferences need no migration. Environment variables only supply defaults.
 
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use sqlx::types::Json;
 
 use crate::i18n;
+use crate::rules::Action;
 
 /// Suggestions shown in the UI; any valid language name is accepted.
 pub const COMMON_LANGUAGES: &[&str] = &[
@@ -221,6 +224,45 @@ impl UserSettingsStore {
         }
     }
 
+    pub async fn rule_routes(&self, email: &str) -> sqlx::Result<BTreeMap<String, Action>> {
+        let routes: Option<Option<Json<_>>> = sqlx::query_scalar(
+            "SELECT settings->'rule_routes' FROM user_settings WHERE email = $1",
+        )
+        .bind(email.to_lowercase())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(routes
+            .flatten()
+            .map(|Json(routes)| routes)
+            .unwrap_or_default())
+    }
+
+    /// Patch one rule so saves from separate forms cannot overwrite one another.
+    /// `None` restores the rule's configured action.
+    pub async fn set_rule_route(
+        &self,
+        email: &str,
+        rule: &str,
+        action: Option<Action>,
+    ) -> sqlx::Result<()> {
+        sqlx::query(
+            "INSERT INTO user_settings (email, settings)
+             VALUES ($1, jsonb_build_object('rule_routes', CASE WHEN $3::jsonb IS NULL
+                 THEN '{}'::jsonb ELSE jsonb_build_object($2::text, $3) END))
+             ON CONFLICT (email) DO UPDATE SET
+                 settings = jsonb_set(user_settings.settings, '{rule_routes}',
+                     (COALESCE(user_settings.settings->'rule_routes', '{}'::jsonb) - $2::text)
+                     || (EXCLUDED.settings->'rule_routes')),
+                 updated_at = now()",
+        )
+        .bind(email.to_lowercase())
+        .bind(rule)
+        .bind(action.map(Json))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Validate and save. Nothing is saved on error.
     pub async fn save(
         &self,
@@ -237,7 +279,8 @@ impl UserSettingsStore {
         }
         sqlx::query(
             "INSERT INTO user_settings (email, settings) VALUES ($1, $2)
-             ON CONFLICT (email) DO UPDATE SET settings = EXCLUDED.settings, updated_at = now()",
+             ON CONFLICT (email) DO UPDATE SET
+                 settings = user_settings.settings || EXCLUDED.settings, updated_at = now()",
         )
         .bind(email.to_lowercase())
         .bind(serde_json::to_value(&s)?)

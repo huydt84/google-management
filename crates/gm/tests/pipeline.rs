@@ -13,6 +13,103 @@ fn day_hours(cfg: &mut gm::config::Config) {
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn mail_rule_route_changes_through_the_web_for_the_mailbox_owner(pool: PgPool) {
+    let t = test_app(pool, day_hours, Some(local(12, 0))).await;
+    t.connect_owner().await;
+    let alias = "jobs@example.com";
+    let other = "other@example.com";
+    for (owner, account) in [(OWNER, alias), (other, other)] {
+        t.app
+            .state
+            .accounts
+            .save(owner, account, "refresh-token", &[])
+            .await
+            .unwrap();
+    }
+    let router = gm::web::router(t.app.state.clone());
+    let cookie = session_cookie(&t, OWNER);
+    let (_, _, page) = send(&router, get("/rules", Some(&cookie))).await;
+    assert!(page.contains(r#"href="/rules" aria-current="page">Mail rules"#));
+    assert!(page.contains("jobalerts-noreply@linkedin.com"));
+    assert!(page.contains("Default (Daily digest)"));
+
+    let change = |cookie: &str, rule, route| {
+        post_form("/rules", cookie, &format!("rule={rule}&action={route}"))
+    };
+    let (status, headers, _) = send(&router, change("", "linkedin-job-alerts", "ignore")).await;
+    assert_eq!(status, 303);
+    assert_eq!(headers["location"], "/");
+    for (rule, route) in [("missing-rule", "ignore"), ("linkedin-job-alerts", "send")] {
+        assert_eq!(send(&router, change(&cookie, rule, route)).await.0, 400);
+    }
+    let (status, headers, _) =
+        send(&router, change(&cookie, "linkedin-job-alerts", "notify")).await;
+    assert_eq!(status, 303);
+    assert!(headers["location"].to_str().unwrap().starts_with("/rules?"));
+    assert_eq!(
+        send(
+            &router,
+            post_form(
+                "/settings",
+                &cookie,
+                "summary_language=English&digest_at=09%3A05"
+            ),
+        )
+        .await
+        .0,
+        303
+    );
+    let redirect = headers["location"].to_str().unwrap();
+    let (path, _) = redirect.split_once('#').unwrap();
+    let (status, _, page) = send(&router, get(path, Some(&cookie))).await;
+    assert_eq!(status, 200);
+    let job_alert_form = page
+        .split_once(r#"name="rule" value="linkedin-job-alerts""#)
+        .unwrap()
+        .1
+        .split_once("</form>")
+        .unwrap()
+        .0;
+    assert!(job_alert_form.contains(r#"value="notify" selected>Telegram alert"#));
+    assert!(job_alert_form.contains(r#"role="status">Saved."#));
+    t.mock_llm(SUMMARY_JSON).await;
+    for (id, subject) in [
+        ("overridden", "New engineering jobs"),
+        ("other", "Other jobs"),
+        ("reset", "Later jobs"),
+    ] {
+        t.mock_message(gmail_message(
+            id,
+            "LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+            subject,
+            &["INBOX"],
+            "New software engineer posting.",
+        ))
+        .await;
+    }
+
+    let overridden = t.insert_event_for(alias, "overridden").await;
+    let inherited = t.insert_event_for(other, "other").await;
+    t.drain().await;
+    assert_eq!(t.event_status(overridden).await, "notified");
+    assert_eq!(t.event_status(inherited).await, "digest");
+    assert_eq!(t.sent().len(), 1);
+    assert!(t.sent()[0].text.contains("New engineering jobs"));
+
+    assert_eq!(
+        send(&router, change(&cookie, "linkedin-job-alerts", ""))
+            .await
+            .0,
+        303
+    );
+    let after_reset = t.insert_event_for(alias, "reset").await;
+    t.drain().await;
+    assert_eq!(t.event_status(after_reset).await, "digest");
+    assert_eq!(t.event_status(overridden).await, "notified");
+    assert_eq!(t.sent().len(), 1);
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
 async fn unmatched_mail_triaged_notify_is_summarized_and_notified(pool: PgPool) {
     let t = test_app(pool, |_| {}, None).await;
     t.connect_owner().await;

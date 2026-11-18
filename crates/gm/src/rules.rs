@@ -45,6 +45,10 @@ impl Action {
             .into_iter()
             .find(|a| a.as_str().eq_ignore_ascii_case(s))
     }
+
+    fn default_summarize(self) -> bool {
+        matches!(self, Self::Notify | Self::Triage)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
@@ -163,7 +167,7 @@ struct FileSpec {
 
 #[derive(Debug)]
 struct When {
-    from: Vec<Regex>,
+    from: Vec<(String, Regex)>,
     from_name: Option<Regex>,
     subject: Option<Regex>,
     body: Option<Regex>,
@@ -245,7 +249,7 @@ impl When {
         let mut any = false;
         if !self.from.is_empty() {
             any = true;
-            if !self.from.iter().any(|g| g.is_match(&m.from_addr)) {
+            if !self.from.iter().any(|(_, re)| re.is_match(&m.from_addr)) {
                 return false;
             }
         }
@@ -289,6 +293,41 @@ impl When {
 }
 
 impl Rule {
+    /// Authored matching conditions, using the YAML keys and original patterns.
+    pub fn conditions(&self) -> Vec<(&'static str, String)> {
+        let mut conditions = Vec::new();
+        if !self.when.from.is_empty() {
+            let globs: Vec<_> = self
+                .when
+                .from
+                .iter()
+                .map(|(glob, _)| glob.as_str())
+                .collect();
+            conditions.push(("from", globs.join(", ")));
+        }
+        for (key, pattern) in [
+            ("from-name", &self.when.from_name),
+            ("subject", &self.when.subject),
+            ("body", &self.when.body),
+        ] {
+            if let Some(pattern) = pattern {
+                conditions.push((key, pattern.as_str().to_owned()));
+            }
+        }
+        for (key, labels) in [
+            ("labels-any", &self.when.labels_any),
+            ("labels-none", &self.when.labels_none),
+        ] {
+            if !labels.is_empty() {
+                conditions.push((key, labels.join(", ")));
+            }
+        }
+        if let Some(expected) = self.when.list_unsubscribe {
+            conditions.push(("list-unsubscribe", expected.to_string()));
+        }
+        conditions
+    }
+
     fn verdict(&self, m: &ParsedMessage) -> Verdict {
         let text = format!("{}\n{}", m.subject, head(&m.body_text, BODY_SCAN_BYTES));
         let extracted: BTreeMap<String, String> = self
@@ -346,7 +385,15 @@ impl RuleSet {
             );
             let w = r.when;
             let when = When {
-                from: w.from.into_vec().iter().map(|g| glob_to_regex(g)).collect(),
+                from: w
+                    .from
+                    .into_vec()
+                    .into_iter()
+                    .map(|glob| {
+                        let compiled = glob_to_regex(&glob);
+                        (glob, compiled)
+                    })
+                    .collect(),
                 from_name: w
                     .from_name
                     .as_deref()
@@ -383,9 +430,7 @@ impl RuleSet {
                 .map(|(k, p)| Ok((k.clone(), ci_regex(p, &format!("extract.{k}"), &r.name)?)))
                 .collect::<anyhow::Result<Vec<_>>>()?;
             rules.push(Rule {
-                summarize: r
-                    .summarize
-                    .unwrap_or(matches!(r.action, Action::Notify | Action::Triage)),
+                summarize: r.summarize.unwrap_or_else(|| r.action.default_summarize()),
                 priority: r.priority.unwrap_or_default(),
                 section: match r.action {
                     Action::Digest => Some(r.section.unwrap_or_else(|| "other".into())),
@@ -423,21 +468,26 @@ impl RuleSet {
     }
 
     pub fn evaluate(&self, m: &ParsedMessage) -> Verdict {
+        self.evaluate_with_routes(m, &BTreeMap::new())
+    }
+
+    /// Match in file order, then apply the owner's route for the winning rule.
+    pub fn evaluate_with_routes(
+        &self,
+        m: &ParsedMessage,
+        routes: &BTreeMap<String, Action>,
+    ) -> Verdict {
         for r in &self.rules {
             if r.when.matches(m) {
+                if let Some(action) = routes.get(&r.name).copied()
+                    && action != r.action
+                {
+                    return Verdict::for_action(&r.name, action);
+                }
                 return r.verdict(m);
             }
         }
-        Verdict {
-            rule: "default".into(),
-            action: self.default,
-            priority: Priority::Normal,
-            summarize: matches!(self.default, Action::Notify | Action::Triage),
-            section: matches!(self.default, Action::Digest).then(|| "other".into()),
-            message: None,
-            extracted: BTreeMap::new(),
-            reason: None,
-        }
+        Verdict::for_action("default", self.default)
     }
 
     /// Every example must be matched first by the rule it belongs to (and extract what it expects).
@@ -468,6 +518,22 @@ impl RuleSet {
             }
         }
         errors
+    }
+}
+
+impl Verdict {
+    /// Destination defaults, used for unmatched mail and when a rule takes a different route.
+    fn for_action(rule: &str, action: Action) -> Self {
+        Self {
+            rule: rule.into(),
+            action,
+            priority: Priority::Normal,
+            summarize: action.default_summarize(),
+            section: (action == Action::Digest).then(|| "other".into()),
+            message: None,
+            extracted: BTreeMap::new(),
+            reason: None,
+        }
     }
 }
 

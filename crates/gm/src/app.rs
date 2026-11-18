@@ -222,6 +222,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         accounts,
         ingestor: ingestor.clone(),
         user_settings,
+        rules: pipeline.rules.clone(),
         signer: Signer::new(&cfg.session_secret),
         health: health.clone(),
         gmail,

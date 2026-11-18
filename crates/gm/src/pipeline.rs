@@ -175,7 +175,9 @@ impl Pipeline {
         else {
             return Ok(Outcome::Done);
         };
-        let verdict = self.rules.get().evaluate(&msg);
+        let owner = self.accounts.owner_of(&p.account).await?;
+        let routes = self.user_settings.rule_routes(&owner).await?;
+        let verdict = self.rules.get().evaluate_with_routes(&msg, &routes);
         let mut extra = msg.brief();
         extra["link"] = json!(msg.gmail_link(&p.account));
         self.apply_verdict(p.event_id, "new", &verdict, extra, &payload)

@@ -169,16 +169,20 @@ impl TestApp {
     }
 
     pub async fn insert_event(&self, message_id: &str) -> i64 {
+        self.insert_event_for(OWNER, message_id).await
+    }
+
+    pub async fn insert_event_for(&self, account: &str, message_id: &str) -> i64 {
         let mut tx = self.app.pool.begin().await.unwrap();
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO events (account, source, kind, external_id) VALUES ($1, 'gmail', 'message.received', $2) RETURNING id",
         )
-        .bind(OWNER)
+        .bind(account)
         .bind(message_id)
         .fetch_one(&mut *tx)
         .await
         .unwrap();
-        let payload = json!({"event_id": id, "account": OWNER, "message_id": message_id, "thread_id": format!("t-{message_id}")});
+        let payload = json!({"event_id": id, "account": account, "message_id": message_id, "thread_id": format!("t-{message_id}")});
         self.app
             .bus
             .publish(&mut tx, gm::topics::GMAIL_MESSAGE_RECEIVED, &payload)

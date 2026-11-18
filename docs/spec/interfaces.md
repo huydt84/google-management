@@ -74,6 +74,14 @@ mlx-air's own `/metrics`.
 | POST | `/events/{id}/eval` | session | Form `expected=notify|digest|ignore`: fetch the raw mail from Gmail and add it to the local eval set, or update its expected action (2F). Redirect to `/?eval=added|updated|full|gone#event-{id}` |
 | POST | `/jobs/{id}/retry`, `/jobs/retry-dead` | session | A dead job (or all of them) back to `pending` with attempts reset; redirect to `/jobs` |
 | GET | `/senders` | session | Ignored mail of the last 30 days grouped by sender address: count, last subject, the rule(s) that ignored it |
+| GET | `/rules` | session | Mail rules in matching order, with their conditions, the owner's selected route, the file's default for each rule, and the fallback for unmatched mail |
+| POST | `/rules` | session | Form `rule=<configured name>`, `action=notify\|digest\|ignore` or an empty action to use the rule's default. Redirect to the saved row, or render a localized error with 400 for an unknown rule or action |
+
+The Mail rules sidebar page changes the route for the signed-in user's mail at the point of sorting.
+The first matching rule still wins. A change to a different route uses [that route's defaults](../adr/0012-rules-engine-v2.md).
+The match conditions and unmatched-mail fallback come from the rules file. Mail already sorted
+keeps its recorded route. Code: [`src/web/rules.rs`](../../crates/gm/src/web/rules.rs),
+[`templates/rules.html`](../../crates/gm/templates/rules.html), [`src/pipeline.rs`](../../crates/gm/src/pipeline.rs).
 
 ### Implemented (Phase 3)
 

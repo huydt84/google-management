@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ tr.get("rules") }} · {{ tr.get("app-title") }}{% endblock %}
+{% block style %}
+  .mail-rules { list-style:none; margin:0; padding:0; border-top:1px solid var(--rule); }
+  .mail-rule { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start;
+               gap:4px 24px; padding:12px 0; border-bottom:1px solid var(--rule-soft); scroll-margin-top:12px; }
+  .mail-rule h2 { font-size:15px; overflow-wrap:anywhere; }
+  .mail-rule summary { color:var(--graphite); cursor:pointer; width:fit-content; }
+  .mail-rule dl { margin-top:8px; gap:4px 12px; }
+  .mail-rule code { font-size:inherit; white-space:pre-wrap; }
+  .rule-route { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 8px; }
+  .rule-route select { width:100%; min-height:34px; }
+  .rule-route .rule-saved { grid-column:1 / -1; margin:0; text-align:right; }
+  .rules-fallback { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px 24px;
+                    padding:12px 0; border-bottom:1px solid var(--rule-soft); }
+  .rules-fallback h2 { font-size:15px; margin:0; }
+  @media (max-width:600px) {
+    .mail-rule { grid-template-columns:minmax(0,1fr); gap:8px; }
+    .rule-route { justify-self:start; max-width:100%; }
+    .mail-rule dl { grid-template-columns:minmax(0,1fr); }
+    .mail-rule dd + dt { margin-top:4px; }
+  }
+{% endblock %}
+{% block body %}
+<div class="page-head">
+  <div>
+    <h1>{{ tr.get("rules") }}</h1>
+    <p class="muted">{{ tr.get("rules-help") }}</p>
+  </div>
+</div>
+{% if invalid %}
+<div class="notice bad" role="alert"><p>{{ tr.get("rules-invalid") }}</p></div>
+{% endif %}
+<ol class="mail-rules" role="list" aria-label="{{ tr.get("rules") }}">
+  {% for rule in rules %}
+  <li class="mail-rule" id="rule-{{ loop.index }}">
+    <div>
+      <h2 id="rule-name-{{ loop.index }}">{{ rule.name }}</h2>
+      <details class="small">
+        <summary>{{ tr.get("rules-matches") }}</summary>
+        <dl>
+          {% for (label, value) in rule.conditions %}
+            <dt>{{ label }}</dt><dd><code>{{ value }}</code></dd>
+          {% endfor %}
+        </dl>
+      </details>
+    </div>
+    <form class="rule-route" method="post" action="/rules">
+      <input type="hidden" name="rule" value="{{ rule.name }}">
+      <select name="action" aria-labelledby="rule-name-{{ loop.index }}">
+        <option value=""{% if rule.selected.is_empty() %} selected{% endif %}>{{ rule.default_label }}</option>
+        {% for (action, label) in routes %}
+        <option value="{{ action }}"{% if rule.selected == *action %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn">{{ tr.get("save") }}</button>
+      {% if rule.saved %}<p class="rule-saved ok small" role="status">{{ tr.get("saved") }}</p>{% endif %}
+    </form>
+  </li>
+  {% endfor %}
+</ol>
+<div class="rules-fallback">
+  <h2>{{ tr.get("rules-unmatched") }}</h2>
+  <span class="muted">{{ fallback }}</span>
+</div>
+{% endblock %}

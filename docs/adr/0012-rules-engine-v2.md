@@ -19,7 +19,7 @@ these apart or extract card amounts without the LLM.
   `body` (regex on the first 4 KB of cleaned text; use sparingly).
 - **Extractors:** named regex captures (`extract: {amount: '...', date: '...'}`) on subject or
   cleaned body, used in notification and digest templates without the LLM.
-- **Actions:** `ignore`, `digest` (with `digest_section` and `summarize: true|false`), `notify` (with
+- **Actions:** `ignore`, `digest` (with `section` and `summarize: true|false`), `notify` (with
   `priority: silent|normal|high|urgent` and `summarize: true|false`), `triage` (hand off to model
   triage). The default for unmatched mail is `triage`.
 - Rule-only notifications (`summarize: false`, no LLM needed) are delivered at any hour with their
@@ -27,12 +27,20 @@ these apart or extract card amounts without the LLM.
   (amended 2026-11-16: a ping without its summary only repeats the Gmail app notification).
 - Each rule may list `examples` (redacted header fixtures). A test loads `rules.yaml` and checks every
   example lands on its rule, so CI catches regressions.
+- The Mail rules page displays the configured match conditions and lets each user override a named
+  rule's action. The mailbox owner's override applies after matching, before the verdict is saved.
+  An inherited or same-action route uses the rule's settings. Switching to Notify uses normal
+  priority with a summary. Switching to Digest puts the mail in Other without a summary. Ignore
+  sends nothing. The rules file still defines the fallback for unmatched mail.
+
+Code: [`rules.rs`](../../crates/gm/src/rules.rs), [`web/rules.rs`](../../crates/gm/src/web/rules.rs).
 
 ## Consequences
 
 - Most mail is decided for free; the model only sees unmatched mail and mail that a rule wants
   summarized.
-- Rules are reviewable in git. A web editor can come later and read and write the same file.
+- Matchers and default actions are reviewable in git. Personal routing choices live in
+  [per-user settings](0008-per-user-settings.md).
 
 ## Alternatives considered
 

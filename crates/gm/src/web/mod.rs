@@ -2,6 +2,7 @@
 
 mod auth;
 mod pages;
+mod rules;
 pub mod session;
 mod tasks;
 
@@ -19,6 +20,7 @@ use sqlx::PgPool;
 use crate::config::Config;
 use crate::gmail::ingest::GmailIngestor;
 use crate::google::accounts::AccountStore;
+use crate::rules::RuleFile;
 use crate::user_settings::UserSettingsStore;
 use session::{SESSION_COOKIE, Session, Signer};
 
@@ -29,6 +31,7 @@ pub struct AppState {
     pub accounts: Arc<AccountStore>,
     pub ingestor: Arc<GmailIngestor>,
     pub user_settings: UserSettingsStore,
+    pub rules: Arc<RuleFile>,
     pub signer: Signer,
     pub health: Arc<crate::health::Health>,
     /// Fetches the raw message when the owner adds a mail to the eval set.
@@ -139,6 +142,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/jobs/retry-dead", post(pages::retry_all_dead))
         .route("/jobs/{id}/retry", post(pages::retry_job))
         .route("/senders", get(pages::senders_page))
+        .route("/rules", get(rules::page).post(rules::save))
         .route("/tasks", get(tasks::tasks_page))
         .route("/approvals/{id}/approve", post(tasks::approve))
         .route("/approvals/{id}/reject", post(tasks::reject))

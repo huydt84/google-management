@@ -34,11 +34,14 @@ and by the test suite). Diagram: [architecture §7](../architecture.md#7-data-mo
 | Column | Type | Notes |
 |--------|------|-------|
 | `email` | text PK | the gm user |
-| `settings` | jsonb | `{summary_language, translation_language, ui_language, digest_at, trusted_link_domains}`; missing keys fall back to `GM_DEFAULT_SUMMARY_LANGUAGE` / `GM_DEFAULT_UI_LANGUAGE` |
+| `settings` | jsonb | `{summary_language, translation_language, ui_language, digest_at, trusted_link_domains, rule_routes}`; missing keys use configured or built-in defaults |
 
 Validation (`user_settings.rs`): language names are 2–40 characters of letters, marks, spaces,
 `( ) ' -`; `ui_language` is one of `en`, `vi`, `ja`; `trusted_link_domains` holds at most 50
 lowercase domain names of two or more labels (no scheme, path or wildcard), default empty.
+`rule_routes` maps configured rule names to `notify`, `digest` or `ignore`. A missing entry
+inherits the rule's configured action. Each rule change updates its own entry, and general
+settings saves preserve the map. Code: [`user_settings.rs`](../../crates/gm/src/user_settings.rs).
 
 ### `events`
 

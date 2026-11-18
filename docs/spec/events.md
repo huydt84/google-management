@@ -84,6 +84,8 @@ Each Google object becomes one row, keyed by `(source, external_id)`.
 `events.data` for Gmail, written by `triage`: `from`, `from_addr`, `from_name`, `subject`, `date`,
 `snippet`, `labels`, `thread_id`, `attachments`, `link`, and `verdict`
 (`{rule, action, priority, summarize, section, message, extracted}`). The full body is never stored.
+The verdict records the route after applying any override for the matched rule and mailbox owner.
+Rule changes take effect at triage and leave earlier verdicts intact.
 
 `events.summary`: the summary JSON (`summary`, `importance`, `category`, `suggested_actions` as
 `[{text, url?}]`,

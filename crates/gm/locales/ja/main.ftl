@@ -110,6 +110,22 @@ col-sender = 送信者
 col-count = 件数
 col-last-subject = 最新の件名
 col-rule = 無視したルール
+rules = メールルール
+rules-help = ルールは上から順に確認され、最初に一致したルールでメールの処理が決まります。変更は保存後に振り分けられるメールに適用されます。
+rules-matches = 一致条件
+rules-use-default = 既定（{ $route }）
+rules-notify = Telegram 通知
+rules-digest = 毎日のダイジェスト
+rules-unmatched = 一致するルールがない場合
+rules-model-triage = モデルが判断
+rules-invalid = このルールまたは処理方法は利用できません。一覧から選び直して保存してください。
+rules-match-from = 送信元アドレス
+rules-match-from-name = 送信者名のパターン
+rules-match-subject = 件名のパターン
+rules-match-body = 本文のパターン
+rules-match-labels-any = いずれかの Gmail ラベルを含む
+rules-match-labels-none = いずれの Gmail ラベルも含まない
+rules-match-list-unsubscribe = List-Unsubscribe ヘッダーがある
 
 
 # Feedback (2C)

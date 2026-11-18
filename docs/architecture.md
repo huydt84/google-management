@@ -172,7 +172,7 @@ flowchart LR
 | [`bus.rs`](../crates/gm/src/bus.rs) | Durable pub/sub on Postgres (§8). |
 | [`google/`](../crates/gm/src/google/) | OAuth (PKCE, id_token check), encrypted account store with access-token cache, thin Gmail REST client (incl. drafts), Calendar client (`calendar.rs`), shared authenticated requests (`client.rs`), Pub/Sub REST (`pubsub.rs`), reply composition (`compose.rs`: headers from the original mail, RFC 2047, RFC 5322 text). |
 | [`gmail/`](../crates/gm/src/gmail/) | Ingestion (bootstrap, history sync, 404 recovery, poll loop), Pub/Sub loop (watch renewal, pull, ack) and MIME parsing (charsets incl. ISO-2022-JP, HTML → text). |
-| [`rules.rs`](../crates/gm/src/rules.rs) | Rules engine v2 ([ADR-0012](adr/0012-rules-engine-v2.md)): matchers, extractors, actions, examples, hot reload; `Action::as_str` / `parse_final` are the only action-name mapping. |
+| [`rules.rs`](../crates/gm/src/rules.rs) | Rules engine v2 ([ADR-0012](adr/0012-rules-engine-v2.md)): matchers, extractors, actions, examples, hot reload and per-user route overrides for matching rules; `Action::as_str` / `parse_final` are the only action-name mapping. |
 | [`pipeline.rs`](../crates/gm/src/pipeline.rs) | Idempotent handlers `triage`, `classify`, `summarize`, `notify`; `route` (verdict → next topic); `model_step`, the shared steps of every model job (model hours, fetch or `gone`, owner language, wait while the model is unavailable). |
 | [`model.rs`](../crates/gm/src/model.rs) | Model residency ([ADR-0010](adr/0010-llm-client-lanes-residency.md)): the editable model controls, the loop that stops the model after hours and starts it in hours, the owner-request wake and idle timer, `mlx-air serve/stop` behind a `ModelProcess` trait. |
 | [`triage_model.rs`](../crates/gm/src/triage_model.rs) | Model triage for mail no rule covers (prompt, parse, fail-open verdict). |
@@ -191,7 +191,7 @@ flowchart LR
 | [`user_settings.rs`](../crates/gm/src/user_settings.rs) | Per-user settings with validation; `tr(email)` gives UI strings in the owner's language. |
 | [`i18n.rs`](../crates/gm/src/i18n.rs) | Fluent strings for en / vi / ja ([`locales/`](../crates/gm/locales/)). |
 | [`clock.rs`](../crates/gm/src/clock.rs) | `Clock` (system or fixed in tests) and `ModelHours`. |
-| [`web/`](../crates/gm/src/web/) | axum router (`mod.rs`), host/origin guard, owner session, askama pages (`pages.rs`, [`templates/`](../crates/gm/templates/)), tasks and web approvals (`tasks.rs`). |
+| [`web/`](../crates/gm/src/web/) | axum router (`mod.rs`), host/origin guard, owner session, askama pages (`pages.rs`, [`templates/`](../crates/gm/templates/)), Mail rules (`rules.rs`), tasks and web approvals (`tasks.rs`). |
 
 ## 5. Key flows
 

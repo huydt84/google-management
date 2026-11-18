@@ -95,7 +95,10 @@ async fn defer_does_not_use_an_attempt(pool: PgPool) {
 async fn stale_running_jobs_are_requeued(pool: PgPool) {
     let bus = Bus::new(pool.clone(), 3);
     bus.subscribe("t", "s", |_, _| async { Ok(Outcome::Done) });
-    sqlx::query("INSERT INTO jobs (topic, subscriber, payload, status, locked_at) VALUES ('t','s','{}','running', NULL), ('t','s','{}','running', now() - interval '1 hour'), ('t','s','{}','running', now())")
+    let recent = Utc::now() - chrono::Duration::seconds(1);
+    sqlx::query("INSERT INTO jobs (topic, subscriber, payload, status, locked_at) VALUES ('t','s','{}','running', NULL), ('t','s','{}','running', $1), ('t','s','{}','running', $2)")
+        .bind(recent - chrono::Duration::hours(1))
+        .bind(recent)
         .execute(&pool)
         .await
         .unwrap();
