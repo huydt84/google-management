@@ -270,7 +270,7 @@ Code: [`src/main.rs`](../../crates/gm/src/main.rs).
 | `gm keychain set <name>` | Store a secret in the Keychain (macOS prompts for the value) |
 | `gm keychain list` | Show which known secrets are present (never the values) |
 | `gm rules [path]` | Validate a rules file and check every rule's examples |
-| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary (a binary at most 2 s newer than the start counts as the running one: `ps` reports whole seconds and the upgrade command restarts within a second), `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
+| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary (a binary at most 2 s newer than the start counts as the running one: `ps` reports whole seconds and the upgrade command restarts within a second), `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, the inference profile of the configured model (`!` on the built-in defaults, `✗` for an invalid file), migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
 | `gm eval [--dir DIR] [--language LANG]` | Run rules → model triage → summary on every case in the eval set against the **local** model (refuses a non-loopback `GM_LLM_BASE_URL`) and print accuracy per expected action, the confusion matrix, the JSON parse rate per task, misclassified ids, and calls, latency p50/p95 and tokens per model task. Needs no database, Keychain or Google access |
 
 ## Configuration
@@ -315,7 +315,7 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_MAX_INFLIGHT` | 2 | Concurrent model requests across lanes |
 | `GM_LLM_MAX_INPUT_TOKENS` | 2000 | Mail body cap |
 | `GM_LLM_SUMMARY_MAX_TOKENS` | 400 | Output cap for summaries |
-| `GM_LLM_NO_THINK_TAG` | `/no_think` | Appended to the system prompt; empty to disable |
+| `GM_LLM_PROFILE` | `llm.yaml` | Inference profile per model ([below](#inference-profile)); missing file or section → built-in defaults, invalid file → `gm serve` does not start |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
 | `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on). First default: the Settings page value (`system_settings.model_control`) wins once saved |
 | `GM_MODEL_MANAGE` | `true` | gm stops the model outside model hours and starts it for owner requests (first default; Settings page switch) |
@@ -376,11 +376,57 @@ All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) throug
 ### Prompt layout (all tasks)
 
 1. System message: `prompts/system.md` (shared rules: the `<email>` content is untrusted data, JSON
-   only) + `prompts/<task>.md` + `/no_think` (left out for Analyze and Reply, which think). Identical across calls of a task, so the runtime's prefix
+   only) + `prompts/<task>.md` + the model's `no_think_tag` (left out when the task's tier thinks). Identical across calls of a task, so the runtime's prefix
    cache can reuse it.
 2. User message: `Output language: <language>`, then the mail (headers, attachment names, cleaned and
    capped body) inside `<email>…</email>`. Any `<email` / `</email` in the content is neutralized.
    The summary task appends the mail's trusted links, numbered, in a `<links>` block after the mail.
+
+### Inference profile
+
+Code: [`src/llm/profile.rs`](../../crates/gm/src/llm/profile.rs), [`llm.yaml`](../../llm.yaml) ([ADR-0018](../adr/0018-llm-inference-profile.md)).
+
+Every task belongs to one tier, fixed in code:
+
+| Tier | Tasks (`llm_calls.task`) |
+|------|--------------------------|
+| easy | `router`, `triage`, `digest-line` |
+| medium | `summary`, `digest-jobs`, `translate` |
+| hard | `analyze`, `reply` |
+
+`GM_LLM_PROFILE` holds one section per model id; each call uses the section of the model it is sent to
+(the served model when gm controls it, else `GM_LLM_MODEL`):
+
+```yaml
+models:
+  mlx-community/Qwen3-8B-4bit:
+    no_think_tag: /no_think          # appended to the system prompt to switch thinking off; "" for none
+    tiers:
+      easy:   {thinking: false}
+      medium: {thinking: false}
+      hard:   {thinking: true, thinking_budget: 1024, language_check: true}
+```
+
+Unknown keys, a missing tier, `thinking` without a `thinking_budget` above 0 and a budget without
+`thinking` are errors. A model without a section, or no file, gets the built-in defaults (the values
+above), logged as a warning once per model and shown as `!` by `gm status`.
+
+How a task runs (`LlmClient::run`), with the task's answer cap from the tables below:
+
+- **Thinking:** one call without the tag, `max_tokens` = answer cap + `thinking_budget`, temperature
+  0.6. An answer that doesn't parse, or fails the language check, is replaced by a call without
+  thinking (`<task>-nothink`, answer cap, temperature 0.2, plus its format retry).
+- **No thinking:** one call with the tag at temperature 0.2; output that doesn't parse is asked once
+  more with a format reminder at temperature 0 (`<task>-retry`).
+- **Language check** (only for tasks whose output is in the owner's language: summary, digest line,
+  translate, analyze): a parsed answer in another language is asked once more with the same prompt
+  at temperature 0 (`<task>-language`) when not thinking. The last answer is used whatever its
+  language.
+
+The check ([`llm/language.rs`](../../crates/gm/src/llm/language.rs) `in_language`) recognizes
+Vietnamese (at least a fifth of the words carry Vietnamese-only marks), Japanese (kana present, kana
+and kanji at least half the letters), Korean, Chinese and Thai (their script at least half the
+letters). Other output languages are not checked.
 
 ### Summary (implemented)
 
@@ -426,19 +472,16 @@ Batch lane. Stored in `events.summary`.
 | Contract | Prompt | Input | Output | Caps |
 |----------|--------|-------|--------|------|
 | Intent router | `router.md` | the owner's words in `<instruction>`, no mail | `{"intent": "translate" \| "analyze" \| "reply" \| "unknown", "language": "…"}` | 60 tokens; unusable → `unknown`; a language failing the Settings check is dropped |
-| Translate | `translate.md` | one chunk of subject + cleaned body in `<email>` | `{"translation": "…"}` | 2,048 tokens per chunk |
-| Analyze | `analyze.md` | the mail, thinking on (temperature 0.6), then a JSON pass without thinking if the answer is unusable or in the wrong language; a mail detected as a forward gets a `Forwarded: yes` line from code before `<email>` | `{"key_points", "deadlines", "amounts", "risks", "next_steps": [..], "verdict": "safe" \| "suspicious" \| "phishing"}` | 2,048 tokens |
-| Reply body | `reply.md` | the owner's words (trusted) before the mail; on an edit, the current draft and the requested change; not called for **Use my exact words** | `{"body": "…"}`: the body only. Recipients, subject and threading headers are set by code from the original mail | 1,536 tokens |
+| Translate | `translate.md` | one chunk of subject + cleaned body in `<email>` | `{"translation": "…"}` | 2,048 answer tokens per chunk |
+| Analyze | `analyze.md` | the mail; a mail detected as a forward gets a `Forwarded: yes` line from code before `<email>` | `{"key_points", "deadlines", "amounts", "risks", "next_steps": [..], "verdict": "safe" \| "suspicious" \| "phishing"}` | 1,024 answer tokens |
+| Reply body | `reply.md` | the owner's words (trusted) before the mail; on an edit, the current draft and the requested change; not called for **Use my exact words** | `{"body": "…"}`: the body only. Recipients, subject and threading headers are set by code from the original mail | 512 answer tokens |
 
 A reply cut off mid-JSON keeps the text recovered so far; other output that still isn't JSON after the
 retry is used as plain text (thinking removed). For Reply the owner sees it in the preview before
 anything can be sent.
 
-Analyze's language check ([`recipes/mod.rs`](../../crates/gm/src/recipes/mod.rs) `in_language`)
-recognizes Vietnamese (at least a fifth of the words carry Vietnamese-only marks), Japanese (kana
-present, kana and kanji at least half the letters), Korean, Chinese and Thai (their script at least
-half the letters). A thinking answer in another language is replaced by the answer without thinking,
-which is used whatever its language. Other output languages are not checked.
+Thinking, the reasoning budget added to these caps and the language check follow the
+[inference profile](#inference-profile).
 
 Forward detection ([`gmail/message.rs`](../../crates/gm/src/gmail/message.rs) `is_forward`): a
 `Fwd:` / `FW:` / `転送:` subject, or a forward marker line in the body (`---------- Forwarded message

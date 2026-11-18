@@ -22,7 +22,7 @@ use crate::bus::{JobContext, Outcome};
 use crate::db::Event;
 use crate::gmail::message::ParsedMessage;
 use crate::i18n::Tr;
-use crate::llm::{Lane, LlmClient, parse_json_object};
+use crate::llm::{Lane, LlmClient, Task, parse_json_object};
 use crate::notify::{Keyboard, OutgoingMessage, feedback_row, split_message};
 use crate::pipeline::Pipeline;
 use crate::rules::Verdict;
@@ -148,13 +148,17 @@ pub async fn summarize_item(
     let email = llm.email_block(m, usize::MAX);
     if section == JOBS_SECTION {
         let mail_text = format!("{}\n{}", m.body_text, m.snippet);
+        // Job titles stay as written in the mail: no language check.
         let reply = llm
-            .chat_json(
-                "digest-jobs",
+            .run(
+                Task::DigestJobs,
                 Lane::Batch,
-                llm.task_messages(JOBS_TASK, language, &email),
+                JOBS_TASK,
+                language,
+                &email,
                 JOBS_MAX_TOKENS,
                 |t| parse_jobs(t, &mail_text),
+                None,
             )
             .await?;
         return Ok(match reply.parsed {
@@ -162,13 +166,17 @@ pub async fn summarize_item(
             None => json!({"jobs": [], "parse_ok": false}),
         });
     }
+    let line_text = |l: &String| l.clone();
     let reply = llm
-        .chat_json(
-            "digest-line",
+        .run(
+            Task::DigestLine,
             Lane::Batch,
-            llm.task_messages(DIGEST_TASK, language, &email),
+            DIGEST_TASK,
+            language,
+            &email,
             LINE_MAX_TOKENS,
             parse_line,
+            Some(&line_text),
         )
         .await?;
     Ok(match reply.parsed {

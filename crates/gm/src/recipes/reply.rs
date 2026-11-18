@@ -6,18 +6,19 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use super::{owner_words, text_of, think_json};
+use super::{owner_words, text_of};
 use crate::gmail::message::parse_message;
 use crate::google::GoogleError;
 use crate::google::compose::{self, ReplyDraft, body_hash, decode_header};
 use crate::i18n::Tr;
-use crate::llm::strip_think;
+use crate::llm::{Lane, Task, strip_think};
 use crate::tasks::{
     ExecContext, ExecResult, Executor, Intent, Recipe, RecipeContext, RecipeResult, UserFacing,
 };
 
 pub const REPLY_TASK: &str = include_str!("../../prompts/reply.md");
-pub const MAX_OUTPUT_TOKENS: u32 = 1536;
+/// The body's cap; a thinking call adds the tier's reasoning budget (`llm.yaml`).
+pub const MAX_OUTPUT_TOKENS: u32 = 512;
 /// The executor's action name.
 pub const SEND_DRAFT: &str = "gmail.send_draft";
 
@@ -166,17 +167,19 @@ async fn write_body(
         ));
     }
     block.push_str(&cx.llm.email_block(m, usize::MAX));
-    let reply = think_json(
-        cx.llm,
-        "reply",
-        REPLY_TASK,
-        "the language of the email, unless the instruction asks for another",
-        &block,
-        MAX_OUTPUT_TOKENS,
-        |t| text_of(t, "body"),
-        |_| true,
-    )
-    .await?;
+    let reply = cx
+        .llm
+        .run(
+            Task::Reply,
+            Lane::Interactive,
+            REPLY_TASK,
+            "the language of the email, unless the instruction asks for another",
+            &block,
+            MAX_OUTPUT_TOKENS,
+            |t| text_of(t, "body"),
+            None,
+        )
+        .await?;
     let body = reply.parsed.unwrap_or_else(|| strip_think(&reply.raw));
     anyhow::ensure!(!body.trim().is_empty(), "empty reply body from the model");
     Ok(body)

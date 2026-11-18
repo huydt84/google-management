@@ -183,10 +183,10 @@ flowchart LR
 | [`feedback.rs`](../crates/gm/src/feedback.rs) | 👍/👎 storage (last tap wins) and keyboard redraw. |
 | [`telegram/`](../crates/gm/src/telegram/) | Bot API client (`client.rs`, the `Notifier`), the `getUpdates` poller (`poller.rs`: taps, replies, commands, foreign-chat filter, stored offset), callback data, the `chat_messages` map (`ChatLog`), `/pause` flag. |
 | [`tasks/`](../crates/gm/src/tasks/) | Owner tasks: `Intent`, bus payloads, `Recipe` / `Executor` traits, canonical JSON hash (`mod.rs`); intent router with keyword fast path (`router.rs`); approvals and audit (`approvals.rs`); the runtime that runs instructions, decisions and replies (`runtime.rs`); `Registry` (`registry.rs`). |
-| [`recipes/`](../crates/gm/src/recipes/) | Translate (chunked), Analyze (thinking), Reply (draft + proposal) and the `gmail.send_draft` executor that re-checks the live draft. |
+| [`recipes/`](../crates/gm/src/recipes/) | Translate (chunked), Analyze, Reply (draft + proposal) and the `gmail.send_draft` executor that re-checks the live draft. |
 | [`status.rs`](../crates/gm/src/status.rs) | `gm status`: launchd agents, running build, endpoints, model name, migrations and queue, read from the live Mac; reuses the health checker's queries. |
 | [`eval.rs`](../crates/gm/src/eval.rs) | Local eval set files and `gm eval` (runs rules → triage → the summary `Pipeline::route` picks). |
-| [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9). |
+| [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9): `LlmClient`, lanes, prompt layout and `run` (`mod.rs`); input cleaning (`clean.rs`); the per-model inference profile and the task → tier map (`profile.rs`); the output-language check (`language.rs`). |
 | [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (literal text, formatting entities, silent flag, buttons, edits), log, recording (tests); `RichText` (UTF-16 formatting spans, cut at 4096) and its web `segments`; mail notification formatting. |
 | [`user_settings.rs`](../crates/gm/src/user_settings.rs) | Per-user settings with validation; `tr(email)` gives UI strings in the owner's language. |
 | [`i18n.rs`](../crates/gm/src/i18n.rs) | Fluent strings for en / vi / ja ([`locales/`](../crates/gm/locales/)). |
@@ -482,7 +482,7 @@ All model calls go through `llm::LlmClient` ([ADR-0010](adr/0010-llm-client-lane
 
 - **Admission with lanes:** `interactive` > `notify` > `batch`, at most `GM_LLM_MAX_INFLIGHT` (2)
   requests in flight; a waiting higher lane is always admitted first.
-- **Prompt shape for prefix caching:** `system.md` + task prompt + `/no_think` form a stable system
+- **Prompt shape for prefix caching:** `system.md` + task prompt + the model's no-think tag form a stable system
   message; the user message carries the output language and then the mail in `<email>` delimiters,
   last. Prompts live in `crates/gm/prompts/`.
 - **Input control:** quoted replies, "On … wrote:" blocks and signatures are removed; the body is
@@ -567,7 +567,7 @@ flowchart LR
 |---------|---------|---------|---------|---------|
 | Triage | rules v2; unmatched → notify | + model triage, 👍/👎 feedback | same | same |
 | Output | Telegram notifications | + digest at 09:05, health alerts | + buttons, replies | + calendar notices |
-| LLM | summary (notify lane) | + batch lane, triage, digest items, `gm eval` | + interactive lane, thinking for reply/analyze | same |
+| LLM | summary (notify lane) | + batch lane, triage, digest items, `gm eval` | + interactive lane, per-model inference profile (hard tier thinks) | same |
 | Scopes | `gmail.readonly` | same | + `gmail.compose` | + `calendar.readonly` |
 | Owner → system | web dashboard, settings | same | Telegram buttons and replies | same |
 

@@ -22,8 +22,8 @@ Gemma3 and Lfm2Moe, not the Qwen3.5 hybrid architecture.
 
 ## Consequences
 
-- gm code must not depend on model specifics beyond the prompt contract (`/no_think` handling is
-  configurable per model).
+- gm code must not depend on model specifics beyond the prompt contract (the no-think tag,
+  thinking and its budget are configured per model in `llm.yaml`, [ADR-0018](0018-llm-inference-profile.md)).
 - Quality of 8B summaries and triage is the baseline the eval set measures.
 
 ## Alternatives considered

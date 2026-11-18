@@ -4,14 +4,14 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{in_language, owner_words, think_json};
+use super::owner_words;
 use crate::i18n::Tr;
-use crate::llm::{parse_json_object, strip_think};
+use crate::llm::{Lane, Task, parse_json_object, strip_think};
 use crate::tasks::{Intent, Recipe, RecipeContext, RecipeResult};
 
 pub const ANALYZE_TASK: &str = include_str!("../../prompts/analyze.md");
-/// Room for the reasoning and the answer.
-pub const MAX_OUTPUT_TOKENS: u32 = 2048;
+/// The answer's cap; a thinking call adds the tier's reasoning budget (`llm.yaml`).
+pub const MAX_OUTPUT_TOKENS: u32 = 1024;
 
 const SECTIONS: &[&str] = &["key_points", "deadlines", "amounts", "risks", "next_steps"];
 
@@ -99,19 +99,19 @@ impl Recipe for Analyze {
             block.push_str(FORWARDED);
         }
         block.push_str(&cx.llm.email_block(&m, usize::MAX));
-        let language = &cx.settings.summary_language;
-        let reply = think_json(
-            cx.llm,
-            "analyze",
-            ANALYZE_TASK,
-            language,
-            &block,
-            MAX_OUTPUT_TOKENS,
-            parse_analysis,
-            // The thinking model can drift into English: retry without thinking.
-            |o| in_language(language, &analysis_text(o)) != Some(false),
-        )
-        .await?;
+        let reply = cx
+            .llm
+            .run(
+                Task::Analyze,
+                Lane::Interactive,
+                ANALYZE_TASK,
+                &cx.settings.summary_language,
+                &block,
+                MAX_OUTPUT_TOKENS,
+                parse_analysis,
+                Some(&analysis_text),
+            )
+            .await?;
         let text = match reply.parsed {
             Some(o) => format_analysis(&tr, &m.subject, &o),
             None => {

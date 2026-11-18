@@ -112,7 +112,7 @@ async fn unavailable_model_queues_triage(pool: PgPool) {
 
 #[test]
 fn triage_prompt_keeps_the_shared_prefix() {
-    let llm = LlmClient::new(&gm::config::Config::for_tests(), None);
+    let llm = LlmClient::new(&gm::config::Config::for_tests(), None).unwrap();
     let m = ParsedMessage {
         subject: "Hello".into(),
         body_text: "x ".repeat(10_000),

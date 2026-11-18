@@ -26,6 +26,7 @@ record.
 | [0015](0015-notification-policy-and-digest.md) | Notification policy, night behavior and the 09:05 digest | Accepted |
 | [0016](0016-operations-baseline.md) | Operations baseline: CI, tests, observability, backups | Accepted |
 | [0017](0017-eval-data-handling.md) | Evaluation data: redacted fixtures in git, raw set local only | Accepted |
+| [0018](0018-llm-inference-profile.md) | LLM inference profile: task tiers, parameters per model in llm.yaml | Accepted |
 
 Template for new records:
 

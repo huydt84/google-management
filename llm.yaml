@@ -1,0 +1,19 @@
+# Inference profile per model (GM_LLM_PROFILE). Each call uses the section of the model it is sent
+# to; a model without a section runs on the built-in defaults (`gm status` warns).
+#
+# Tiers (fixed in crates/gm/src/llm/profile.rs):
+#   easy:   router, triage, digest-line
+#   medium: summary, digest-jobs, translate
+#   hard:   analyze, reply
+#
+# Per tier:
+#   thinking:        leave no_think_tag out so the model reasons first (needs thinking_budget)
+#   thinking_budget: output tokens added to the task's answer cap for the reasoning
+#   language_check:  an answer in the owner's language that is in another language is asked again
+models:
+  mlx-community/Qwen3-8B-4bit:
+    no_think_tag: /no_think
+    tiers:
+      easy:   {thinking: false}
+      medium: {thinking: false}
+      hard:   {thinking: true, thinking_budget: 1024, language_check: true}

@@ -261,6 +261,27 @@ pub async fn endpoints(cfg: &Config, model: &crate::model::ModelSettings) -> Vec
 
 /// Migrations in this binary versus the database: pending, unknown, or edited after being applied
 /// (sqlx refuses to start then).
+/// The inference profile of the configured model: ✓ from the file, ! on the built-in defaults,
+/// ✗ when the file is invalid (`gm serve` would not start).
+pub fn profile(cfg: &Config, model: &str) -> Check {
+    match crate::llm::Profiles::load(&cfg.llm_profile_path) {
+        Ok(p) => {
+            let p = p.for_model(model);
+            match &p.source {
+                crate::llm::profile::Source::File(_) => {
+                    Check::new("llm profile", State::Ok, p.summary())
+                }
+                crate::llm::profile::Source::Defaults(why) => Check::new(
+                    "llm profile",
+                    State::Warn,
+                    format!("{} ({why})", p.summary()),
+                ),
+            }
+        }
+        Err(e) => Check::new("llm profile", State::Fail, format!("{e:#}")),
+    }
+}
+
 pub async fn migrations(pool: &PgPool) -> anyhow::Result<Check> {
     // An empty database has no `_sqlx_migrations`: everything is pending.
     let applied: Vec<(i64, Vec<u8>)> = sqlx::query_as(
@@ -361,6 +382,7 @@ pub async fn collect(cfg: &Config) -> Vec<Check> {
         Err(_) => crate::model::ModelSettings::from_config(cfg),
     };
     out.extend(endpoints(cfg, &model).await);
+    out.push(profile(cfg, &model.model));
     match pool {
         Ok(pool) => {
             match migrations(&pool).await {

@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 
 use super::text_of;
-use crate::llm::{Lane, clean, strip_think};
+use crate::llm::{Lane, Task, clean, strip_think};
 use crate::tasks::{Intent, Recipe, RecipeContext, RecipeResult};
 
 pub const TRANSLATE_TASK: &str = include_str!("../../prompts/translate.md");
@@ -75,14 +75,18 @@ impl Recipe for Translate {
         let mut out = Vec::new();
         for part in &parts {
             let block = format!("<email>\n{}\n</email>", clean::sanitize_delimiters(part));
+            let translation = |t: &String| t.clone();
             let reply = cx
                 .llm
-                .chat_json(
-                    "translate",
+                .run(
+                    Task::Translate,
                     Lane::Interactive,
-                    cx.llm.task_messages(TRANSLATE_TASK, &language, &block),
+                    TRANSLATE_TASK,
+                    &language,
+                    &block,
                     MAX_OUTPUT_TOKENS,
                     |t| text_of(t, "translation"),
+                    Some(&translation),
                 )
                 .await?;
             out.push(reply.parsed.unwrap_or_else(|| strip_think(&reply.raw)));
