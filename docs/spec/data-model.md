@@ -186,7 +186,7 @@ A proposed external action. The payload never changes after insert.
 | `payload` | jsonb | `{account, draft_id, thread_id, to, subject, body_sha256}` |
 | `payload_hash` | text | sha256 of the payload as canonical JSON (sorted keys, no spaces); checked again before executing |
 | `preview` | text | the text the owner saw |
-| `status` | text | `pending → approved → executed \| failed`; `pending → rejected \| expired`; a pending approval also expires when the owner asks for a change, and fails when its hash no longer matches or the draft changed in Gmail |
+| `status` | text | `pending → approved → executed \| failed`; `pending → rejected \| expired \| superseded`; a pending approval is superseded when the owner asks for a change (words or **Use my exact words**), and fails when its hash no longer matches or the draft changed in Gmail |
 | `expires_at` | timestamptz | creation + `GM_APPROVAL_TTL_H` |
 | `decided_at`, `decided_via` | timestamptz, text | `telegram`, `web` |
 | `executing_job` | bigint | the `approval.decision` job that approved it, the only one allowed to run the executor |

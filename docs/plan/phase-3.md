@@ -53,7 +53,7 @@ Telegram update ──► 3A poller ──► user.instruction {origin_key, even
 - `tasks.status`: `pending → running → done | needs_input | awaiting_approval | failed`;
   `awaiting_approval → executing → done | failed`; `awaiting_approval → rejected | expired`;
   `needs_input | awaiting_approval → pending` when the owner answers or asks for a change.
-- `approvals.status`: `pending → approved → executed | failed`; `pending → rejected | expired`;
+- `approvals.status`: `pending → approved → executed | failed`; `pending → rejected | expired | superseded`;
   expiry after `GM_APPROVAL_TTL_H` (24).
 
 ### Schema (`0007_actions.sql`)
@@ -153,7 +153,8 @@ Every recipe re-fetches the mail and wraps it in `<email>` like the summary prom
 
 1. **translate** → `Text`, into `translation_language` (falls back to summary language); numbers,
    dates and names unchanged; long mail translated in chunks.
-2. **analyze** → `Text` (thinking on): key points, deadlines, amounts, phishing signs, next steps.
+2. **analyze** → `Text` (thinking on): key points, deadlines, amounts, phishing signs, next steps;
+   an answer in the wrong output language is redone without thinking; forwards are marked by code.
 3. **reply** → `Propose("gmail.send_draft")` (thinking on):
    - Recipient = `Reply-To` or `From` of the original (headers, never the model). Subject `Re: …`;
      `In-Reply-To` / `References` from `Message-ID`; `threadId` set.
@@ -161,7 +162,8 @@ Every recipe re-fetches the mail and wraps it in `<email>` like the summary prom
      unless told otherwise.
    - `drafts.create`; draft id in `tasks.result`. Preview: To, Subject, full body, "you can edit the
      draft in Gmail before approving".
-   - An edit request in reply to the preview → expire the old approval, `drafts.update`, new approval.
+   - A change request in reply to the preview, or **Use my exact words** (the owner's latest
+     message as the body, no model) → supersede the old approval, `drafts.update`, new approval.
 4. **Executor `gmail.send_draft`** `{draft_id, thread_id, to, subject, body_sha256}`: `drafts.get`,
    re-check recipient and body hash (changed → new approval, never send); `drafts.send`; a missing
    draft with a matching SENT message in the thread counts as done.

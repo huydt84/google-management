@@ -135,10 +135,38 @@ impl TelegramPoller {
                     text: None,
                     intent: Some(intent),
                     reply_to: message_id,
+                    exact: false,
                 };
                 self.publish(topics::USER_INSTRUCTION, &serde_json::to_value(&ins)?)
                     .await?;
                 tr.get("task-working")
+            }
+            Some(Callback::ExactWords { approval_id }) => {
+                let task_id = crate::tasks::approvals::get(&self.pool, approval_id)
+                    .await?
+                    .filter(|a| a.status == "pending")
+                    .map(|a| a.task_id);
+                match task_id {
+                    Some(task_id) => {
+                        let ins = UserInstruction {
+                            origin_key: format!("cb:{cq_id}"),
+                            event_id: None,
+                            task_id: Some(task_id),
+                            text: None,
+                            intent: None,
+                            reply_to: message_id,
+                            exact: true,
+                        };
+                        self.publish(topics::USER_INSTRUCTION, &serde_json::to_value(&ins)?)
+                            .await?;
+                        if let Some(id) = message_id {
+                            // No second tap: the new preview arrives as a reply.
+                            self.notifier.edit_buttons(id, &vec![]).await?;
+                        }
+                        tr.get("task-working")
+                    }
+                    None => tr.get("button-unknown"),
+                }
             }
             Some(Callback::Approval {
                 approval_id,
@@ -214,6 +242,7 @@ impl TelegramPoller {
                 text: Some(text),
                 intent: None,
                 reply_to: Some(message_id),
+                exact: false,
             };
             self.bus
                 .publish(

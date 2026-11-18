@@ -199,11 +199,13 @@ async fn an_edit_request_updates_the_draft_and_asks_again(pool: PgPool) {
     t.update(text_update(2, 42, "more formal please", Some(1)))
         .await;
     t.drain().await;
-    assert_eq!(t.approval_status(first).await, "expired");
+    assert_eq!(t.approval_status(first).await, "superseded");
     let second = t.last_approval().await;
     assert_eq!(t.approval_status(second).await, "pending");
     assert_eq!(requests_to(&t.server, "PUT", "/drafts/d1").await, 1);
-    assert!(t.last_sent().text.contains("Tuesday would suit me well"));
+    let preview = t.last_sent().text;
+    assert!(preview.starts_with("🔄 Updated draft."), "{preview}");
+    assert!(preview.contains("Tuesday would suit me well"));
     assert!(
         t.notifier
             .button_edits
@@ -244,4 +246,165 @@ async fn analyze_lists_points_and_warnings(pool: PgPool) {
     );
     assert!(text.contains("Warning signs\n• Urgent payment request"));
     assert!(text.contains("• ¥3,000"));
+}
+
+/// LLM requests whose prompt contains `marker`.
+async fn llm_requests(t: &TestApp, marker: &str) -> Vec<String> {
+    t.server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .filter(|b| b.contains(marker))
+        .collect()
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn exact_words_replace_the_body_without_the_model(pool: PgPool) {
+    let (t, id) = app_with(pool, "Can we meet?", &[]).await;
+    t.mock_draft_api(json!({})).await;
+    // The model turns the owner's message into a formal note.
+    t.mock_llm_for(
+        REPLY,
+        r#"{"body": "Chào bạn,\nMình rất yêu vợ mình. Cảm ơn bạn đã gửi thông tin.\nThân mến"}"#,
+    )
+    .await;
+    t.update(tap_update(
+        1,
+        42,
+        NOTIFICATION_MSG,
+        &format!("i:{id}:reply"),
+    ))
+    .await;
+    t.drain().await;
+    // The question is message 1, the first preview message 2.
+    t.update(text_update(
+        2,
+        42,
+        "Iu vợ iu nhất nhất nhất quả đất",
+        Some(1),
+    ))
+    .await;
+    t.drain().await;
+    let first = t.last_approval().await;
+    let preview = t.last_sent();
+    assert_eq!(preview.buttons[1][0].data, format!("a:{first}:w"));
+    assert_eq!(llm_requests(&t, REPLY).await.len(), 1);
+
+    t.update(tap_update(3, 42, 2, &format!("a:{first}:w")))
+        .await;
+    t.drain().await;
+    assert_eq!(t.approval_status(first).await, "superseded");
+    let second = t.last_approval().await;
+    assert_eq!(t.approval_status(second).await, "pending");
+    assert_eq!(
+        llm_requests(&t, REPLY).await.len(),
+        1,
+        "no second model call"
+    );
+    let task = t.last_task().await;
+    let result: serde_json::Value = sqlx::query_scalar("SELECT result FROM tasks WHERE id = $1")
+        .bind(task)
+        .fetch_one(&t.app.pool)
+        .await
+        .unwrap();
+    assert_eq!(result["body"], "Iu vợ iu nhất nhất nhất quả đất");
+    let preview = t.last_sent().text;
+    assert!(preview.starts_with("🔄 Updated draft."), "{preview}");
+    assert!(!preview.contains("Thân mến"));
+    assert_eq!(requests_to(&t.server, "PUT", "/drafts/d1").await, 1);
+    assert!(
+        t.notifier
+            .button_edits
+            .lock()
+            .unwrap()
+            .contains(&(2, vec![]))
+    );
+
+    // The superseded preview's button does nothing any more.
+    t.update(tap_update(4, 42, 2, &format!("a:{first}:w")))
+        .await;
+    t.drain().await;
+    assert_eq!(t.approval_status(second).await, "pending");
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn an_analysis_in_the_wrong_language_is_redone_without_thinking(pool: PgPool) {
+    let (t, id) = app_with(pool, "Your invoice is attached.", &[]).await;
+    // Mounted first: the answer without thinking (the summary language is Vietnamese in tests).
+    t.mock_llm_for(
+        r"not a sign of phishing.\n/no_think",
+        r#"{"key_points": ["Hóa đơn được đính kèm trong thư"], "verdict": "safe"}"#,
+    )
+    .await;
+    t.mock_llm_for(
+        ANALYZE,
+        r#"<think>English reasoning</think>{"key_points": ["The invoice is attached"], "verdict": "safe"}"#,
+    )
+    .await;
+    t.update(tap_update(
+        1,
+        42,
+        NOTIFICATION_MSG,
+        &format!("i:{id}:analyze"),
+    ))
+    .await;
+    t.drain().await;
+    let text = t.last_sent().text;
+    assert!(text.contains("• Hóa đơn được đính kèm trong thư"), "{text}");
+    assert!(!text.contains("The invoice is attached"));
+    assert_eq!(llm_requests(&t, ANALYZE).await.len(), 2);
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn a_forward_is_marked_for_the_analysis(pool: PgPool) {
+    let (t, id) = app_with(
+        pool,
+        "A NAME\n\n---------- Forwarded message ---------\nFrom: Shop <shop@example.jp>\nSubject: Contract\n\nPlease find the contract attached.",
+        &[],
+    )
+    .await;
+    t.mock_llm_for(
+        ANALYZE,
+        r#"{"key_points": ["Hợp đồng được chuyển tiếp"], "verdict": "safe"}"#,
+    )
+    .await;
+    t.update(tap_update(
+        1,
+        42,
+        NOTIFICATION_MSG,
+        &format!("i:{id}:analyze"),
+    ))
+    .await;
+    t.drain().await;
+    let sent = llm_requests(&t, ANALYZE).await;
+    assert_eq!(sent.len(), 1);
+    let fact = sent[0].find("Forwarded: yes").expect("fact line");
+    assert!(
+        // The system prompt names `<email>` too; the mail block is the last one.
+        fact > sent[0].find("Output language").unwrap() && fact < sent[0].rfind("<email>").unwrap(),
+        "fact before the mail"
+    );
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn a_plain_mail_is_not_marked_as_a_forward(pool: PgPool) {
+    let (t, id) = app_with(pool, "Can we meet Tuesday?", &[]).await;
+    t.mock_llm_for(
+        ANALYZE,
+        r#"{"key_points": ["Hẹn gặp thứ Ba"], "verdict": "safe"}"#,
+    )
+    .await;
+    t.update(tap_update(
+        1,
+        42,
+        NOTIFICATION_MSG,
+        &format!("i:{id}:analyze"),
+    ))
+    .await;
+    t.drain().await;
+    let sent = llm_requests(&t, ANALYZE).await;
+    assert!(!sent[0].contains("Forwarded: yes"));
 }

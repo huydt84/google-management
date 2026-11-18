@@ -76,6 +76,10 @@ pub struct UserInstruction {
     /// Telegram message the answers reply to.
     #[serde(default)]
     pub reply_to: Option<i64>,
+    /// "Use my exact words" under a reply draft: rebuild the draft of `task_id` from the owner's
+    /// latest message, with no model.
+    #[serde(default)]
+    pub exact: bool,
 }
 
 /// `approval.decision`: Approve or Reject from Telegram or the web.
@@ -105,6 +109,9 @@ pub enum ReplyKind {
     Rejected,
     /// The approval expired: its buttons are removed, nothing is sent.
     Expired,
+    /// The owner asked for a change: the old approval's buttons are removed and the new preview
+    /// follows.
+    Superseded,
     /// The router could not tell what the owner wants: usage hint.
     Unknown,
     /// The model is stopped (outside model hours) and is being started for this task.
@@ -155,7 +162,8 @@ pub struct RecipeContext<'a> {
     pub event: &'a db::Event,
     /// The owner's words, trusted; answers to questions are appended on new lines.
     pub instruction: Option<&'a str>,
-    /// Router output (e.g. a translation target) and an edit request (`edit`).
+    /// Router output (e.g. a translation target), a change request (`edit`) and the exact-words
+    /// flag (`exact`).
     pub args: &'a Value,
     /// `tasks.result` so far: intermediate ids of an earlier attempt (e.g. the draft id).
     pub state: &'a Value,

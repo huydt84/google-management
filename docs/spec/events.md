@@ -51,9 +51,9 @@ Code: [`src/lib.rs`](../../crates/gm/src/lib.rs), [`src/pipeline.rs`](../../crat
 
 | Topic | Producer | Subscriber | Payload | Idempotency check |
 |-------|----------|------------|---------|-------------------|
-| `user.instruction` | Telegram poller (a Translate / Analyze / Reply tap, or words replying to a bot message about a mail) | `task_run` | `{origin_key, event_id?, task_id?, text?, intent?, reply_to?}`; `origin_key` is `cb:<callback id>` or `msg:<message id>` | `tasks.origin_key` is unique; a continuation of a waiting task records it in `result.last_origin`; the task row moves `pending → running` once (row locked) |
+| `user.instruction` | Telegram poller (a Translate / Analyze / Reply tap, or words replying to a bot message about a mail) | `task_run` | `{origin_key, event_id?, task_id?, text?, intent?, reply_to?, exact?}`; `origin_key` is `cb:<callback id>` or `msg:<message id>`; `exact: true` comes from **Use my exact words** (`a:<id>:w`) and only acts on a task awaiting approval | `tasks.origin_key` is unique; a continuation of a waiting task records it in `result.last_origin`; the task row moves `pending → running` once (row locked) |
 | `approval.decision` | Telegram poller (`a:<id>:y|n`), `POST /approvals/{id}/approve|reject` | `approval_decide` | `{approval_id, approve, via: telegram|web}` | only a `pending` approval is decided (row locked); the job that approved it records itself in `approvals.executing_job` and is the only one that runs or resumes the executor |
-| `task.reply` | `task_run`, `approval_decide`, the expiry sweep | `task_reply` | `{task_id, kind: result|question|approval|done|failed|rejected|expired|unknown|waiting, approval_id?, key}` | `chat_messages.reply_key = key` (sent once); the text is rendered from the task and approval rows at send time |
+| `task.reply` | `task_run`, `approval_decide`, the expiry sweep | `task_reply` | `{task_id, kind: result|question|approval|done|failed|rejected|expired|superseded|unknown|model_starting|waiting, approval_id?, key}` | `chat_messages.reply_key = key` (sent once); the text is rendered from the task and approval rows at send time |
 
 Rules for the task runtime ([`tasks/runtime.rs`](../../crates/gm/src/tasks/runtime.rs)):
 

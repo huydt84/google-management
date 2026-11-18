@@ -152,3 +152,34 @@ fn trusted_links_need_a_trusted_domain_and_gmail_dmarc_for_it() {
         assert!(m.trusted_links(&trusted).is_empty(), "{auth:?}");
     }
 }
+
+#[test]
+fn forwards_are_detected_by_marker_or_subject() {
+    use gm::gmail::message::ParsedMessage;
+    let m = |subject: &str, body: &str| ParsedMessage {
+        subject: subject.into(),
+        body_text: body.into(),
+        ..Default::default()
+    };
+    // Gmail's marker, with a redacted signature above it.
+    assert!(
+        m(
+            "契約書データ",
+            "A NAME\n\n---------- Forwarded message ---------\nFrom: Shop <shop@example.jp>\n"
+        )
+        .is_forward()
+    );
+    assert!(m("x", "---------- 転送されたメッセージ ----------\n差出人: a").is_forward());
+    assert!(m("x", "Begin forwarded message:\n\nFrom: a").is_forward());
+    assert!(m("Fwd: invoice", "see below").is_forward());
+    assert!(m("FW: invoice", "").is_forward());
+    assert!(m("転送：請求書", "").is_forward());
+    assert!(
+        !m(
+            "Re: invoice",
+            "On Mon, A <a@b.c> wrote:\n> forwarded message"
+        )
+        .is_forward()
+    );
+    assert!(!m("Forward planning", "We moved forward.").is_forward());
+}

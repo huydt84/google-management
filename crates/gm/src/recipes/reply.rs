@@ -32,11 +32,28 @@ fn google_error(e: GoogleError, tr: &Tr) -> anyhow::Error {
     }
 }
 
+/// Why a preview is shown, as its first line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewNote {
+    /// The first preview of this reply: no note.
+    First,
+    /// The owner asked for a change (in words or with the exact-words button); the previous
+    /// approval is superseded.
+    Updated,
+    /// The draft changed in Gmail before sending: approve this version instead.
+    ChangedInGmail,
+}
+
 /// What the owner sees before approving: recipient, subject and the full body.
-pub fn preview(tr: &Tr, to: &[String], subject: &str, body: &str, changed: bool) -> String {
+pub fn preview(tr: &Tr, to: &[String], subject: &str, body: &str, note: PreviewNote) -> String {
     let mut lines = Vec::new();
-    if changed {
-        lines.push(tr.get("reply-changed"));
+    let note = match note {
+        PreviewNote::First => None,
+        PreviewNote::Updated => Some("reply-updated"),
+        PreviewNote::ChangedInGmail => Some("reply-changed"),
+    };
+    if let Some(key) = note {
+        lines.push(tr.get(key));
         lines.push(String::new());
     }
     lines.push(tr.get("reply-preview-title"));
@@ -79,30 +96,17 @@ impl Recipe for Reply {
         if headers.to.is_empty() {
             return Err(UserFacing(tr.get("reply-no-recipient")).into());
         }
-        let mut block = format!(
-            "Owner's instruction (trusted):\n{}\n\n",
-            owner_words(instruction)
-        );
-        if let (Some(edit), Some(current)) = (cx.args["edit"].as_str(), cx.state["body"].as_str()) {
-            block.push_str(&format!(
-                "Current draft:\n{}\n\nChange request (trusted):\n{}\n\n",
-                owner_words(current),
-                owner_words(edit)
-            ));
-        }
-        block.push_str(&cx.llm.email_block(&m, usize::MAX));
-        let reply = think_json(
-            cx.llm,
-            "reply",
-            REPLY_TASK,
-            "the language of the email, unless the instruction asks for another",
-            &block,
-            MAX_OUTPUT_TOKENS,
-            |t| text_of(t, "body"),
-        )
-        .await?;
-        let body = reply.parsed.unwrap_or_else(|| strip_think(&reply.raw));
-        anyhow::ensure!(!body.trim().is_empty(), "empty reply body from the model");
+        let edit = cx.args["edit"]
+            .as_str()
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        let exact = cx.args["exact"] == json!(true);
+        let body = if exact {
+            // "Use my exact words": the owner's latest message is the body, with no model.
+            edit.unwrap_or(instruction).to_string()
+        } else {
+            write_body(&cx, &m, instruction, edit).await?
+        };
         let draft = ReplyDraft {
             body: body.trim().to_string(),
             ..headers
@@ -126,14 +130,56 @@ impl Recipe for Reply {
             None => create().await,
         }
         .map_err(|e| google_error(e, &tr))?;
+        // A body saved earlier means an earlier preview, superseded by this change request.
+        let note = if cx.state["body"].is_string() && (edit.is_some() || exact) {
+            PreviewNote::Updated
+        } else {
+            PreviewNote::First
+        };
         cx.save(json!({"draft_id": draft_id, "body": draft.body}))
             .await?;
         Ok(RecipeResult::Propose {
             action: SEND_DRAFT,
             payload: payload(cx.account, &draft_id, &draft),
-            preview: preview(&tr, &draft.to, &draft.subject, &draft.body, false),
+            preview: preview(&tr, &draft.to, &draft.subject, &draft.body, note),
         })
     }
+}
+
+/// The model writes the body from the owner's words and, for a change, the current draft and the
+/// change request.
+async fn write_body(
+    cx: &RecipeContext<'_>,
+    m: &crate::gmail::message::ParsedMessage,
+    instruction: &str,
+    edit: Option<&str>,
+) -> anyhow::Result<String> {
+    let mut block = format!(
+        "Owner's instruction (trusted):\n{}\n\n",
+        owner_words(instruction)
+    );
+    if let (Some(edit), Some(current)) = (edit, cx.state["body"].as_str()) {
+        block.push_str(&format!(
+            "Current draft:\n{}\n\nChange request (trusted):\n{}\n\n",
+            owner_words(current),
+            owner_words(edit)
+        ));
+    }
+    block.push_str(&cx.llm.email_block(m, usize::MAX));
+    let reply = think_json(
+        cx.llm,
+        "reply",
+        REPLY_TASK,
+        "the language of the email, unless the instruction asks for another",
+        &block,
+        MAX_OUTPUT_TOKENS,
+        |t| text_of(t, "body"),
+        |_| true,
+    )
+    .await?;
+    let body = reply.parsed.unwrap_or_else(|| strip_think(&reply.raw));
+    anyhow::ensure!(!body.trim().is_empty(), "empty reply body from the model");
+    Ok(body)
 }
 
 /// `gmail.send_draft {account, draft_id, thread_id, to, subject, body_sha256}`: send the draft only
@@ -202,7 +248,13 @@ impl Executor for SendDraft {
                     draft.body = draft.body.trim().to_string();
                     return Ok(ExecResult::Changed {
                         payload: payload(cx.account, &draft_id, &draft),
-                        preview: preview(&tr, &draft.to, &draft.subject, &draft.body, true),
+                        preview: preview(
+                            &tr,
+                            &draft.to,
+                            &draft.subject,
+                            &draft.body,
+                            PreviewNote::ChangedInGmail,
+                        ),
                     });
                 }
                 let sent = cx
