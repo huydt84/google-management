@@ -446,8 +446,8 @@ Forward detection ([`gmail/message.rs`](../../crates/gm/src/gmail/message.rs) `i
 The fact line carries no mail text; the original sender is read inside `<email>`.
 
 `system.md` forbids guessing anyone's gender, age or relationship: Vietnamese output uses neutral
-forms of address (`bạn`, `quý khách`, or the name with no title) and Japanese keeps the mail's own
-honorific.
+forms of address (`bạn`, `quý khách`, or the name with no title); Japanese honorifics (様, さん) appear
+only in Japanese output. Analyze's `risks` lists only warning signs that are present.
 
 ## Calendar notifications and agenda
 
