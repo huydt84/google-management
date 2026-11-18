@@ -136,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
             );
             let rules = RuleSet::parse(&std::fs::read_to_string(&cfg.rules_path)?)?;
             let language = language.unwrap_or_else(|| cfg.default_summary_language.clone());
-            let mut llm = gm::llm::LlmClient::new(&cfg, None);
+            let mut llm = gm::llm::LlmClient::new(&cfg, None)?;
             let calls = llm.record_calls();
             let report = gm::eval::run(&llm, &calls, &rules, &cases, &language).await?;
             print!("{}", gm::eval::format_report(&report, &cfg.llm_model));

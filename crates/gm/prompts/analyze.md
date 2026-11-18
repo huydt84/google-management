@@ -4,10 +4,13 @@ Return exactly these keys, each list at most 5 short items and empty when nothin
 {"key_points": [string],     // what the email says or asks
  "deadlines": [string],      // dates and times the owner must act by, with what to do
  "amounts": [string],        // money amounts with what they are for
- "risks": [string],          // signs of phishing or fraud: mismatched sender, urgency, requests
-                             // for passwords, codes or payment, suspicious links
+ "risks": [string],          // signs of phishing or fraud that ARE present: mismatched sender,
+                             // urgency, requests for passwords, codes or payment, suspicious links
  "next_steps": [string],     // what the owner could do next
  "verdict": "safe" | "suspicious" | "phishing"}
+
+"risks" lists only warning signs found in the email. Never list what is absent ("no suspicious
+links", "no request for money"): when there are none, "risks" is [] and the verdict says so.
 
 Write every text in the output language named before the email, even when you reason in another
 language or the email is in another language.

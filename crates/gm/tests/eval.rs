@@ -181,7 +181,7 @@ async fn run_reports_accuracy_confusion_parse_rate_and_calls(pool: PgPool) {
 
     let mut cfg = t.app.cfg.clone();
     cfg.llm_base_url = format!("{}/v1", t.server.uri());
-    let mut llm = gm::llm::LlmClient::new(&cfg, None);
+    let mut llm = gm::llm::LlmClient::new(&cfg, None).unwrap();
     let calls = llm.record_calls();
     let rules = RuleSet::parse(&std::fs::read_to_string(&cfg.rules_path).unwrap()).unwrap();
     let r = gm::eval::run(&llm, &calls, &rules, &cases, "English")

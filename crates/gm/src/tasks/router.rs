@@ -6,7 +6,7 @@
 use serde_json::{Value, json};
 
 use super::Intent;
-use crate::llm::{Lane, LlmClient, clean, parse_json_object};
+use crate::llm::{Lane, LlmClient, Task, clean, parse_json_object};
 use crate::user_settings::normalize_language;
 
 pub const ROUTER_TASK: &str = include_str!("../../prompts/router.md");
@@ -105,13 +105,13 @@ pub fn parse_routed(text: &str) -> Option<Routed> {
     Some(Routed { intent, args })
 }
 
-pub fn messages(llm: &LlmClient, text: &str) -> Vec<Value> {
+/// The owner's words in `<instruction>`, kept from closing it.
+fn block(text: &str) -> String {
     let words = clean::sanitize_delimiters(text.trim());
-    let block = format!(
+    format!(
         "<instruction>\n{}\n</instruction>",
         words.replace("</instruction", "<_instruction")
-    );
-    llm.task_messages(ROUTER_TASK, "English", &block)
+    )
 }
 
 /// Route the owner's words. Transport errors (including `LlmUnavailable`) are returned.
@@ -120,12 +120,15 @@ pub async fn route(llm: &LlmClient, text: &str) -> anyhow::Result<Routed> {
         return Ok(r);
     }
     let reply = llm
-        .chat_json(
-            "router",
+        .run(
+            Task::Router,
             Lane::Interactive,
-            messages(llm, text),
+            ROUTER_TASK,
+            "English",
+            &block(text),
             MAX_OUTPUT_TOKENS,
             parse_routed,
+            None,
         )
         .await?;
     Ok(reply.parsed.unwrap_or_else(|| Routed::of(Intent::Unknown)))

@@ -1,9 +1,14 @@
 //! All model calls go through [`LlmClient`] (invariant 7, ADR-0010): an OpenAI-compatible
 //! `POST /chat/completions` to mlx-server-runtime, admitted through priority lanes, recorded in
 //! `llm_calls`. No `tools` / `response_format`: prompts ask for one JSON object and the output is
-//! parsed tolerantly, with one retry.
+//! parsed tolerantly, with one retry. Each task's tier in the model's [`profile`] decides whether
+//! it thinks and whether its answer's language is checked ([`LlmClient::run`]).
 
 pub mod clean;
+pub mod language;
+pub mod profile;
+
+pub use profile::{Profile, Profiles, Task, Tier};
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -302,12 +307,32 @@ fn parse_action(item: &Value, links: &[String]) -> Option<SuggestedAction> {
     })
 }
 
+/// A task's messages. With `think` the no-think `tag` is simply not appended.
+fn task_messages(
+    tag: &str,
+    prompt: &str,
+    language: &str,
+    email_block: &str,
+    think: bool,
+) -> Vec<Value> {
+    let mut system = format!("{}\n{}", SYSTEM_PREFIX.trim_end(), prompt.trim_end());
+    if !think && !tag.is_empty() {
+        system.push_str(&format!("\n{tag}"));
+    }
+    vec![
+        json!({"role": "system", "content": system}),
+        json!({"role": "user", "content": format!("Output language: {language}\n\n{email_block}")}),
+    ]
+}
+
 pub struct LlmClient {
     http: reqwest::Client,
     base_url: String,
     api_key: String,
     pub model: String,
-    no_think_tag: String,
+    profiles: Profiles,
+    /// Models already reported as running on the built-in defaults.
+    warned: Mutex<std::collections::BTreeSet<String>>,
     max_input_tokens: usize,
     summary_max_tokens: u32,
     admission: Arc<Admission>,
@@ -354,8 +379,10 @@ struct Usage {
 }
 
 impl LlmClient {
-    pub fn new(cfg: &Config, pool: Option<PgPool>) -> Self {
-        Self {
+    /// Loads the inference profiles (`GM_LLM_PROFILE`); an invalid file is an error.
+    pub fn new(cfg: &Config, pool: Option<PgPool>) -> anyhow::Result<Self> {
+        let profiles = Profiles::load(&cfg.llm_profile_path)?;
+        Ok(Self {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(cfg.llm_timeout_s))
                 .build()
@@ -363,14 +390,39 @@ impl LlmClient {
             base_url: cfg.llm_base_url.clone(),
             api_key: cfg.llm_api_key.clone(),
             model: cfg.llm_model.clone(),
-            no_think_tag: cfg.llm_no_think_tag.clone(),
+            profiles,
+            warned: Mutex::new(Default::default()),
             max_input_tokens: cfg.llm_max_input_tokens,
             summary_max_tokens: cfg.llm_summary_max_tokens,
             admission: Admission::new(cfg.llm_max_inflight),
             pool,
             recorder: None,
             control: None,
+        })
+    }
+
+    /// The profile of the model requests go to now. Logged once per model: info from the file,
+    /// a warning on the built-in defaults.
+    pub fn profile(&self) -> Profile {
+        let profile = self.profiles.for_model(&self.request_model());
+        if self.warned.lock().unwrap().insert(profile.model.clone()) {
+            match &profile.source {
+                profile::Source::File(_) => {
+                    tracing::info!(profile = %profile.summary(), "LLM profile")
+                }
+                profile::Source::Defaults(why) => {
+                    tracing::warn!(reason = %why, profile = %profile.summary(), "LLM profile: built-in defaults")
+                }
+            }
         }
+        profile
+    }
+
+    /// The model id requests carry: the served one when gm controls the model, else `GM_LLM_MODEL`.
+    fn request_model(&self) -> String {
+        self.control
+            .as_ref()
+            .map_or_else(|| self.model.clone(), |c| c.request_model())
     }
 
     /// Let the model control start the model for owner requests and count calls in flight.
@@ -399,10 +451,7 @@ impl LlmClient {
             Some(c) => Some(c.begin(lane).await?),
             None => None,
         };
-        let model = self
-            .control
-            .as_ref()
-            .map_or_else(|| self.model.clone(), |c| c.request_model());
+        let model = self.request_model();
         let _permit = self.admission.acquire(lane).await;
         let started = Instant::now();
         let result = async {
@@ -507,29 +556,19 @@ impl LlmClient {
         format!("<email>\n{}\n</email>", clean::sanitize_delimiters(&email))
     }
 
-    /// Shared stable prefix first (system prompt + task + thinking switch), per-user settings and
-    /// the mail last, so the prefix KV cache is reused across mails and tasks.
-    pub fn task_messages(&self, task: &str, language: &str, email_block: &str) -> Vec<Value> {
-        self.task_messages_with(task, language, email_block, false)
-    }
-
-    /// [`LlmClient::task_messages`], with the model's thinking left on when `think` (analyze and
-    /// reply): the thinking switch is simply not appended.
-    pub fn task_messages_with(
+    /// The messages `task`'s first call sends: thinking as its tier says. Shared stable prefix first
+    /// (system prompt + task prompt + thinking switch), per-user settings and the mail last, so the
+    /// prefix KV cache is reused across mails and tasks.
+    pub fn messages_for(
         &self,
-        task: &str,
+        task: Task,
+        prompt: &str,
         language: &str,
         email_block: &str,
-        think: bool,
     ) -> Vec<Value> {
-        let mut system = format!("{}\n{}", SYSTEM_PREFIX.trim_end(), task.trim_end());
-        if !think && !self.no_think_tag.is_empty() {
-            system.push_str(&format!("\n{}", self.no_think_tag));
-        }
-        vec![
-            json!({"role": "system", "content": system}),
-            json!({"role": "user", "content": format!("Output language: {language}\n\n{email_block}")}),
-        ]
+        let profile = self.profile();
+        let think = profile.params(task).thinking;
+        task_messages(&profile.no_think_tag, prompt, language, email_block, think)
     }
 
     /// `links` are the mail's trusted links ([`ParsedMessage::trusted_links`]), listed after the
@@ -540,6 +579,12 @@ impl LlmClient {
         language: &str,
         links: &[String],
     ) -> Vec<Value> {
+        let block = self.summary_block(m, links);
+        self.messages_for(Task::Summary, SUMMARY_TASK, language, &block)
+    }
+
+    /// The mail, then its trusted links numbered in a `<links>` block.
+    fn summary_block(&self, m: &ParsedMessage, links: &[String]) -> String {
         let mut block = self.email_block(m, self.max_input_tokens);
         if !links.is_empty() {
             block.push_str("\n\n<links>\n");
@@ -548,12 +593,86 @@ impl LlmClient {
             }
             block.push_str("</links>");
         }
-        self.task_messages(SUMMARY_TASK, language, &block)
+        block
+    }
+
+    /// Run one model task as its tier says. Thinking: one call with the reasoning budget added to
+    /// `answer_cap` (temperature 0.6); an unusable answer, or one that fails the language check, is
+    /// replaced by the answer without thinking. Without thinking: one JSON call with a format retry; with the
+    /// language check on, an answer in the wrong language is asked once more at temperature 0. The
+    /// last answer is used whatever its language. `checked` gives the text in `language` to check;
+    /// `None` for tasks whose output is not in the owner's language (router, triage, reply).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run<T>(
+        &self,
+        task: Task,
+        lane: Lane,
+        prompt: &str,
+        language: &str,
+        block: &str,
+        answer_cap: u32,
+        parse: impl Fn(&str) -> Option<T>,
+        checked: Option<&(dyn Fn(&T) -> String + Sync)>,
+    ) -> anyhow::Result<JsonReply<T>> {
+        let profile = self.profile();
+        let params = profile.params(task);
+        let name = task.name();
+        let wrong_language = |v: &T| {
+            params.language_check
+                && checked.is_some_and(|f| language::in_language(language, &f(v)) == Some(false))
+        };
+        let plain = task_messages(&profile.no_think_tag, prompt, language, block, false);
+        if params.thinking {
+            let first = self
+                .chat(
+                    name,
+                    lane,
+                    &task_messages(&profile.no_think_tag, prompt, language, block, true),
+                    answer_cap + params.thinking_budget,
+                    0.6,
+                )
+                .await?;
+            match parse(&first) {
+                Some(v) if !wrong_language(&v) => {
+                    return Ok(JsonReply {
+                        parsed: Some(v),
+                        raw: first,
+                    });
+                }
+                Some(_) => tracing::warn!(
+                    task = name,
+                    "answer with thinking in the wrong language; asking without"
+                ),
+                None => {
+                    tracing::warn!(task = name, "answer with thinking unusable; asking without")
+                }
+            }
+            return self
+                .chat_json(&format!("{name}-nothink"), lane, plain, answer_cap, parse)
+                .await;
+        }
+        let reply = self
+            .chat_json(name, lane, plain.clone(), answer_cap, &parse)
+            .await?;
+        if !reply.parsed.as_ref().is_some_and(&wrong_language) {
+            return Ok(reply);
+        }
+        tracing::warn!(task = name, "answer in the wrong language; asking again");
+        let again = self
+            .chat(&format!("{name}-language"), lane, &plain, answer_cap, 0.0)
+            .await?;
+        Ok(match parse(&again) {
+            Some(v) => JsonReply {
+                parsed: Some(v),
+                raw: again,
+            },
+            None => reply,
+        })
     }
 
     /// Ask for one JSON object; if `parse` rejects the reply, ask once more with a format reminder
     /// at temperature 0. Transport errors (including [`LlmUnavailable`]) are returned as is.
-    pub async fn chat_json<T>(
+    async fn chat_json<T>(
         &self,
         task: &str,
         lane: Lane,
@@ -587,13 +706,25 @@ impl LlmClient {
         links: &[String],
         lane: Lane,
     ) -> anyhow::Result<EmailSummary> {
+        let block = self.summary_block(m, links);
+        let checked = |s: &EmailSummary| {
+            let mut t = s.summary.clone();
+            for a in &s.suggested_actions {
+                t.push('\n');
+                t.push_str(&a.text);
+            }
+            t
+        };
         let reply = self
-            .chat_json(
-                "summary",
+            .run(
+                Task::Summary,
                 lane,
-                self.summary_messages(m, language, links),
+                SUMMARY_TASK,
+                language,
+                &block,
                 self.summary_max_tokens,
                 |t| parse_summary(t, links),
+                Some(&checked),
             )
             .await?;
         Ok(reply.parsed.unwrap_or_else(|| {

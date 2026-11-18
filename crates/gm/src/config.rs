@@ -73,8 +73,9 @@ pub struct Config {
     pub llm_max_inflight: usize,
     pub llm_max_input_tokens: usize,
     pub llm_summary_max_tokens: u32,
-    /// Appended to prompts of non-thinking tasks (Qwen3: `/no_think`). Empty disables.
-    pub llm_no_think_tag: String,
+    /// The inference profile file (`llm.yaml`): per model, tier parameters and the no-think tag
+    /// ([`crate::llm::profile`]).
+    pub llm_profile_path: PathBuf,
     /// While the model is unavailable, queued summaries try again after this many seconds.
     pub llm_unavailable_retry_s: u64,
     /// Model hours in local time (ADR-0010): model work runs only inside them. Equal values mean "always on".
@@ -259,8 +260,7 @@ impl Config {
             llm_max_inflight: parse("LLM_MAX_INFLIGHT", 2)?,
             llm_max_input_tokens: parse("LLM_MAX_INPUT_TOKENS", 2000)?,
             llm_summary_max_tokens: parse("LLM_SUMMARY_MAX_TOKENS", 400)?,
-            llm_no_think_tag: std::env::var("GM_LLM_NO_THINK_TAG")
-                .unwrap_or_else(|_| "/no_think".into()),
+            llm_profile_path: PathBuf::from(env_or("LLM_PROFILE", "llm.yaml")),
             llm_unavailable_retry_s: parse("LLM_UNAVAILABLE_RETRY_S", 300)?,
             model_on: time("MODEL_ON", "09:00")?,
             model_off: time("MODEL_OFF", "19:00")?,
@@ -329,7 +329,7 @@ impl Config {
             llm_max_inflight: 2,
             llm_max_input_tokens: 2000,
             llm_summary_max_tokens: 400,
-            llm_no_think_tag: "/no_think".into(),
+            llm_profile_path: PathBuf::from("does-not-exist.yaml"),
             llm_unavailable_retry_s: 300,
             model_on: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             model_off: NaiveTime::from_hms_opt(0, 0, 0).unwrap(),

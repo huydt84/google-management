@@ -90,7 +90,8 @@ Workstreams in the same phase run in parallel when they own different files (lis
 6. **Bind to loopback only.** Remote access through Tailscale; no public webhooks.
 7. **Every model call goes through `llm::LlmClient`** with a lane. No reliance on `tools` or
    `response_format`; ask for JSON and parse tolerantly. Keep the stable system prefix (system.md +
-   task + `/no_think`) and put the mail last.
+   task + the model's no-think tag) and put the mail last. Thinking and its budget come from the
+   model's inference profile (`llm.yaml`), never from per-call code.
 8. **Model hours and outages.** Background work that needs the model returns `Outcome::Defer`
    outside 09:00–19:00, and all model work defers while the model is unavailable (`LlmUnavailable`).
    Tasks the owner starts from Telegram are the one exception to model hours: they run at any hour
@@ -137,8 +138,8 @@ one, write the answer into the doc it governs and delete the line here.
   domains); at most 10 trusted links per summary prompt and 50 domains per owner; `gm eval` runs the
   summary prompt without links.
 - Phase 3 caps: router 60 output tokens; translate chunks of ~1,200 input tokens, at most 6 per mail,
-  2,048 output tokens each; analyze 2,048 and reply 1,536 output tokens (thinking included);
-  thinking passes at temperature 0.6.
+  2,048 answer tokens each; analyze 1,024 and reply 512 answer tokens, plus the tier's
+  `thinking_budget` when it thinks; thinking passes at temperature 0.6.
 - Phase 3 behavior: a second tap on the same mail and intent within 2 minutes (or while the first
   runs) is ignored; Translate uses the cleaned body (quoted history and signatures dropped); a
   rejected reply leaves its draft in Gmail; held notifications are deferred a year and released by

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::gmail::message::ParsedMessage;
-use crate::llm::{Lane, LlmClient, parse_json_object};
+use crate::llm::{Lane, LlmClient, Task, parse_json_object};
 use crate::rules::{Action, Priority, Verdict};
 
 pub const TRIAGE_TASK: &str = include_str!("../prompts/triage.md");
@@ -48,7 +48,12 @@ pub fn parse_triage(text: &str) -> Option<TriageDecision> {
 }
 
 pub fn messages(llm: &LlmClient, m: &ParsedMessage, language: &str) -> Vec<Value> {
-    llm.task_messages(TRIAGE_TASK, language, &llm.email_block(m, MAX_INPUT_TOKENS))
+    llm.messages_for(
+        Task::Triage,
+        TRIAGE_TASK,
+        language,
+        &llm.email_block(m, MAX_INPUT_TOKENS),
+    )
 }
 
 /// Classify one mail. Transport errors (including `LlmUnavailable`) are returned; unusable output
@@ -59,12 +64,15 @@ pub async fn classify(
     language: &str,
 ) -> anyhow::Result<TriageDecision> {
     let reply = llm
-        .chat_json(
-            "triage",
+        .run(
+            Task::Triage,
             Lane::Notify,
-            messages(llm, m, language),
+            TRIAGE_TASK,
+            language,
+            &llm.email_block(m, MAX_INPUT_TOKENS),
             MAX_OUTPUT_TOKENS,
             parse_triage,
+            None,
         )
         .await?;
     Ok(reply.parsed.unwrap_or_else(|| {

@@ -123,7 +123,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         pool.clone(),
         cfg.telegram_chat_id.as_deref().unwrap_or_default(),
     );
-    let llm = Arc::new(LlmClient::new(&cfg, Some(pool.clone())).with_control(model.clone()));
+    let llm = Arc::new(LlmClient::new(&cfg, Some(pool.clone()))?.with_control(model.clone()));
     let pipeline = Arc::new(Pipeline {
         pool: pool.clone(),
         bus: bus.clone(),
