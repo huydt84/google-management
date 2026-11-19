@@ -203,7 +203,7 @@ async fn get_json(http: &reqwest::Client, url: &str) -> Result<(u16, Value), Str
 }
 
 /// `/healthz` of the configured web server and the model's readiness probe.
-pub async fn endpoints(cfg: &Config, model: &crate::model::ModelSettings) -> Vec<Check> {
+async fn endpoints(cfg: &Config, model: &crate::model::ModelSettings, resting: bool) -> Vec<Check> {
     let http = reqwest::Client::new();
     let web = match get_json(
         &http,
@@ -224,6 +224,9 @@ pub async fn endpoints(cfg: &Config, model: &crate::model::ModelSettings) -> Vec
         ),
     };
     let model = match get_json(&http, &cfg.llm_ready_url).await {
+        Ok((code, _)) if resting && (200..300).contains(&code) => {
+            Check::new("model", State::Warn, "still ready after /rest")
+        }
         Ok((code, body)) if (200..300).contains(&code) => {
             let served = body["model"].as_str().unwrap_or("?");
             if served == model.model || served == "?" {
@@ -239,6 +242,7 @@ pub async fn endpoints(cfg: &Config, model: &crate::model::ModelSettings) -> Vec
                 )
             }
         }
+        _ if resting => Check::new("model", State::Ok, "resting until /wakeup"),
         // Stopped on purpose: gm stops the model outside model hours and starts it on demand.
         _ if model.manage && !model.hours().is_on(chrono::Local::now()) => Check::new(
             "model",
@@ -374,7 +378,11 @@ pub async fn collect(cfg: &Config) -> Vec<Check> {
             .unwrap_or_else(|_| crate::model::ModelSettings::from_config(cfg)),
         Err(_) => crate::model::ModelSettings::from_config(cfg),
     };
-    out.extend(endpoints(cfg, &model).await);
+    let resting = match &pool {
+        Ok(p) => crate::model::load_resting(p, cfg).await.unwrap_or(false),
+        Err(_) => false,
+    };
+    out.extend(endpoints(cfg, &model, resting).await);
     out.push(profile(cfg, &model.model));
     match pool {
         Ok(pool) => {

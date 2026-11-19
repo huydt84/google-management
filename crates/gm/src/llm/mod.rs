@@ -491,6 +491,9 @@ impl LlmClient {
         let model = &request.model;
         let lane = request.lane;
         let _permit = self.admission.acquire(lane).await;
+        if let Some(control) = &self.control {
+            control.require_awake()?;
+        }
         let started = Instant::now();
         let mut body = json!({
             "model": model, "messages": messages, "max_tokens": max_tokens,

@@ -214,12 +214,17 @@ reviewed, tested file.
 
 | Command | Effect |
 |---------|--------|
-| `/status` | Notifications on or paused, model hours, queue counts (pending, running, dead), current health problems other than Gmail sync lag |
+| `/status` | Notifications on or paused, model hours and manual rest status, queue counts (pending, running, dead), current health problems other than Gmail sync lag |
 | `/sync` | Check the owner's Gmail now, at any hour, and reply with the number of newly ingested emails or a short connection/error message. Uses the normal ingestion lock, deduplication and mail notification rules; does not start the model or bypass `/pause` |
 | `/pause` | Hold mail notifications until `/resume`; the digest, health alerts and task answers still come |
 | `/resume` | Send what was held, at once |
+| `/rest` | Stop the local mlx-air instance immediately to free its RAM. Keep it off across gm restarts until `/wakeup`. Model-dependent work defers and rule-only notifications can still go out. |
+| `/wakeup` | Start the local instance and confirm when it answers `/ready`. Clear manual rest on success and resume the usual schedule, including the idle timer outside model hours. |
 | `/language [name]` | Show, or set, the summary language (2–40 letters, as in Settings) |
 | `/help`, `/start`, any other command | Usage |
+
+Code for the model commands: [`telegram/poller.rs`](../../crates/gm/src/telegram/poller.rs)
+and [`model.rs`](../../crates/gm/src/model.rs).
 
 ### Digest (Phase 2)
 
@@ -244,8 +249,9 @@ leftovers stay as subject lines. Mail arriving after the digest goes into the ne
 
 Checked every minute (`src/health.rs`): `dead_jobs` (any job `dead`), `ingest_lag` (an active
 account not synced for more than 10 min; in Pub/Sub mode while it works, the safety-poll interval +
-10 min), `model_down` (`GM_LLM_READY_URL` not 2xx within 5 s; only checked during model hours, an open
-incident stays open outside them), `needs_reconnect` (an account whose refresh token was rejected).
+10 min), `model_down` (`GM_LLM_READY_URL` not 2xx within 5 s; checked during model hours when the
+model is awake, with open incidents retained while the check is skipped), `needs_reconnect` (an
+account whose refresh token was rejected).
 Gmail sync lag is diagnostic only: it stays on the dashboard, `/metrics`, `gm status` and in
 `health_state`, without Telegram failure or recovery messages, including incidents previously
 announced by an older build. It is excluded from the digest System section and Telegram `/status`.
@@ -270,7 +276,7 @@ Code: [`src/main.rs`](../../crates/gm/src/main.rs).
 | `gm keychain set <name>` | Store a secret in the Keychain (macOS prompts for the value) |
 | `gm keychain list` | Show which known secrets are present (never the values) |
 | `gm rules [path]` | Validate a rules file and check every rule's examples |
-| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary (a binary at most 2 s newer than the start counts as the running one: `ps` reports whole seconds and the upgrade command restarts within a second), `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, the configured model's client and sampling profile (`!` on the built-in defaults, `✗` for an invalid file), migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
+| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary (a binary at most 2 s newer than the start counts as the running one: `ps` reports whole seconds and the upgrade command restarts within a second), `/healthz`, the model's readiness or manual rest status and the model it serves versus `GM_LLM_MODEL`, the configured model's client and sampling profile (`!` on the built-in defaults, `✗` for an invalid file), migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
 | `gm eval [--dir DIR] [--language LANG]` | Run rules → model triage → summary on every case in the eval set against the **local** model (refuses a non-loopback `GM_LLM_BASE_URL`) and print accuracy per expected action, the confusion matrix, the JSON parse rate per task, misclassified ids, and calls, latency p50/p95 and tokens per model task. Needs no database, Keychain or Google access |
 
 ## Configuration

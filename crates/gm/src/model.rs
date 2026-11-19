@@ -2,7 +2,8 @@
 //!
 //! Inside model hours the model is up. Outside them it is stopped, and an owner request (a
 //! Telegram task, a web request) starts it and keeps it up until it has been idle for
-//! `idle_min` minutes. gm only calls the `mlx-air` CLI (`serve --detach`, `stop`); the process,
+//! `idle_min` minutes. A manual rest overrides that schedule until wakeup.
+//! gm only calls the `mlx-air` CLI (`serve --detach`, `stop`); the process,
 //! its launchd agent and its limits stay mlx-air's. The settings live in `system_settings`
 //! (key `model_control`, edited on the dashboard); `.env` gives the first defaults.
 
@@ -21,10 +22,33 @@ use crate::llm::{Lane, LlmUnavailable};
 
 /// `system_settings` key holding [`ModelSettings`].
 pub const SETTINGS_KEY: &str = "model_control";
+const RESTING_KEY: &str = "model_resting";
 /// How often the loop compares the wanted state with the real one.
 const RECONCILE_EVERY: Duration = Duration::from_secs(30);
 /// A failed start is not retried sooner than this.
 const START_RETRY: chrono::Duration = chrono::Duration::seconds(60);
+
+fn local_port(cfg: &Config) -> Option<u16> {
+    url::Url::parse(&cfg.llm_base_url)
+        .ok()
+        .filter(|u| {
+            matches!(
+                u.host_str(),
+                Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+            )
+        })
+        .and_then(|u| u.port_or_known_default())
+}
+
+pub(crate) async fn load_resting(pool: &PgPool, cfg: &Config) -> sqlx::Result<bool> {
+    if local_port(cfg).is_none() {
+        return Ok(false);
+    }
+    Ok(crate::db::system_get(pool, RESTING_KEY)
+        .await?
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false))
+}
 
 /// The editable part of the model control.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -158,13 +182,17 @@ impl MlxAir {
         )
         .await
         .map_err(|_| anyhow::anyhow!("{} {} timed out", self.bin, args[0]))??;
-        if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // mlx-air reports an unregistered instance as an error even though it is already off.
+        if !out.status.success()
+            && !matches!(args, ["stop", instance] if stderr.trim() == format!("error: managed instance '{instance}' is not registered"))
+        {
             anyhow::bail!(
                 "{} {} failed ({}): {}",
                 self.bin,
                 args[0],
                 out.status,
-                String::from_utf8_lossy(&out.stderr).trim()
+                stderr.trim()
             );
         }
         Ok(())
@@ -194,8 +222,17 @@ pub enum Step {
     Stop,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Rest {
+    #[default]
+    Awake,
+    Stopping,
+    Stopped,
+}
+
 #[derive(Default)]
 struct Book {
+    rest: Rest,
     /// The end of the last owner request (or its start while it runs).
     last_interactive: Option<DateTime<Utc>>,
     /// Since when the model is up although it should not be.
@@ -220,7 +257,7 @@ pub struct ModelControl {
     settings: RwLock<ModelSettings>,
     book: Mutex<Book>,
     inflight: AtomicUsize,
-    /// Serializes starts and stops.
+    /// Serializes settings changes and process operations.
     lifecycle: tokio::sync::Mutex<()>,
 }
 
@@ -247,15 +284,7 @@ impl ModelControl {
         clock: Arc<dyn Clock>,
         process: Option<Arc<dyn ModelProcess>>,
     ) -> Arc<Self> {
-        let port = url::Url::parse(&cfg.llm_base_url)
-            .ok()
-            .filter(|u| {
-                matches!(
-                    u.host_str(),
-                    Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
-                )
-            })
-            .and_then(|u| u.port_or_known_default());
+        let port = local_port(cfg);
         let start_timeout = Duration::from_secs(cfg.model_start_timeout_s);
         let defaults = ModelSettings::from_config(cfg);
         Arc::new(Self {
@@ -283,6 +312,12 @@ impl ModelControl {
     /// Read the saved settings from Postgres (call once at startup).
     pub async fn load(&self, cfg: &Config) -> sqlx::Result<()> {
         *self.settings.write().unwrap() = ModelSettings::load(&self.pool, cfg).await?;
+        let rest = if load_resting(&self.pool, cfg).await? {
+            Rest::Stopping
+        } else {
+            Rest::Awake
+        };
+        self.book.lock().unwrap().rest = rest;
         Ok(())
     }
 
@@ -303,17 +338,70 @@ impl ModelControl {
         self.port.is_some() && self.settings.read().unwrap().manage
     }
 
-    /// Validate, store and apply new settings. Switching management off while the model is
-    /// down starts it, so "off" never leaves the model stopped.
+    pub fn resting(&self) -> bool {
+        self.book.lock().unwrap().rest != Rest::Awake
+    }
+
+    pub(crate) fn require_awake(&self) -> Result<(), LlmUnavailable> {
+        if self.resting() {
+            return Err(LlmUnavailable("the model is resting until /wakeup".into()));
+        }
+        Ok(())
+    }
+
+    /// Hold the local model off until the owner wakes it. The reconciler retries failed stops.
+    pub async fn rest(&self) -> anyhow::Result<()> {
+        let _g = self.lifecycle.lock().await;
+        anyhow::ensure!(self.port.is_some(), "gm can only stop a local model");
+        if !self.resting() {
+            crate::db::system_set(&self.pool, RESTING_KEY, &true.into()).await?;
+        }
+        self.book.lock().unwrap().rest = Rest::Stopping;
+        self.finish_rest().await
+    }
+
+    /// Start the local model now, then hand it back to the normal residency policy.
+    pub async fn wakeup(&self) -> anyhow::Result<()> {
+        let _g = self.lifecycle.lock().await;
+        anyhow::ensure!(self.port.is_some(), "gm can only start a local model");
+        let resting = self.resting();
+        if resting {
+            self.book.lock().unwrap().rest = Rest::Stopping;
+        }
+        self.start().await?;
+        if resting {
+            crate::db::system_set(&self.pool, RESTING_KEY, &false.into()).await?;
+        }
+        let mut book = self.book.lock().unwrap();
+        book.rest = Rest::Awake;
+        book.last_interactive = Some(self.clock_now());
+        book.stop_wanted_since = None;
+        Ok(())
+    }
+
+    async fn finish_rest(&self) -> anyhow::Result<()> {
+        self.stop().await?;
+        anyhow::ensure!(
+            !self.ready().await,
+            "the model still answers after mlx-air stop"
+        );
+        self.book.lock().unwrap().rest = Rest::Stopped;
+        Ok(())
+    }
+
+    /// Validate, store and apply new settings. Switching management off starts the model
+    /// unless the owner has put it to rest.
     pub async fn save(&self, new: ModelSettings) -> anyhow::Result<Result<(), SettingsError>> {
         if let Err(e) = new.validate() {
             return Ok(Err(e));
         }
+        let _g = self.lifecycle.lock().await;
         crate::db::system_set(&self.pool, SETTINGS_KEY, &serde_json::to_value(&new)?).await?;
         let was_managed = self.managing();
         *self.settings.write().unwrap() = new;
         if was_managed
             && !self.managing()
+            && !self.resting()
             && let Err(e) = self.start().await
         {
             tracing::warn!(error = %format!("{e:#}"), "model start after switching management off failed");
@@ -346,22 +434,28 @@ impl ModelControl {
 
     /// An owner request would have to start the model first.
     pub async fn cold(&self) -> bool {
-        self.managing() && !self.ready().await
+        self.managing() && !self.resting() && !self.ready().await
     }
 
     /// Before a model call: an owner request (interactive lane) starts the model if it is down,
     /// and every call is counted as in flight. Background lanes never start the model; the loop
     /// does that when model hours open.
     pub async fn begin(self: &Arc<Self>, lane: Lane) -> anyhow::Result<RequestGuard> {
+        self.require_awake()?;
         let interactive = lane == Lane::Interactive;
         if interactive {
             self.touch();
             if self.managing() && !self.ready().await {
-                self.start()
-                    .await
-                    .map_err(|e| LlmUnavailable(format!("model could not be started: {e:#}")))?;
+                let _g = self.lifecycle.lock().await;
+                self.require_awake()?;
+                if self.managing() {
+                    self.start().await.map_err(|e| {
+                        LlmUnavailable(format!("model could not be started: {e:#}"))
+                    })?;
+                }
             }
         }
+        self.require_awake()?;
         self.inflight.fetch_add(1, Ordering::SeqCst);
         Ok(RequestGuard {
             control: self.clone(),
@@ -369,9 +463,8 @@ impl ModelControl {
         })
     }
 
-    /// Start the model and wait until it answers `/ready`.
+    /// Start the model and wait until it answers `/ready`. Caller holds `lifecycle`.
     async fn start(&self) -> anyhow::Result<()> {
-        let _g = self.lifecycle.lock().await;
         if self.ready().await {
             return Ok(());
         }
@@ -404,7 +497,6 @@ impl ModelControl {
     }
 
     async fn stop(&self) -> anyhow::Result<()> {
-        let _g = self.lifecycle.lock().await;
         tracing::info!(instance = %self.instance, "stopping the model");
         self.process.stop(&self.instance).await
     }
@@ -426,7 +518,7 @@ impl ModelControl {
 
     /// Decide the next step from the wanted and the real state (pure apart from the book).
     pub fn decide(&self, now: DateTime<Utc>, ready: bool) -> Step {
-        if !self.managing() {
+        if self.resting() || !self.managing() {
             return Step::Nothing;
         }
         let wanted = self.wanted(now);
@@ -460,6 +552,16 @@ impl ModelControl {
 
     /// One pass of the loop.
     pub async fn reconcile(&self) {
+        let _g = self.lifecycle.lock().await;
+        let rest = self.book.lock().unwrap().rest;
+        if rest != Rest::Awake {
+            if rest == Rest::Stopping
+                && let Err(e) = self.finish_rest().await
+            {
+                tracing::error!(error = %format!("{e:#}"), "stopping the resting model failed");
+            }
+            return;
+        }
         let ready = self.ready().await;
         match self.decide(self.clock_now(), ready) {
             Step::Nothing => {}

@@ -156,3 +156,73 @@ async fn settings_are_validated_stored_and_loaded(pool: PgPool) {
     let loaded = ModelSettings::load(&pool, &t.app.cfg).await.unwrap();
     assert_eq!(loaded, s, "the dashboard value wins over .env");
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn telegram_rest_survives_restart_and_blocks_model_work_until_wakeup(pool: PgPool) {
+    let configure = |cfg: &mut gm::config::Config| {
+        telegram(cfg);
+        managed_day_hours(cfg);
+    };
+    let fake = FakeModel::new(true);
+    let t = test_app_with(
+        pool.clone(),
+        configure,
+        Some(local(10, 0)),
+        Some(fake.clone()),
+    )
+    .await;
+    fake.mount_ready(&t.server).await;
+
+    t.update(text_update(1, 99, "/rest", None)).await;
+    assert!(fake.is_up());
+    assert!(t.sent().is_empty());
+    t.update(text_update(2, 42, "/rest@MyBot", None)).await;
+    assert!(!fake.is_up());
+    assert_eq!(
+        t.last_sent().text,
+        "The model is off. Send /wakeup to start it again."
+    );
+    drop(t);
+
+    let t = test_app_with(pool, configure, Some(local(10, 0)), Some(fake.clone())).await;
+    fake.mount_ready(&t.server).await;
+    t.app.model.load(&t.app.cfg).await.unwrap();
+    t.app.model.reconcile().await;
+    assert!(
+        !fake.is_up(),
+        "the daytime scheduler honors rest after restart"
+    );
+    for lane in [Lane::Batch, Lane::Interactive] {
+        let error = t
+            .app
+            .tasks
+            .llm
+            .chat("test", lane, &[], 10, 0.0)
+            .await
+            .unwrap_err();
+        assert!(
+            gm::llm::LlmUnavailable::is(&error),
+            "model jobs defer while resting"
+        );
+    }
+    assert_eq!(requests_to(&t.server, "POST", "/chat/completions").await, 0);
+
+    t.update(text_update(3, 42, "/status", None)).await;
+    let status = t.last_sent().text;
+    assert!(status.contains("rest until /wakeup"));
+    assert!(status.contains("No problems."));
+    t.update(text_update(4, 42, "/wakeup", None)).await;
+    assert_eq!(t.last_sent().text, "The model is ready.");
+    assert!(fake.is_up());
+    t.app.model.load(&t.app.cfg).await.unwrap();
+    t.mock_llm("ready again").await;
+    assert_eq!(
+        t.app
+            .tasks
+            .llm
+            .chat("test", Lane::Interactive, &[], 10, 0.0)
+            .await
+            .unwrap(),
+        "ready again"
+    );
+}

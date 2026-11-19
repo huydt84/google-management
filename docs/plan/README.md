@@ -99,7 +99,8 @@ Workstreams in the same phase run in parallel when they own different files (lis
 8. **Model hours and outages.** Background work that needs the model returns `Outcome::Defer`
    outside 09:00–19:00, and all model work defers while the model is unavailable (`LlmUnavailable`).
    Tasks the owner starts from Telegram are the one exception to model hours: they run at any hour
-   and start the model if it is stopped.
+   and start the model if it is stopped. `/rest` holds the local model off until `/wakeup`, including
+   for owner tasks.
    No notification is sent without its summary; rule-only notifications go out at any hour.
 9. **Telegram content is literal text** (no `parse_mode`). Calendar messages may use app-owned
    formatting entities with UTF-16 spans; Google text never supplies markup.
@@ -138,6 +139,9 @@ one, write the answer into the doc it governs and delete the line here.
   recovery message at 19:00); in Pub/Sub mode the ingest-lag limit is the safety-poll interval +
   10 min, so a quiet mailbox doesn't alarm every 15 min.
 - Telegram: `getUpdates` long poll of 25 s.
+- Manual model rest: `/rest` stops immediately, including during model requests. `/wakeup` starts
+  the model as an owner request, so the configured idle timer applies outside model hours. The
+  commands work when automatic management is off.
 - Trusted links: `trusted_link_domains` starts empty (no linked suggestions until the owner adds
   domains); at most 10 trusted links per summary prompt and 50 domains per owner; `gm eval` runs the
   summary prompt without links.

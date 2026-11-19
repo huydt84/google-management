@@ -42,10 +42,14 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
     it has been idle for the idle minutes (default 10). Background lanes never start the model, and
     do not keep it up. Mail does not start it either: urgent mail waits for model hours (see
     [0015](0015-notification-policy-and-digest.md)).
+  - **Manual rest:** `/rest` stops the local mlx-air instance immediately and blocks scheduled and
+    on-demand starts. `/wakeup` starts it at any hour and restores the usual policy once `/ready`
+    answers. The hold is stored in `system_settings.model_resting`. Both commands apply to the
+    local instance even when automatic management is off.
   - **Settings** are machine-wide, edited on the dashboard and stored in
     `system_settings.model_control`; `GM_MODEL_*` in `.env` are the first defaults: model hours,
-    the management switch (on by default; off means gm leaves the model alone and starts it if it
-    is down), idle minutes, stop grace and the model id. A changed model id applies at the next
+    the automatic management switch (on by default; switching it off starts a stopped model unless
+    it is resting), idle minutes, stop grace and the model id. A changed model id applies at the next
     start; until then requests carry the id the running server reports on `/ready`.
   - **If the model cannot be started** (mlx-air fails, or `/ready` does not answer within
     `GM_MODEL_START_TIMEOUT_S`), the task waits like any other job while the model is unavailable.

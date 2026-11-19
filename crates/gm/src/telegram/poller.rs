@@ -9,7 +9,7 @@
 //! - A reply to a bot message → `user.instruction` with the owner's words for the mail, task or
 //!   approval that message belongs to (`chat_messages`). The incoming message is recorded in the
 //!   same transaction as the publish, so a re-polled update is not handled twice.
-//! - Commands: `/help`, `/status`, `/sync`, `/pause`, `/resume`, `/language [name]`.
+//! - Commands include model controls (`/rest`, `/wakeup`) and notification controls (`/pause`, `/resume`).
 //! - Anything else gets a short usage hint.
 
 use std::sync::Arc;
@@ -291,6 +291,20 @@ impl TelegramPoller {
                 tr.args("cmd-resumed", &[("count", n.to_string())])
             }
             "status" => self.status_text(tr).await?,
+            "rest" => match self.model.rest().await {
+                Ok(()) => tr.get("cmd-model-rested"),
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "Telegram /rest failed");
+                    tr.get("cmd-model-rest-failed")
+                }
+            },
+            "wakeup" => match self.model.wakeup().await {
+                Ok(()) => tr.get("cmd-model-awake"),
+                Err(e) => {
+                    tracing::warn!(error = %format!("{e:#}"), "Telegram /wakeup failed");
+                    tr.get("cmd-model-wakeup-failed")
+                }
+            },
             "sync" => match self.ingestor.sync(&self.owner).await {
                 Ok(count) => tr.args("cmd-sync-done", &[("count", count.to_string())]),
                 Err(GoogleError::NotConnected(_) | GoogleError::NeedsReconnect(_)) => {
@@ -353,6 +367,9 @@ impl TelegramPoller {
             ),
             format!("{}: {hours}", tr.get("model-hours")),
         ];
+        if self.model.resting() {
+            lines.push(tr.get("cmd-status-model-resting"));
+        }
         if problems.is_empty() {
             lines.push(tr.get("cmd-status-ok"));
         } else {

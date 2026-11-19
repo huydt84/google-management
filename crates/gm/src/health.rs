@@ -114,7 +114,7 @@ impl Health {
         .fetch_all(&self.pool)
         .await?;
         let lag = lagging.map(|t| now - t);
-        let model = if self.model.hours().is_on(self.clock.now()) {
+        let model = if !self.model.resting() && self.model.hours().is_on(self.clock.now()) {
             Some(!model_ready(&self.http, &self.ready_url).await)
         } else {
             None
