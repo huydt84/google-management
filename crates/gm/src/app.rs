@@ -143,7 +143,7 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         pool: pool.clone(),
         bus: bus.clone(),
         gmail: gmail.clone(),
-        llm,
+        llm: llm.clone(),
         notifier: notifier.clone(),
         chat: chat.clone(),
         user_settings: user_settings.clone(),
@@ -229,6 +229,8 @@ pub fn build(cfg: Config, pool: PgPool, overrides: Overrides) -> anyhow::Result<
         notifier_name: notifier.name(),
         bus: bus.clone(),
         model: model.clone(),
+        llm,
+        evaluation: Default::default(),
     });
     Ok(App {
         cfg,

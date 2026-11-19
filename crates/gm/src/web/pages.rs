@@ -258,17 +258,6 @@ async fn with_feedback(
         .collect())
 }
 
-/// Whether gm manages the model and, if so, whether it is up: `unmanaged`, `running` or `stopped`.
-async fn model_state(state: &SharedState) -> &'static str {
-    if !state.model.managing() {
-        "unmanaged"
-    } else if state.model.ready().await {
-        "running"
-    } else {
-        "stopped"
-    }
-}
-
 #[derive(Deserialize, Default)]
 pub struct IndexQuery {
     #[serde(default)]
@@ -319,7 +308,7 @@ pub async fn index(
     .await?;
     let tr = Tr::new(&prefs.ui_language);
     let hours = state.model.settings().hours().label(&tr.get("always"));
-    let model_state_key = model_state(&state).await;
+    let (model_state_key, _) = super::model::runtime_state(&state).await;
     let poll_s = state.cfg.gmail_poll_interval_s;
     let (ingest, ingest_error) = match &state.cfg.pubsub {
         None => (
@@ -448,15 +437,6 @@ struct SettingsPage {
     trusted_link_domains: String,
     error: String,
     saved: bool,
-    model_state: String,
-    model_manage: bool,
-    model_on: String,
-    model_off: String,
-    model_idle_min: u32,
-    model_grace_s: u32,
-    model_id: String,
-    /// Result of saving the model controls: `saved`, the Fluent id of the error, or empty.
-    model_banner: String,
 }
 
 async fn settings_page_for(
@@ -465,20 +445,10 @@ async fn settings_page_for(
     s: &UserSettings,
     error: String,
     saved: bool,
-    model_banner: String,
 ) -> Result<SettingsPage, AppError> {
     let tr = Tr::new(&s.ui_language);
-    let ms = state.model.settings();
     Ok(SettingsPage {
         nav: Nav::load(state, "settings").await?,
-        model_state: tr.get(&format!("model-state-{}", model_state(state).await)),
-        model_manage: ms.manage,
-        model_on: ms.on.format("%H:%M").to_string(),
-        model_off: ms.off.format("%H:%M").to_string(),
-        model_idle_min: ms.idle_min,
-        model_grace_s: ms.grace_s,
-        model_id: ms.model.clone(),
-        model_banner,
         default_help: tr.args(
             "summary-language-help",
             &[("default", state.cfg.default_summary_language.clone())],
@@ -510,9 +480,6 @@ async fn settings_page_for(
 #[derive(Deserialize)]
 pub struct SavedQuery {
     saved: Option<String>,
-    /// Result of saving the model controls: `saved` or the Fluent id of the error.
-    #[serde(default)]
-    model: String,
 }
 
 pub async fn settings_page(
@@ -531,7 +498,6 @@ pub async fn settings_page(
             &prefs,
             String::new(),
             q.saved.as_deref() == Some("1"),
-            q.model,
         )
         .await?,
     )
@@ -587,59 +553,12 @@ pub async fn save_settings(
                 ui_language: current.ui_language,
                 ..submitted
             };
-            let page =
-                settings_page_for(&state, email, &shown, String::new(), false, String::new())
-                    .await?;
+            let page = settings_page_for(&state, email, &shown, String::new(), false).await?;
             let msg = page.tr.get(e.message_id());
             let page = SettingsPage { error: msg, ..page };
             Ok((StatusCode::BAD_REQUEST, Html(page.render()?)).into_response())
         }
     }
-}
-
-#[derive(Deserialize)]
-pub struct ModelForm {
-    on: String,
-    off: String,
-    /// A checkbox: present only when ticked.
-    #[serde(default)]
-    manage: Option<String>,
-    idle_min: u32,
-    grace_s: u32,
-    model: String,
-}
-
-/// Save the model controls (hours, management switch, idle minutes, stop grace, model id).
-pub async fn save_model(
-    State(state): State<SharedState>,
-    jar: CookieJar,
-    Form(f): Form<ModelForm>,
-) -> Result<Response, AppError> {
-    let Some(email) = current_owner(&state, &jar) else {
-        return Ok(Redirect::to("/").into_response());
-    };
-    let back = |what: &str| Redirect::to(&format!("/settings?model={what}#model")).into_response();
-    let time = |s: &str| chrono::NaiveTime::parse_from_str(s.trim(), "%H:%M").ok();
-    let (Some(on), Some(off)) = (time(&f.on), time(&f.off)) else {
-        return Ok(back("model-invalid-time"));
-    };
-    let new = crate::model::ModelSettings {
-        on,
-        off,
-        manage: f.manage.is_some(),
-        idle_min: f.idle_min,
-        grace_s: f.grace_s,
-        model: f.model.trim().to_string(),
-    };
-    // The digest needs the model, so the owner's digest time must stay inside the hours.
-    let digest_at = state.user_settings.get(&email).await?.digest_at;
-    if !crate::user_settings::parse_digest_at(&digest_at).is_some_and(|t| new.hours().contains(t)) {
-        return Ok(back("model-hours-digest"));
-    }
-    Ok(match state.model.save(new).await? {
-        Ok(()) => back("saved"),
-        Err(e) => back(e.message_id()),
-    })
 }
 
 pub async fn sync_now(

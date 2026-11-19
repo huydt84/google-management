@@ -135,6 +135,54 @@ fn case(id: &str, from: &str, subject: &str, expected: Action) -> EvalCase {
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn model_tab_runs_evaluation_and_shows_the_saved_result(pool: PgPool) {
+    let dir = temp_eval_dir("model-tab");
+    let t = test_app(pool, |cfg| cfg.eval_dir = dir.clone(), None).await;
+    let router = gm::web::router(t.app.state.clone());
+    let cookie = session_cookie(&t, OWNER);
+    let (_, _, page) = send(&router, get("/model", Some(&cookie))).await;
+    assert!(page.contains("Add a case from a mail row"));
+
+    gm::eval::add(
+        &dir,
+        &case(
+            "m1",
+            "Shop <info@shop.example.net>",
+            "Synthetic receipt",
+            Action::Ignore,
+        ),
+    )
+    .unwrap();
+    t.mock_llm_for(TRIAGE, &triage_json("ignore", "a receipt"))
+        .await;
+    let (status, headers, _) = send(&router, post_form("/model/eval", &cookie, "")).await;
+    assert_eq!(
+        (status.as_u16(), headers["location"].to_str().unwrap()),
+        (303, "/model#evaluation")
+    );
+
+    let body = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let (_, _, page) = send(&router, get("/model", Some(&cookie))).await;
+            if page.contains("1 of 1 correct") {
+                break page;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        body.contains("Full evaluation report") && body.contains("Accuracy by expected action")
+    );
+    assert!(!body.contains("Synthetic receipt"));
+    assert_eq!(gm::eval::ids(&dir), vec!["m1"]);
+    assert_eq!(requests_to(&t.server, "POST", "/chat/completions").await, 1);
+    assert_eq!(mode(&dir.join(".latest-report")), 0o600);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
 async fn run_reports_accuracy_confusion_parse_rate_and_calls(pool: PgPool) {
     let t = test_app(pool, |_| {}, None).await;
     t.mock_llm_for(TRIAGE, &triage_json("ignore", "a receipt"))

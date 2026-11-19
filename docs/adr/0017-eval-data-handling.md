@@ -28,6 +28,9 @@ data (name, amounts, order numbers, login IPs). Data retention is 60 days.
 - The command is `gm eval` (no `run`). It refuses a `GM_LLM_BASE_URL` whose host isn't 127.0.0.1,
   localhost or ::1, and reports accuracy per action, the confusion matrix, JSON parse rate, latency
   p50/p95 and tokens.
+- The Model tab runs the same evaluation against the ready local model and displays the latest
+  completed result. Web and CLI runs store the report alongside the cases with mode 0600. The
+  report contains metrics and case IDs. Raw mail stays in the case files.
 
 ## Consequences
 

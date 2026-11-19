@@ -2,9 +2,6 @@
 {% block style %}
   .settings { max-width:640px; }
   .settings section { padding-top:4px; }
-  .settings section + section { border-top:1px solid var(--rule); padding-top:28px; }
-  .hours { display:flex; align-items:center; gap:8px; }
-  .hours .input { width:auto; }
   .num-input { max-width:140px; }
 {% endblock %}
 {% block body %}
@@ -57,48 +54,6 @@
       {% for lang in languages %}<option value="{{ lang }}">{% endfor %}
     </datalist>
     <div class="form-actions"><button class="btn primary">{{ tr.get("save") }}</button></div>
-  </form>
-</section>
-
-<section id="model" aria-labelledby="model-title">
-  <div class="section-head">
-    <div>
-      <h2 id="model-title">{{ tr.get("model-card") }} <span class="muted" style="font-weight:400">({{ model_state }})</span></h2>
-      <p class="muted">{{ tr.get("model-card-help") }}</p>
-    </div>
-  </div>
-  {% if model_banner == "saved" %}<div class="notice ok" role="status"><p>{{ tr.get("saved") }}</p></div>
-  {% else if !model_banner.is_empty() %}<div class="notice bad" role="alert"><p>{{ tr.get(model_banner) }}</p></div>{% endif %}
-  <form method="post" action="/model" style="display:block">
-    <div class="check">
-      <input type="checkbox" id="manage" name="manage"{% if model_manage %} checked{% endif %} aria-describedby="manage-help">
-      <div><label for="manage"><strong>{{ tr.get("model-manage") }}</strong></label><br><span class="help muted small" id="manage-help">{{ tr.get("model-manage-help") }}</span></div>
-    </div>
-    <div class="field">
-      <label for="on">{{ tr.get("model-hours") }}</label>
-      <div class="hours">
-        <input id="on" name="on" type="time" required value="{{ model_on }}" class="input" aria-describedby="hours-help">
-        <span aria-hidden="true">–</span>
-        <input id="off" name="off" type="time" required value="{{ model_off }}" class="input" aria-label="{{ tr.get("model-hours") }}" aria-describedby="hours-help">
-      </div>
-      <span class="help" id="hours-help">{{ tr.get("model-hours-help") }}</span>
-    </div>
-    <div class="field">
-      <label for="idle_min">{{ tr.get("model-idle") }}</label>
-      <input id="idle_min" name="idle_min" type="number" min="1" max="720" required value="{{ model_idle_min }}" class="input num-input" aria-describedby="idle-help">
-      <span class="help" id="idle-help">{{ tr.get("model-idle-help") }}</span>
-    </div>
-    <div class="field">
-      <label for="grace_s">{{ tr.get("model-grace") }}</label>
-      <input id="grace_s" name="grace_s" type="number" min="0" max="1800" required value="{{ model_grace_s }}" class="input num-input" aria-describedby="grace-help">
-      <span class="help" id="grace-help">{{ tr.get("model-grace-help") }}</span>
-    </div>
-    <div class="field">
-      <label for="model_id">{{ tr.get("model-id") }}</label>
-      <input id="model_id" name="model" required maxlength="200" value="{{ model_id }}" class="input" aria-describedby="model-id-help">
-      <span class="help" id="model-id-help">{{ tr.get("model-id-help") }}</span>
-    </div>
-    <div class="form-actions"><button class="btn primary" type="submit">{{ tr.get("save") }}</button></div>
   </form>
 </section>
 </div>

@@ -11,7 +11,8 @@
 //! parse rate per task, and latency p50/p95 and tokens per model task.
 
 use std::collections::BTreeMap;
-use std::os::unix::fs::PermissionsExt;
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -25,6 +26,7 @@ use crate::rules::{Action, RuleSet};
 use crate::topics;
 
 pub const MAX_CASES: usize = 200;
+const REPORT_FILE: &str = ".latest-report";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalCase {
@@ -109,12 +111,10 @@ pub fn load(dir: &Path) -> anyhow::Result<Vec<EvalCase>> {
 
 /// `gm eval` talks to the local model only (ADR-0017): the eval set never leaves the machine.
 pub fn ensure_local(base_url: &str) -> anyhow::Result<()> {
-    let host = url::Url::parse(base_url)?
-        .host_str()
-        .unwrap_or_default()
-        .to_string();
+    let url = url::Url::parse(base_url)?;
+    let host = url.host_str().unwrap_or_default();
     anyhow::ensure!(
-        matches!(host.as_str(), "127.0.0.1" | "localhost" | "[::1]" | "::1"),
+        crate::config::is_loopback(&url),
         "GM_LLM_BASE_URL must point at this machine for gm eval (got host {host:?}): the eval set must not leave the Mac"
     );
     Ok(())
@@ -138,6 +138,51 @@ impl Report {
         e.0 += usize::from(ok);
         e.1 += 1;
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LatestReport {
+    pub model: String,
+    pub finished_at: DateTime<Utc>,
+    pub correct: usize,
+    pub cases: usize,
+    pub details: String,
+}
+
+pub fn latest_report(dir: &Path) -> anyhow::Result<Option<LatestReport>> {
+    match std::fs::read(dir.join(REPORT_FILE)) {
+        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Replace the last completed result atomically, separately from the raw eval cases.
+pub fn save_report(dir: &Path, model: &str, report: &Report) -> anyhow::Result<()> {
+    if report.cases == 0 {
+        return Ok(());
+    }
+    let latest = LatestReport {
+        model: model.into(),
+        finished_at: Utc::now(),
+        correct: report.cases - report.wrong.len(),
+        cases: report.cases,
+        details: format_report(report, model),
+    };
+    let bytes = serde_json::to_vec(&latest)?;
+    let temp = dir.join(format!("{REPORT_FILE}.{:016x}.tmp", rand::random::<u64>()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp)?;
+    let result = file
+        .write_all(&bytes)
+        .and_then(|()| std::fs::rename(&temp, dir.join(REPORT_FILE)));
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp);
+    }
+    result.map_err(Into::into)
 }
 
 /// Run the pipeline's decisions on every case. `llm` must have been set up with

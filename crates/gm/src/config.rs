@@ -36,6 +36,13 @@ impl PubSubConfig {
 /// `GM_LLM_MODEL` when unset; `llm.yaml` in the repo must have a section for it.
 pub const DEFAULT_LLM_MODEL: &str = crate::llm::model_client::QWEN3_MODEL;
 
+pub(crate) fn is_loopback(url: &url::Url) -> bool {
+    matches!(
+        url.host_str(),
+        Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     // Web (bind to localhost only; remote access goes through Tailscale)

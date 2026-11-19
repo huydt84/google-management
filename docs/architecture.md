@@ -185,7 +185,8 @@ flowchart LR
 | [`tasks/`](../crates/gm/src/tasks/) | Owner tasks: `Intent`, bus payloads, `Recipe` / `Executor` traits, canonical JSON hash (`mod.rs`); intent router with keyword fast path (`router.rs`); approvals and audit (`approvals.rs`); the runtime that runs instructions, decisions and replies (`runtime.rs`); `Registry` (`registry.rs`). |
 | [`recipes/`](../crates/gm/src/recipes/) | Translate (chunked), Analyze, Reply (draft + proposal) and the `gmail.send_draft` executor that re-checks the live draft. |
 | [`status.rs`](../crates/gm/src/status.rs) | `gm status`: launchd agents, running build, endpoints, model name, migrations and queue, read from the live Mac; reuses the health checker's queries. |
-| [`eval.rs`](../crates/gm/src/eval.rs) | Local eval set files and `gm eval` (runs rules → triage → the summary `Pipeline::route` picks). |
+| [`eval.rs`](../crates/gm/src/eval.rs) | Local eval cases, shared evaluator and latest report. Runs rules → triage → the summary `Pipeline::route` picks. |
+| [`web/model.rs`](../crates/gm/src/web/model.rs) | Owner Model tab. Power controls, individual setting edits, effective budgets and background evaluation. |
 | [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9): `LlmClient`, lanes, prompt layout and `run` (`mod.rs`); input cleaning (`clean.rs`); model clients and the task-to-tier map (`model_client.rs`); sampling overrides (`profile.rs`); the output-language check (`language.rs`). |
 | [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (literal text, formatting entities, silent flag, buttons, edits), log, recording (tests); `RichText` (UTF-16 formatting spans, cut at 4096) and its web `segments`; mail notification formatting. |
 | [`user_settings.rs`](../crates/gm/src/user_settings.rs) | Per-user settings with validation; `tr(email)` gives UI strings in the owner's language. |

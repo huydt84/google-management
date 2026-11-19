@@ -116,7 +116,17 @@ async fn with_management_off_the_model_is_left_alone_and_started_when_switched_o
     let (t, fake) = setup(pool, local(23, 0), true).await;
     let mut s = t.app.model.settings();
     s.manage = false;
-    assert!(t.app.model.save(s.clone()).await.unwrap().is_ok());
+    assert!(
+        t.app
+            .model
+            .update(|current| {
+                *current = s.clone();
+                Ok(())
+            })
+            .await
+            .unwrap()
+            .is_ok()
+    );
     assert_eq!(
         t.app.model.decide(local(23, 0).with_timezone(&Utc), true),
         Step::Nothing
@@ -128,10 +138,26 @@ async fn with_management_off_the_model_is_left_alone_and_started_when_switched_o
 
     // Down, management on → off: the model is started so "off" never leaves it stopped.
     s.manage = true;
-    t.app.model.save(s.clone()).await.unwrap().unwrap();
+    t.app
+        .model
+        .update(|current| {
+            *current = s.clone();
+            Ok(())
+        })
+        .await
+        .unwrap()
+        .unwrap();
     fake.up.store(false, std::sync::atomic::Ordering::SeqCst);
     s.manage = false;
-    t.app.model.save(s).await.unwrap().unwrap();
+    t.app
+        .model
+        .update(|current| {
+            *current = s;
+            Ok(())
+        })
+        .await
+        .unwrap()
+        .unwrap();
     assert!(fake.is_up());
 }
 
@@ -141,18 +167,40 @@ async fn settings_are_validated_stored_and_loaded(pool: PgPool) {
     let mut s = t.app.model.settings();
     s.idle_min = 0;
     assert_eq!(
-        t.app.model.save(s.clone()).await.unwrap(),
+        t.app
+            .model
+            .update(|current| {
+                *current = s.clone();
+                Ok(())
+            })
+            .await
+            .unwrap(),
         Err(SettingsError::IdleMinutes)
     );
     s.idle_min = 30;
     s.model = "has space".into();
     assert_eq!(
-        t.app.model.save(s.clone()).await.unwrap(),
+        t.app
+            .model
+            .update(|current| {
+                *current = s.clone();
+                Ok(())
+            })
+            .await
+            .unwrap(),
         Err(SettingsError::Model)
     );
     s.model = "other/model".into();
     s.grace_s = 60;
-    t.app.model.save(s.clone()).await.unwrap().unwrap();
+    t.app
+        .model
+        .update(|current| {
+            *current = s.clone();
+            Ok(())
+        })
+        .await
+        .unwrap()
+        .unwrap();
     let loaded = ModelSettings::load(&pool, &t.app.cfg).await.unwrap();
     assert_eq!(loaded, s, "the dashboard value wins over .env");
 }

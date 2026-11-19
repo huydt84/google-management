@@ -140,6 +140,9 @@ async fn main() -> anyhow::Result<()> {
             let calls = llm.record_calls();
             let report = gm::eval::run(&llm, &calls, &rules, &cases, &language).await?;
             print!("{}", gm::eval::format_report(&report, &cfg.llm_model));
+            if let Err(e) = gm::eval::save_report(&dir, &cfg.llm_model, &report) {
+                eprintln!("Could not save the evaluation report: {e}");
+            }
             Ok(())
         }
     }

@@ -37,9 +37,10 @@ through its chat endpoint.
 
 ## Consequences
 
-- Tuning sampling is a file edit and a restart. Changing a model's effort or response contract
-  is a code change in its client. Selecting a supported model remains a configuration or
-  Settings change.
+- Tuning sampling is a file edit and a restart. The Model tab shows effective task budgets and
+  can override the existing mail summary input and Qwen3 answer limits. The client defines the
+  other task budgets and reasoning allowances. Selecting a model on the Model tab applies at the
+  next start.
 - Adding another model client leaves the HTTP protocol, task parsers, and task-to-category
   mapping in one place.
 

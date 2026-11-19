@@ -342,8 +342,8 @@ pub struct LlmClient {
     base_url: String,
     api_key: String,
     pub model: String,
-    profiles: Profiles,
-    clients: ClientRegistry,
+    profiles: Arc<Profiles>,
+    clients: Arc<ClientRegistry>,
     /// Models already reported as running on the built-in defaults.
     warned: Mutex<std::collections::BTreeSet<String>>,
     max_input_tokens: usize,
@@ -352,6 +352,15 @@ pub struct LlmClient {
     pool: Option<PgPool>,
     recorder: Option<Arc<Mutex<Vec<CallRecord>>>>,
     control: Option<Arc<crate::model::ModelControl>>,
+    /// Evaluations keep one model and budget for the entire report.
+    pinned: bool,
+}
+
+pub(crate) struct TokenBudget {
+    pub task: Task,
+    pub answer: u32,
+    pub reasoning: u32,
+    pub configurable: bool,
 }
 
 /// Keep backend identity, sampling and residency consistent through all attempts at a task.
@@ -403,16 +412,21 @@ impl LlmClient {
     /// Loads sampling profiles (`GM_LLM_PROFILE`). An invalid file is an error.
     pub fn new(cfg: &Config, pool: Option<PgPool>) -> anyhow::Result<Self> {
         let profiles = Profiles::load(&cfg.llm_profile_path)?;
+        let http = reqwest::Client::builder().timeout(Duration::from_secs(cfg.llm_timeout_s));
+        let http = if url::Url::parse(&cfg.llm_base_url)
+            .is_ok_and(|url| crate::config::is_loopback(&url))
+        {
+            http.no_proxy().redirect(reqwest::redirect::Policy::none())
+        } else {
+            http
+        };
         Ok(Self {
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(cfg.llm_timeout_s))
-                .build()
-                .expect("reqwest client"),
+            http: http.build()?,
             base_url: cfg.llm_base_url.clone(),
             api_key: cfg.llm_api_key.clone(),
             model: cfg.llm_model.clone(),
-            profiles,
-            clients: ClientRegistry::load()?,
+            profiles: Arc::new(profiles),
+            clients: Arc::new(ClientRegistry::load()?),
             warned: Mutex::new(Default::default()),
             max_input_tokens: cfg.llm_max_input_tokens,
             summary_max_tokens: cfg.llm_summary_max_tokens,
@@ -420,6 +434,7 @@ impl LlmClient {
             pool,
             recorder: None,
             control: None,
+            pinned: false,
         })
     }
 
@@ -428,6 +443,12 @@ impl LlmClient {
             Some(control) => Some(control.begin(lane).await?),
             None => None,
         };
+        if self.pinned
+            && let Some(control) = &self.control
+            && control.request_model() != self.model
+        {
+            return Err(LlmUnavailable("the model changed during evaluation".into()).into());
+        }
         let model = self.request_model();
         let key = self.clients.profile_key(&model);
         if self.warned.lock().unwrap().insert(model.clone()) {
@@ -449,9 +470,83 @@ impl LlmClient {
 
     /// The model id requests carry: the served one when gm controls the model, else `GM_LLM_MODEL`.
     fn request_model(&self) -> String {
+        if self.pinned {
+            return self.model.clone();
+        }
         self.control
             .as_ref()
             .map_or_else(|| self.model.clone(), |c| c.request_model())
+    }
+
+    pub(crate) fn summary_tokens(&self) -> u32 {
+        self.control
+            .as_ref()
+            .filter(|_| !self.pinned)
+            .map_or(self.summary_max_tokens, |c| {
+                c.summary_tokens(self.summary_max_tokens)
+            })
+    }
+
+    pub(crate) fn input_tokens(&self) -> usize {
+        self.control
+            .as_ref()
+            .filter(|_| !self.pinned)
+            .map_or(self.max_input_tokens, |c| {
+                c.input_tokens(self.max_input_tokens)
+            })
+    }
+
+    pub(crate) fn token_budgets(&self, model: &str) -> Vec<TokenBudget> {
+        let summary_cap = self.summary_tokens();
+        Task::ALL
+            .iter()
+            .map(|&task| {
+                let inference = self.clients.inference_for(model, task);
+                TokenBudget {
+                    task,
+                    answer: inference.answer.resolve(summary_cap),
+                    reasoning: match inference.mode {
+                        Mode::Direct { .. } => 0,
+                        Mode::Thinking {
+                            reasoning_tokens, ..
+                        } => reasoning_tokens,
+                    },
+                    configurable: matches!(
+                        inference.answer,
+                        model_client::AnswerTokens::ConfiguredSummary
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn client_name(&self, model: &str) -> String {
+        self.clients.client_name(model)
+    }
+
+    pub(crate) fn concurrency(&self) -> usize {
+        self.admission.max
+    }
+
+    /// Use the running client's transport, sampling and shared admission without recording eval
+    /// calls as production traffic.
+    pub(crate) fn for_evaluation(&self, model: String) -> Self {
+        Self {
+            http: self.http.clone(),
+            base_url: self.base_url.clone(),
+            api_key: self.api_key.clone(),
+            model,
+            profiles: self.profiles.clone(),
+            clients: self.clients.clone(),
+            warned: Mutex::default(),
+            max_input_tokens: self.input_tokens(),
+            summary_max_tokens: self.summary_tokens(),
+            admission: self.admission.clone(),
+            pool: None,
+            recorder: None,
+            control: self.control.clone(),
+            pinned: true,
+        }
     }
 
     /// Let the model control start the model for owner requests and count calls in flight.
@@ -633,7 +728,7 @@ impl LlmClient {
 
     /// The mail, then its trusted links numbered in a `<links>` block.
     fn summary_block(&self, m: &ParsedMessage, links: &[String]) -> String {
-        let mut block = self.email_block(m, self.max_input_tokens);
+        let mut block = self.email_block(m, self.input_tokens());
         if !links.is_empty() {
             block.push_str("\n\n<links>\n");
             for (i, l) in links.iter().enumerate() {
@@ -661,7 +756,7 @@ impl LlmClient {
         let inference = self.clients.inference_for(&request.model, task);
         let name = task.name();
         let messages = task_messages(task, inference.system_suffix(), prompt, language, block);
-        let answer_cap = inference.answer.resolve(self.summary_max_tokens);
+        let answer_cap = inference.answer.resolve(self.summary_tokens());
         let Mode::Thinking {
             reasoning_tokens,
             decode_answer,

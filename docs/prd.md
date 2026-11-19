@@ -189,8 +189,11 @@ evaluation of Bonsai-27B 1-bit as the default model ([ADR-0011](adr/0011-model-q
   deferred, not failed.
 - **FR-22a** Outside model hours the model is stopped to free memory. A task I start from Telegram
   or the web starts it (I am told once) and it stops again after 10 idle minutes; mail never starts
-  it. Hours, idle minutes, stop grace and the model id are editable on the Settings page, with a switch
-  that turns the management off.
+  it. The Model tab shows the running model, offers manual start and stop, and lets the owner edit
+  the checkpoint, schedule, automatic management, idle minutes and stop grace.
+- **FR-22b** The Model tab shows effective answer and reasoning budgets per task. The owner can
+  change the existing mail summary input and Qwen3 answer limits. The latest local evaluation and
+  its full results are available from the same tab.
 
 ### 7.6 Settings
 

@@ -44,9 +44,10 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
     [0015](0015-notification-policy-and-digest.md)).
   - **Manual rest:** `/rest` stops the local mlx-air instance immediately and blocks scheduled and
     on-demand starts. `/wakeup` starts it at any hour and restores the usual policy once `/ready`
-    answers. The hold is stored in `system_settings.model_resting`. Both commands apply to the
-    local instance even when automatic management is off.
-  - **Settings** are machine-wide, edited on the dashboard and stored in
+    answers. The Start model and Stop model buttons on the Model tab use the same hold in
+    `system_settings.model_resting`. Manual power controls apply to the local instance even when
+    automatic management is off.
+  - **Settings** are machine-wide, edited on the Model tab and stored in
     `system_settings.model_control`; `GM_MODEL_*` in `.env` are the first defaults: model hours,
     the automatic management switch (on by default; switching it off starts a stopped model unless
     it is resting), idle minutes, stop grace and the model id. A changed model id applies at the next

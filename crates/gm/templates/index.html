@@ -166,7 +166,7 @@
   </div>
   <div>
     <div class="k">{{ tr.get("model-card") }}</div>
-    <div class="v"><span class="dot {% if model_state_key == "running" %}ok{% else if model_state_key == "stopped" %}warn{% endif %}"></span>{{ model_state }}</div>
+    <div class="v"><span class="dot {% if model_state_key == "running" %}ok{% else if model_state_key == "rest-pending" %}warn{% endif %}"></span><a href="/model">{{ model_state }}</a></div>
     <small>{{ tr.get("model-hours") }} {{ model_hours }}</small>
   </div>
   <div>

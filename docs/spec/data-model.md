@@ -139,8 +139,8 @@ Machine-wide key-value state (not per user), read and written with `db::system_g
 | Key | Value | Notes |
 |-----|-------|-------|
 | `telegram_offset` | int | next `getUpdates` offset ([`telegram/poller.rs`](../../crates/gm/src/telegram/poller.rs)) |
-| `model_control` | object | the model controls edited on the Settings page: `on`, `off`, `manage`, `idle_min`, `grace_s`, `model` ([`model.rs`](../../crates/gm/src/model.rs)); absent until first saved, then it replaces the `GM_MODEL_*` defaults |
-| `model_resting` | bool | `true` after `/rest` until `/wakeup` brings the model back. Defaults to `false` when absent ([`model.rs`](../../crates/gm/src/model.rs)). |
+| `model_control` | object | Model tab settings: `on`, `off`, `manage`, `idle_min`, `grace_s`, `model`, optional `input_tokens` and `summary_tokens`. Absent limits use the environment defaults. Code in [`model.rs`](../../crates/gm/src/model.rs) |
+| `model_resting` | bool | Manual stop state shared by the Model tab and Telegram commands. Defaults to `false` when absent ([`model.rs`](../../crates/gm/src/model.rs)) |
 | `notifications_paused` | bool | `true` while `/pause` holds mail notifications ([`telegram/mod.rs`](../../crates/gm/src/telegram/mod.rs)) |
 
 ### `triage_feedback` (`0006_feedback.sql`)

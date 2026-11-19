@@ -33,7 +33,8 @@ The model is not one of gm's agents: mlx-air runs it (instance `gm`, launchd
 ([ADR-0010](../docs/adr/0010-llm-client-lanes-residency.md); the `GM_MLX_*` and `GM_MODEL_*`
 settings in [`.env.example`](../.env.example)). `mlx-air stop` removes the instance's launchd agent
 and config, so a start recreates them from `GM_LLM_MODEL` and the port of `GM_LLM_BASE_URL`. The
-switch on the dashboard turns this off. While the model is down, summaries wait in the queue and rule-only pings
+automatic management switch on the Model tab turns this off. The tab also provides manual Start and
+Stop controls. While the model is down, summaries wait in the queue and rule-only pings
 still go out ([ADR-0015](../docs/adr/0015-notification-policy-and-digest.md)); after 15 minutes in model hours the health check alerts.
 
 ```bash

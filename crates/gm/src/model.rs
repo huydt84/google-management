@@ -31,12 +31,7 @@ const START_RETRY: chrono::Duration = chrono::Duration::seconds(60);
 fn local_port(cfg: &Config) -> Option<u16> {
     url::Url::parse(&cfg.llm_base_url)
         .ok()
-        .filter(|u| {
-            matches!(
-                u.host_str(),
-                Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
-            )
-        })
+        .filter(crate::config::is_loopback)
         .and_then(|u| u.port_or_known_default())
 }
 
@@ -64,25 +59,40 @@ pub struct ModelSettings {
     pub grace_s: u32,
     /// The model id: sent on every request and passed to `mlx-air serve --model`.
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_tokens: Option<u32>,
 }
+
+pub const MAX_EDITABLE_TOKENS: u32 = 32_768;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SettingsError {
+    #[error("invalid model hours")]
+    Time,
+    #[error("model hours must contain the digest time")]
+    DigestTime,
     #[error("idle minutes must be 1–720")]
     IdleMinutes,
     #[error("stop grace must be 0–1800 seconds")]
     Grace,
     #[error("invalid model id")]
     Model,
+    #[error("invalid token budget")]
+    Tokens,
 }
 
 impl SettingsError {
     /// Fluent message id for the error.
     pub fn message_id(&self) -> &'static str {
         match self {
+            SettingsError::Time => "model-invalid-time",
+            SettingsError::DigestTime => "model-hours-digest",
             SettingsError::IdleMinutes => "model-invalid-idle",
             SettingsError::Grace => "model-invalid-grace",
             SettingsError::Model => "model-invalid-model",
+            SettingsError::Tokens => "model-invalid-tokens",
         }
     }
 }
@@ -96,6 +106,8 @@ impl ModelSettings {
             idle_min: cfg.model_idle_min,
             grace_s: cfg.model_stop_grace_s,
             model: cfg.llm_model.clone(),
+            input_tokens: None,
+            summary_tokens: None,
         }
     }
 
@@ -124,6 +136,15 @@ impl ModelSettings {
         let m = self.model.trim();
         if m.is_empty() || m.len() > 200 || m.chars().any(|c| c.is_whitespace() || c.is_control()) {
             return Err(SettingsError::Model);
+        }
+        if self
+            .input_tokens
+            .is_some_and(|n| !(1..=MAX_EDITABLE_TOKENS as usize).contains(&n))
+            || self
+                .summary_tokens
+                .is_some_and(|n| !(1..=MAX_EDITABLE_TOKENS).contains(&n))
+        {
+            return Err(SettingsError::Tokens);
         }
         Ok(())
     }
@@ -335,7 +356,27 @@ impl ModelControl {
 
     /// Whether gm controls the model process: switched on, and the model is on this machine.
     pub fn managing(&self) -> bool {
-        self.port.is_some() && self.settings.read().unwrap().manage
+        self.is_local() && self.settings.read().unwrap().manage
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.port.is_some()
+    }
+
+    pub fn input_tokens(&self, default: usize) -> usize {
+        self.settings
+            .read()
+            .unwrap()
+            .input_tokens
+            .unwrap_or(default)
+    }
+
+    pub fn summary_tokens(&self, default: u32) -> u32 {
+        self.settings
+            .read()
+            .unwrap()
+            .summary_tokens
+            .unwrap_or(default)
     }
 
     pub fn resting(&self) -> bool {
@@ -391,11 +432,18 @@ impl ModelControl {
 
     /// Validate, store and apply new settings. Switching management off starts the model
     /// unless the owner has put it to rest.
-    pub async fn save(&self, new: ModelSettings) -> anyhow::Result<Result<(), SettingsError>> {
+    pub async fn update(
+        &self,
+        edit: impl FnOnce(&mut ModelSettings) -> Result<(), SettingsError>,
+    ) -> anyhow::Result<Result<(), SettingsError>> {
+        let _g = self.lifecycle.lock().await;
+        let mut new = self.settings();
+        if let Err(e) = edit(&mut new) {
+            return Ok(Err(e));
+        }
         if let Err(e) = new.validate() {
             return Ok(Err(e));
         }
-        let _g = self.lifecycle.lock().await;
         crate::db::system_set(&self.pool, SETTINGS_KEY, &serde_json::to_value(&new)?).await?;
         let was_managed = self.managing();
         *self.settings.write().unwrap() = new;
@@ -411,10 +459,18 @@ impl ModelControl {
 
     /// The id the running server serves, else the configured one: what requests carry.
     pub fn request_model(&self) -> String {
-        match &self.book.lock().unwrap().serving {
-            Some(m) if !m.is_empty() => m.clone(),
-            _ => self.settings.read().unwrap().model.clone(),
-        }
+        self.served_model()
+            .unwrap_or_else(|| self.settings.read().unwrap().model.clone())
+    }
+
+    pub fn served_model(&self) -> Option<String> {
+        self.book
+            .lock()
+            .unwrap()
+            .serving
+            .as_ref()
+            .filter(|m| !m.is_empty())
+            .cloned()
     }
 
     fn touch(&self) {

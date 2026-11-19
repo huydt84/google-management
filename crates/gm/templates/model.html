@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}{{ tr.get("model-card") }} · {{ tr.get("app-title") }}{% endblock %}
+{% block style %}
+  .model-head { margin-bottom:20px; }
+  .model-links { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--graphite); font-size:13px; }
+  .model-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:start; gap:32px; }
+  .model-layout section { margin-bottom:28px; }
+  .model-runtime { border:1px solid var(--rule); border-radius:var(--radius); padding:16px 18px; margin-bottom:30px; }
+  .runtime-top { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+  .runtime-top h2 { margin:0; }
+  .runtime-actions { display:flex; flex-wrap:wrap; gap:8px; }
+  .model-runtime dl { margin-top:14px; column-gap:16px; }
+  .model-runtime dd code, .model-profile code, .eval-summary dd code { overflow-wrap:anywhere; }
+  .model-runtime .notice { margin:12px 0 0; }
+  .model-runtime > p:last-child { margin:10px 0 0; }
+  .model-setting { display:block; border-top:1px solid var(--rule-soft); padding:12px 0; }
+  .model-setting > label, .model-setting legend { font-weight:600; }
+  .model-setting p { margin:4px 0 0; }
+  .model-setting .notice { margin:8px 0 0; }
+  .model-input-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:start; margin-top:6px; }
+  .model-input-row input { max-width:none; min-width:0; }
+  .model-input-row .btn { min-height:38px; }
+  .model-input-row input[type="number"] { max-width:140px; }
+  .model-input-row:has(input[type="number"]) { grid-template-columns:minmax(0,140px) auto; justify-content:start; }
+  .model-hours { border:0; padding:0; margin:0; min-width:0; }
+  .model-hours legend { padding:0; }
+  .model-hour-inputs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .model-hour-inputs label { display:block; font-size:13px; color:var(--graphite); margin-bottom:2px; }
+  .model-hour-inputs input { min-height:38px; }
+  .model-input-row:has(.model-hour-inputs) { align-items:end; }
+  .model-check { display:flex; gap:8px; align-items:center; min-height:38px; font-weight:600; }
+  .model-check input { width:16px; height:16px; margin:0; accent-color:var(--ink); }
+  .model-profile { margin:0 0 10px; }
+  .budget-table { margin-bottom:14px; }
+  .budget-table th, .budget-table td { padding:7px 9px; }
+  .budget-table tbody th { background:none; color:var(--ink); font-size:14px; }
+  .budget-table td a { text-decoration-color:var(--focus); }
+  .model-eval { border-top:1px solid var(--rule); padding-top:20px; }
+  .model-eval .section-head { align-items:center; }
+  .model-eval .section-head form { margin:0; }
+  .eval-progress { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; margin-bottom:12px; }
+  .eval-progress p { margin:0; }
+  .eval-summary { margin:12px 0; }
+  .eval-report summary { cursor:pointer; width:fit-content; font-weight:550; }
+  .eval-report pre { white-space:pre; overflow-x:auto; font-size:12px; background:var(--paper); border-radius:var(--radius); padding:14px; }
+  .model-runtime button:disabled, .model-eval button:disabled { cursor:wait; opacity:.7; }
+  .model-setting:target, .model-eval:target, .model-runtime:target { scroll-margin-top:16px; }
+  @media (max-width:1040px) { .model-layout { grid-template-columns:minmax(0,1fr); gap:0; } }
+  @media (max-width:480px) {
+    .model-runtime dl, .eval-summary { grid-template-columns:minmax(0,1fr); row-gap:2px; }
+    .model-runtime dd, .eval-summary dd { margin-bottom:6px; }
+  }
+{% endblock %}
+
+{% macro feedback(field) %}
+  {% if notice_field == field && !notice.is_empty() %}
+    {% if success %}<div class="notice ok" role="status"><p>{{ notice }}</p></div>
+    {% else %}<div class="notice bad" role="alert"><p>{{ notice }}</p></div>{% endif %}
+  {% endif %}
+{% endmacro %}
+
+{% block body %}
+<div class="page-head model-head">
+  <h1>{{ tr.get("model-card") }}</h1>
+  <nav class="model-links" aria-label="{{ tr.get("model-card") }}">
+    <a href="#configuration">{{ tr.get("model-configuration") }}</a>
+    <a href="#budgets">{{ tr.get("model-budgets") }}</a>
+    <a href="#evaluation">{{ tr.get("model-evaluation") }}</a>
+  </nav>
+</div>
+
+<section class="model-runtime" id="runtime" aria-labelledby="runtime-title">
+  <div class="runtime-top">
+    <div class="row">
+      <h2 id="runtime-title">{{ tr.get("model-runtime") }}</h2>
+      <span class="state {% if status == "running" %}s-ok{% else if status == "rest-pending" %}s-pending{% else %}s-empty{% endif %}">{{ status_label }}</span>
+    </div>
+    {% if local %}
+    <div class="runtime-actions">
+      {% if !ready || resting %}
+      <form method="post" action="/model/power" data-pending="{{ tr.get("model-starting") }}">
+        <input type="hidden" name="action" value="wakeup">
+        <button class="btn primary">{{ tr.get("model-start") }}</button>
+      </form>
+      {% endif %}
+      {% if !resting || status == "rest-pending" %}
+      <form method="post" action="/model/power" data-pending="{{ tr.get("model-stopping") }}">
+        <input type="hidden" name="action" value="rest">
+        <button class="btn">{% if ready %}{{ tr.get("model-stop") }}{% else %}{{ tr.get("model-keep-off") }}{% endif %}</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <dl>
+    <dt>{{ tr.get("model-serving") }}</dt>
+    <dd>{% if !served.is_empty() %}<code>{{ served }}</code>{% else if ready %}{{ tr.get("model-unreported") }}{% else %}{{ tr.get("model-none-running") }}{% endif %}</dd>
+    {% if !local %}<dt>{{ tr.get("model-configured-id") }}</dt><dd><code>{{ settings.model }}</code></dd>{% endif %}
+    <dt>{{ tr.get("model-hours") }}</dt><dd>{{ hours }}</dd>
+  </dl>
+  {% call feedback("runtime") %}
+  {% if !local %}<p class="muted small">{{ tr.get("model-remote") }}</p>
+  {% else if resting %}<p class="muted small">{{ tr.get("model-rest-help") }}</p>
+  {% else %}<p class="muted small">{{ tr.get("model-power-help") }}</p>{% endif %}
+</section>
+
+<div class="model-layout">
+  <section id="configuration" aria-labelledby="configuration-title">
+    <div class="section-head"><h2 id="configuration-title">{{ tr.get("model-configuration") }}</h2></div>
+    {% if local %}
+    <form class="model-setting" id="checkpoint" method="post" action="/model">
+      <input type="hidden" name="setting" value="checkpoint">
+      <label for="model_id">{{ tr.get("model-id") }}</label>
+      <div class="model-input-row">
+        <input id="model_id" name="model" required maxlength="200" value="{{ settings.model }}" class="input" spellcheck="false" autocapitalize="off" aria-describedby="model-id-help">
+        <button class="btn" aria-label="{{ tr.args("model-save-setting", [("setting", tr.get("model-id"))]) }}">{{ tr.get("save") }}</button>
+      </div>
+      <p class="muted small" id="model-id-help">{{ tr.get("model-id-help") }}</p>
+      {% call feedback("checkpoint") %}
+    </form>
+    <form class="model-setting" id="automatic" method="post" action="/model">
+      <input type="hidden" name="setting" value="automatic">
+      <div class="model-input-row">
+        <label class="model-check"><input type="checkbox" name="manage"{% if settings.manage %} checked{% endif %} aria-describedby="manage-help">{{ tr.get("model-manage") }}</label>
+        <button class="btn" aria-label="{{ tr.args("model-save-setting", [("setting", tr.get("model-manage"))]) }}">{{ tr.get("save") }}</button>
+      </div>
+      <p class="muted small" id="manage-help">{{ tr.get("model-manage-help") }}</p>
+      {% call feedback("automatic") %}
+    </form>
+    {% endif %}
+    <form class="model-setting" id="hours" method="post" action="/model">
+      <input type="hidden" name="setting" value="hours">
+      <fieldset class="model-hours">
+        <legend>{{ tr.get("model-hours") }}</legend>
+        <div class="model-input-row">
+          <div class="model-hour-inputs">
+            <div><label for="model-on">{{ tr.get("model-hours-start") }}</label><input id="model-on" name="on" type="time" required value="{{ on }}" class="input" aria-describedby="hours-help"></div>
+            <div><label for="model-off">{{ tr.get("model-hours-end") }}</label><input id="model-off" name="off" type="time" required value="{{ off }}" class="input" aria-describedby="hours-help"></div>
+          </div>
+          <button class="btn" aria-label="{{ tr.args("model-save-setting", [("setting", tr.get("model-hours"))]) }}">{{ tr.get("save") }}</button>
+        </div>
+      </fieldset>
+      <p class="muted small" id="hours-help">{{ tr.get("model-hours-help") }}</p>
+      {% call feedback("hours") %}
+    </form>
+    {% if local %}
+    <form class="model-setting" id="idle" method="post" action="/model">
+      <input type="hidden" name="setting" value="idle">
+      <label for="idle-min">{{ tr.get("model-idle") }}</label>
+      <div class="model-input-row">
+        <input id="idle-min" name="minutes" type="number" min="1" max="720" required value="{{ settings.idle_min }}" class="input" aria-describedby="idle-help">
+        <button class="btn" aria-label="{{ tr.args("model-save-setting", [("setting", tr.get("model-idle"))]) }}">{{ tr.get("save") }}</button>
+      </div>
+      <p class="muted small" id="idle-help">{{ tr.get("model-idle-help") }}</p>
+      {% call feedback("idle") %}
+    </form>
+    <form class="model-setting" id="grace" method="post" action="/model">
+      <input type="hidden" name="setting" value="grace">
+      <label for="grace-seconds">{{ tr.get("model-grace") }}</label>
+      <div class="model-input-row">
+        <input id="grace-seconds" name="seconds" type="number" min="0" max="1800" required value="{{ settings.grace_s }}" class="input" aria-describedby="grace-help">
+        <button class="btn" aria-label="{{ tr.args("model-save-setting", [("setting", tr.get("model-grace"))]) }}">{{ tr.get("save") }}</button>
+      </div>
+      <p class="muted small" id="grace-help">{{ tr.get("model-grace-help") }}</p>
+      {% call feedback("grace") %}
+    </form>
+    {% endif %}
+  </section>
+
+  <section id="budgets" aria-labelledby="budgets-title">
+    <div class="section-head"><h2 id="budgets-title">{{ tr.get("model-budgets") }}</h2></div>
+    <p class="model-profile muted small">{{ tr.args("model-profile", [("client", client.clone())]) }} · {{ tr.args("model-concurrency", [("count", inflight.to_string())]) }}</p>
+    <div class="table-wrap budget-table">
+      <table aria-labelledby="budgets-title">
+        <thead><tr><th scope="col">{{ tr.get("model-task") }}</th><th scope="col" class="num">{{ tr.get("model-answer-tokens") }}</th><th scope="col" class="num">{{ tr.get("model-reasoning-tokens") }}</th><th scope="col" class="num">{{ tr.get("model-total-tokens") }}</th></tr></thead>
+        <tbody>
+          {% for budget in budgets %}
+          <tr>
+            <th scope="row">{{ tr.get(&format!("model-task-{}", budget.task.name())) }}</th>
+            <td class="num">{% if budget.configurable %}<a href="#summary-tokens" aria-label="{{ tr.get("model-summary-tokens") }}">{{ budget.answer }}</a>{% else %}{{ budget.answer }}{% endif %}</td>
+            <td class="num">{{ budget.reasoning }}</td>
+            <td class="num">{{ budget.answer + budget.reasoning }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small">{{ tr.get("model-budget-source") }}</p>
+    <form class="model-setting" id="input-tokens" method="post" action="/model">
+      <input type="hidden" name="setting" value="input-tokens">
+      <label for="input-limit">{{ tr.get("model-input-tokens") }}</label>
+      <div class="model-input-row">
+        <input id="input-limit" name="tokens" type="number" min="1" max="{{ max_tokens }}" value="{{ input_tokens }}" class="input" aria-describedby="input-limit-help">
+        <button class="btn" aria-label="{{ tr.args("model-save-setting", [("setting", tr.get("model-input-tokens"))]) }}">{{ tr.get("save") }}</button>
+      </div>
+      <p class="muted small" id="input-limit-help">{{ tr.args("model-input-tokens-help", [("default", input_default.to_string())]) }}</p>
+      {% call feedback("input-tokens") %}
+    </form>
+    <form class="model-setting" id="summary-tokens" method="post" action="/model">
+      <input type="hidden" name="setting" value="summary-tokens">
+      <label for="summary-limit">{{ tr.get("model-summary-tokens") }}</label>
+      <div class="model-input-row">
+        <input id="summary-limit" name="tokens" type="number" min="1" max="{{ max_tokens }}" value="{{ summary_tokens }}" class="input" aria-describedby="summary-limit-help">
+        <button class="btn" aria-label="{{ tr.args("model-save-setting", [("setting", tr.get("model-summary-tokens"))]) }}">{{ tr.get("save") }}</button>
+      </div>
+      <p class="muted small" id="summary-limit-help">{{ tr.args("model-summary-tokens-help", [("default", summary_default.to_string())]) }}</p>
+      {% call feedback("summary-tokens") %}
+    </form>
+  </section>
+</div>
+
+<section id="evaluation" class="model-eval" aria-labelledby="eval-title" data-running="{{ evaluation.running }}">
+  <div class="section-head">
+    <div><h2 id="eval-title">{{ tr.get("model-evaluation") }}</h2><p class="muted small">{% if evaluation.cases == 1 %}{{ tr.get("model-eval-one-case") }}{% else %}{{ tr.args("model-eval-cases", [("count", evaluation.cases.to_string())]) }}{% endif %}</p></div>
+    {% if evaluation.local && evaluation.cases > 0 && ready && !resting && !evaluation.running %}
+    <form method="post" action="/model/eval" data-pending="{{ tr.get("model-eval-starting") }}"><button class="btn">{{ tr.get("model-eval-run") }}</button></form>
+    {% endif %}
+  </div>
+  <div aria-live="polite">
+  {% call feedback("evaluation") %}
+  {% if evaluation.running %}
+    <div class="eval-progress">
+      <p class="state s-running" role="status">{{ tr.get("model-eval-running") }}</p>
+      <form method="get" action="/model#evaluation"><button class="btn quiet">{{ tr.get("model-eval-refresh") }}</button></form>
+    </div>
+  {% else if evaluation.failed || evaluation.read_failed %}
+    <div class="notice bad" role="alert"><p>{{ tr.get("model-eval-failed") }}</p></div>
+  {% else if !evaluation.local %}
+    <p class="muted">{{ tr.get("model-eval-local") }}</p>
+  {% else if evaluation.cases == 0 %}
+    <p class="muted">{{ tr.get("model-eval-empty") }} <a href="/">{{ tr.get("overview") }}</a></p>
+  {% else if !ready || resting %}
+    <p class="muted">{{ tr.get("model-eval-off") }}</p>
+  {% endif %}
+
+  {% if let Some(report) = evaluation.report %}
+    <dl class="eval-summary">
+      <dt>{{ tr.get("model-eval-last") }}</dt><dd><time datetime="{{ report.finished_at.to_rfc3339() }}">{{ report.finished_at.format("%Y-%m-%d %H:%M UTC") }}</time></dd>
+      <dt>{{ tr.get("model-eval-model") }}</dt><dd><code>{{ report.model }}</code></dd>
+      <dt>{{ tr.get("model-eval-accuracy") }}</dt><dd>{{ tr.args("model-eval-score", [("correct", report.correct.to_string()), ("cases", report.cases.to_string())]) }}</dd>
+    </dl>
+    <details class="eval-report"><summary>{{ tr.get("model-eval-report") }}</summary><pre>{{ report.details }}</pre></details>
+  {% else if !evaluation.running && !evaluation.failed && !evaluation.read_failed && evaluation.cases > 0 && ready && !resting %}
+    <p class="muted">{{ tr.get("model-eval-no-report") }}</p>
+  {% endif %}
+  </div>
+</section>
+
+<script>
+document.addEventListener('submit', (event) => {
+  const form = event.target;
+  if (!form.matches('form[data-pending]')) return;
+  form.querySelector('button').disabled = true;
+  form.querySelector('button').textContent = form.dataset.pending;
+});
+
+const evalSection = document.querySelector('#evaluation');
+if (evalSection.dataset.running === 'true') {
+  const check = async () => {
+    try {
+      const response = await fetch('/model', {cache: 'no-store'});
+      if (response.ok) {
+        const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+        const fresh = doc.querySelector('#evaluation');
+        if (fresh?.dataset.running === 'false') {
+          evalSection.dataset.running = 'false';
+          evalSection.querySelector('.section-head').replaceWith(fresh.querySelector('.section-head'));
+          evalSection.querySelector('[aria-live]').replaceChildren(...fresh.querySelector('[aria-live]').childNodes);
+          return;
+        }
+      }
+    } catch (_) { /* The manual refresh remains available. */ }
+    setTimeout(check, 3500);
+  };
+  setTimeout(check, 3500);
+}
+</script>
+{% endblock %}

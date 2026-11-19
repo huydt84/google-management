@@ -115,25 +115,22 @@ async fn host_and_origin_guards(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]
-async fn model_controls_live_on_settings(pool: PgPool) {
+async fn the_model_tab_saves_one_setting_and_changes_the_live_summary_budget(pool: PgPool) {
     let t = test_app(pool, |_| {}, None).await;
     let r = gm::web::router(t.app.state.clone());
     let c = session_cookie(&t, OWNER);
+    assert_eq!(send(&r, get("/model", None)).await.0, StatusCode::SEE_OTHER);
     let (_, _, body) = send(&r, get("/settings", Some(&c))).await;
-    assert!(
-        body.contains(r#"action="/model""#),
-        "model form on Settings"
-    );
-    let (_, _, body) = send(&r, get("/", Some(&c))).await;
-    assert!(!body.contains(r#"action="/model""#), "not on the dashboard");
+    assert!(!body.contains(r#"action="/model""#));
+    let (s, _, body) = send(&r, get("/model", Some(&c))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(body.contains(r#"href="/model" aria-current="page""#));
+    assert!(body.contains("Token budgets"));
+    assert!(body.contains("Stop model"));
 
     let (s, h, _) = send(
         &r,
-        post_form(
-            "/model",
-            &c,
-            "on=9am&off=19:00&idle_min=10&grace_s=300&model=m",
-        ),
+        post_form("/model", &c, "setting=hours&on=9am&off=19:00"),
     )
     .await;
     let location = h[header::LOCATION].to_str().unwrap().to_string();
@@ -141,12 +138,110 @@ async fn model_controls_live_on_settings(pool: PgPool) {
         (s, location.as_str()),
         (
             StatusCode::SEE_OTHER,
-            "/settings?model=model-invalid-time#model"
+            "/model?field=hours&notice=model-invalid-time#hours"
         )
     );
     let page = location.split('#').next().unwrap();
     let (_, _, body) = send(&r, get(page, Some(&c))).await;
     assert!(body.contains("Enter the hours as HH:MM."));
+
+    let old = t.app.model.settings();
+    let (_, h, _) = send(
+        &r,
+        post_form("/model", &c, "setting=summary-tokens&tokens=750"),
+    )
+    .await;
+    assert_eq!(
+        h[header::LOCATION],
+        "/model?field=summary-tokens&notice=model-setting-saved#summary-tokens"
+    );
+    let (_, _, body) = send(&r, get("/model", Some(&c))).await;
+    assert!(
+        body.contains(r##"href="#summary-tokens" aria-label="Qwen3 summary answer limit">750"##)
+    );
+    let mut expected = old;
+    expected.summary_tokens = Some(750);
+    t.app.model.load(&t.app.cfg).await.unwrap();
+    assert_eq!(t.app.model.settings(), expected);
+
+    t.mock_llm(SUMMARY_JSON).await;
+    let message = gm::gmail::message::parse_message(&gmail_message(
+        "e1",
+        "a@example.org",
+        "Test",
+        &["INBOX"],
+        "Body",
+    ));
+    t.app
+        .tasks
+        .llm
+        .summarize_email(&message, "English", &[], gm::llm::Lane::Notify)
+        .await
+        .unwrap();
+    let requests = t.server.received_requests().await.unwrap();
+    let request = requests
+        .iter()
+        .find(|request| request.url.path() == "/v1/chat/completions")
+        .unwrap();
+    assert_eq!(
+        request.body_json::<serde_json::Value>().unwrap()["max_tokens"],
+        750
+    );
+
+    let (_, h, _) = send(
+        &r,
+        post_form("/model", &c, "setting=summary-tokens&tokens="),
+    )
+    .await;
+    assert_eq!(
+        h[header::LOCATION],
+        "/model?field=summary-tokens&notice=model-setting-saved#summary-tokens"
+    );
+    let (_, _, body) = send(&r, get("/model", Some(&c))).await;
+    assert!(
+        body.contains(r##"href="#summary-tokens" aria-label="Qwen3 summary answer limit">400"##)
+    );
+}
+
+#[sqlx::test(migrator = "gm::db::MIGRATOR")]
+async fn model_tab_power_controls_share_the_manual_rest_state(pool: PgPool) {
+    let fake = FakeModel::new(true);
+    let t = test_app_with(
+        pool,
+        managed_day_hours,
+        Some(local(10, 0)),
+        Some(fake.clone()),
+    )
+    .await;
+    fake.mount_ready(&t.server).await;
+    let r = gm::web::router(t.app.state.clone());
+    let c = session_cookie(&t, OWNER);
+    let (_, h, _) = send(
+        &r,
+        post_form("/model/power", "gm_session=bogus", "action=rest"),
+    )
+    .await;
+    assert_eq!(h[header::LOCATION], "/");
+    assert!(fake.is_up());
+
+    let (_, h, _) = send(&r, post_form("/model/power", &c, "action=rest")).await;
+    assert_eq!(
+        h[header::LOCATION],
+        "/model?field=runtime&notice=model-power-stopped#runtime"
+    );
+    t.app.model.reconcile().await;
+    assert!(!fake.is_up());
+    let (_, _, body) = send(&r, get("/model", Some(&c))).await;
+    assert!(body.contains("Resting") && body.contains("Start model"));
+
+    let (_, h, _) = send(&r, post_form("/model/power", &c, "action=wakeup")).await;
+    assert_eq!(
+        h[header::LOCATION],
+        "/model?field=runtime&notice=model-power-started#runtime"
+    );
+    assert!(fake.is_up());
+    let (_, _, body) = send(&r, get("/model", Some(&c))).await;
+    assert!(body.contains("test-model") && body.contains("Stop model"));
 }
 
 #[sqlx::test(migrator = "gm::db::MIGRATOR")]

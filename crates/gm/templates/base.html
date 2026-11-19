@@ -157,6 +157,7 @@
         <li><a href="/"{% if nav.active == "overview" %} aria-current="page"{% endif %}>{{ tr.get("overview") }}</a></li>
         <li><a href="/tasks"{% if nav.active == "tasks" %} aria-current="page"{% endif %}><span>{{ tr.get("tasks") }}</span>{% if nav.approvals > 0 %}<span class="count" title="{{ tr.args("approvals-waiting", [("count", nav.approvals.to_string())]) }}">{{ nav.approvals }}</span>{% endif %}</a></li>
         <li><a href="/digest"{% if nav.active == "digest" %} aria-current="page"{% endif %}>{{ tr.get("digests") }}</a></li>
+        <li><a href="/model"{% if nav.active == "model" %} aria-current="page"{% endif %}>{{ tr.get("model-card") }}</a></li>
         <li><a href="/senders"{% if nav.active == "senders" %} aria-current="page"{% endif %}>{{ tr.get("senders") }}</a></li>
         <li><a href="/rules"{% if nav.active == "rules" %} aria-current="page"{% endif %}>{{ tr.get("rules") }}</a></li>
         <li><a href="/jobs"{% if nav.active == "jobs" %} aria-current="page"{% endif %}>{{ tr.get("jobs") }}</a></li>

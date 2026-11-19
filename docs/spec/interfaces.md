@@ -11,7 +11,7 @@ Served on `127.0.0.1:${GM_PORT}` (8080). Code: `crates/gm/src/web/`.
 
 Every signed-in page shares one layout ([`templates/base.html`](../../crates/gm/templates/base.html),
 `web::Nav`): a sidebar (a scrolling top bar on narrow screens) linking Overview, Tasks (with the
-count of pending approvals), Digest, Ignored senders, Jobs and Settings, plus the owner's address and
+count of pending approvals), Digest, Model, Ignored senders, Mail rules, Jobs and Settings, plus the owner's address and
 Sign out. Colour encodes the route only: notify, digest and ignore each have one hue, used for the
 route key on the dashboard and the edge of each mail row. An event's route comes from its
 status (`Pipeline::status_action` in [`pipeline.rs`](../../crates/gm/src/pipeline.rs)): `triaged`,
@@ -51,9 +51,12 @@ Guards on every request (`web::guard`):
 | POST | `/auth/logout` | — | Clear the session |
 | GET | `/connect/google` | session | Start API consent (`gmail.readonly` and `gmail.compose`, plus `pubsub` in Pub/Sub mode; offline, `prompt=consent`). The dashboard warns when the stored grant lacks a required scope |
 | GET | `/connect/google/callback` | session | Check owner and scopes, store the encrypted refresh token, bootstrap the Gmail cursor |
-| GET | `/settings[?saved=1][?model=]` | session (else redirect to `/`) | The user's settings, rendered in their UI language, and the model controls with their save result |
+| GET | `/settings[?saved=1]` | session (else redirect to `/`) | The user's settings, rendered in their UI language |
 | POST | `/settings` | session | Form `summary_language`, `translation_language`, `ui_language`, `digest_at` (HH:MM inside model hours), `trusted_link_domains` (domain names separated by new lines, spaces or commas; at most 50); 400 with a localized reason, else redirect `/settings?saved=1` |
-| POST | `/model` | session | Form `on`, `off` (HH:MM), `manage` (checkbox), `idle_min` (1–720), `grace_s` (0–1800), `model` (id, no spaces): the model controls ([ADR-0010](../adr/0010-llm-client-lanes-residency.md)); the new hours must contain the owner's digest time. Redirect `/settings?model=saved#model`, or `/settings?model=<error id>#model` |
+| GET | `/model` | session (else redirect to `/`) | Model tab. Readiness, served model, power controls, editable settings, effective token budgets and the last completed eval |
+| POST | `/model` | session | Save one model setting by its `setting` form value. Redirect to the setting with localized feedback. Model hours must include the owner's digest time |
+| POST | `/model/power` | session | `action=rest` stops the local model and holds it off. `action=wakeup` starts it and waits for readiness. Both share the Telegram commands' state |
+| POST | `/model/eval` | session | Start an evaluation in the background when the local model is ready and cases exist. An existing run stays in progress. Redirect to `/model#evaluation` |
 | POST | `/api/gmail/sync` | session | Sync the owner's mailbox now, redirect to `/` |
 | GET | `/api/events` | session (401 JSON otherwise) | Last 100 events as JSON |
 | GET | `/healthz` | — | `{"ok":true}`, or 503 if the database is unreachable |
@@ -63,6 +66,28 @@ Metrics: `gm_events{status}`, `gm_jobs{status}`, `gm_llm_calls_24h{task,lane}`,
 `gm_llm_prompt_tokens_24h`, `gm_llm_completion_tokens_24h`, `gm_llm_latency_ms_sum_24h` (per task and lane),
 `gm_ingest_lag_seconds`, `gm_pubsub_healthy` (Pub/Sub mode), `gm_health_failing{check}` (Phase 2). Counts only, no content. Model-server metrics come from
 mlx-air's own `/metrics`.
+
+### Model tab
+
+The serving model ID comes from `/ready`. The editable checkpoint ID applies at the next mlx-air
+start. Power actions and edits to the checkpoint, automatic management, idle timer and stop grace
+are available for a local instance. Model hours still govern background work with a remote model.
+
+Each form updates its own setting. The `setting` values are `checkpoint` (`model`), `automatic`
+(`manage` checkbox), `hours` (`on`, `off` in HH:MM), `idle` (`minutes`, 1–720), `grace` (`seconds`,
+0–1800), `input-tokens` and `summary-tokens` (`tokens`, 1–32,768, or blank for the environment
+default). The input limit caps email text in summary prompts. The summary answer limit applies to
+clients that use the Qwen3 setting. Other answer limits and all reasoning allowances come from the
+model client. The effective per-task limits are for the serving model, or the configured checkpoint
+when the server omits its model ID. Token limit edits take effect on new requests.
+
+Evaluation uses the saved local cases, the owner's summary language and the same local inference
+profile and queue as production calls. Loopback inference calls connect directly, with redirects
+disabled. One web evaluation runs at a time. The last completed run
+shows its model, timestamp and routing score, with parse rates, latency and token usage in the full
+report. A failed run leaves the previous result available. `gm eval` also saves a completed report
+in its eval directory. Code is in [`web/model.rs`](../../crates/gm/src/web/model.rs),
+[`model.html`](../../crates/gm/templates/model.html) and [`eval.rs`](../../crates/gm/src/eval.rs).
 
 ### Implemented (Phase 2)
 
@@ -319,14 +344,14 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_MODEL` | `mlx-community/Qwen3-8B-4bit` | Model name |
 | `GM_LLM_TIMEOUT_S` | 120 | Request timeout |
 | `GM_LLM_MAX_INFLIGHT` | 2 | Concurrent model requests across lanes |
-| `GM_LLM_MAX_INPUT_TOKENS` | 2000 | Mail body cap |
-| `GM_LLM_SUMMARY_MAX_TOKENS` | 400 | Qwen3's summary answer cap, also used by the Qwen3 fallback client |
+| `GM_LLM_MAX_INPUT_TOKENS` | 2000 | Default mail summary input cap. The Model tab can override it for `gm serve` |
+| `GM_LLM_SUMMARY_MAX_TOKENS` | 400 | Default summary answer cap for Qwen3 and the fallback client. The Model tab can override it for `gm serve` |
 | `GM_LLM_PROFILE` | `llm.yaml` | Sampling overrides per model ([below](#inference-profile)); missing file or section → built-in defaults, invalid file → `gm serve` does not start |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
-| `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on). First default: the Settings page value (`system_settings.model_control`) wins once saved |
-| `GM_MODEL_MANAGE` | `true` | gm stops the model outside model hours and starts it for owner requests (first default; Settings page switch) |
-| `GM_MODEL_IDLE_MIN` | 10 | Minutes the model stays up after the last owner request outside model hours (first default; Settings page) |
-| `GM_MODEL_STOP_GRACE_S` | 300 | Seconds to wait for in-flight requests before stopping the model (first default; Settings page) |
+| `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on). The Model tab value (`system_settings.model_control`) wins once saved |
+| `GM_MODEL_MANAGE` | `true` | gm stops the model outside model hours and starts it for owner requests (first default; Model tab switch) |
+| `GM_MODEL_IDLE_MIN` | 10 | Minutes the model stays up after the last owner request outside model hours (first default; Model tab) |
+| `GM_MODEL_STOP_GRACE_S` | 300 | Seconds to wait for in-flight requests before a scheduled stop (first default; Model tab) |
 | `GM_MODEL_START_TIMEOUT_S` | 120 | Seconds to wait for `/ready` after starting the model |
 | `GM_MLX_AIR_BIN` | `~/.local/bin/mlx-air` if it exists, else `mlx-air` | The executable gm calls to start and stop the model (launchd's PATH lacks `~/.local/bin`) |
 | `GM_MLX_INSTANCE` | `gm` | The mlx-air instance gm starts and stops |
@@ -371,6 +396,10 @@ One file per case, `GM_EVAL_DIR/<gmail id>.json`, plain JSON so it can be read a
 
 Files that don't parse or whose `expected` isn't one of the three actions are skipped with a warning.
 Removing a case means deleting its file.
+
+The most recent completed report is replaced atomically in `GM_EVAL_DIR/.latest-report` with mode
+0600. It contains the model ID, completion time, routing totals and formatted results. The report
+may include misclassified case IDs. Raw case content stays in the case files.
 
 ## LLM contracts
 
