@@ -31,8 +31,6 @@ use crate::triage_model::MODEL_SECTION;
 
 pub const DIGEST_TASK: &str = include_str!("../prompts/digest.md");
 pub const JOBS_TASK: &str = include_str!("../prompts/jobs.md");
-const LINE_MAX_TOKENS: u32 = 150;
-const JOBS_MAX_TOKENS: u32 = 600;
 const MAX_JOBS_PER_MAIL: usize = 10;
 /// Feedback rows under a digest; further model items are rated on the dashboard.
 pub const MAX_FEEDBACK_ROWS: usize = 8;
@@ -156,7 +154,6 @@ pub async fn summarize_item(
                 JOBS_TASK,
                 language,
                 &email,
-                JOBS_MAX_TOKENS,
                 |t| parse_jobs(t, &mail_text),
                 None,
             )
@@ -174,7 +171,6 @@ pub async fn summarize_item(
             DIGEST_TASK,
             language,
             &email,
-            LINE_MAX_TOKENS,
             parse_line,
             Some(&line_text),
         )

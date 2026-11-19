@@ -1,7 +1,7 @@
 # Google Management
 
 Personal, single-user server on the owner's Mac: ingests Gmail and Calendar, triages it with a
-tested rules file, summarizes with a local LLM (mlx-server-runtime, Qwen3-8B 4-bit, called directly;
+tested rules file, summarizes with a local LLM (mlx-server-runtime, called directly;
 the model process is run by mlx-air, never by gm), and notifies via Telegram. Only `GM_ALLOWED_EMAIL` can log in. Rust (one binary `gm`) + axum + sqlx +
 Postgres. Docs, code, comments and UI source strings are in English; the UI is localized (en / vi /
 ja) and LLM output follows each user's language setting (`crates/gm/src/user_settings.rs`).
@@ -118,7 +118,7 @@ question the premise instead of trying a third.
 | Test timestamps use the clock read by the code under test | Use `Utc::now()` or `FixedClock` for host-clock comparisons, not Postgres `now()` |
 | Feature verification includes the actual runtime flow | Run the relevant command or service and inspect its result; report observations in chat |
 | Build freshness comparisons account for second-resolution process times | `a_build_in_the_same_second_as_the_start_is_not_stale` in `status.rs` |
-| The repo's `llm.yaml` is a valid profile with a section for the default model | `the_repo_profile_is_valid_and_covers_the_default_model` in `llm/profile.rs` |
+| The repo's `llm.yaml` is a valid sampling profile with a section for the default model | `the_repo_profile_is_valid_and_covers_the_default_model` in `llm/profile.rs` |
 
 **Read [docs/plan/README.md](docs/plan/README.md).** It has the phase roadmap and workstream status,
 the rules for parallel work (file ownership, linear migration numbering), the Definition of Done, and

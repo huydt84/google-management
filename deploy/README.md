@@ -51,6 +51,21 @@ done
 - Logs: `~/Library/Logs/gm/` (JSON, rotated daily, 7 kept).
 - The first Keychain read from launchd may show a macOS prompt; choose "Always Allow".
 
+## Prepare Bonsai for direct answers
+
+Run this command after caching `prism-ml/Bonsai-27B-mlx-1bit`.
+
+```bash
+python3 scripts/prepare-bonsai-direct.py
+```
+
+The [script](../scripts/prepare-bonsai-direct.py) prints the absolute path to
+`~/.local/share/gm/models/Bonsai-27B-mlx-1bit-direct`. It links the cached model assets and writes
+a separate chat template with an empty reasoning block. Select the printed path in gm Settings
+or set `GM_LLM_MODEL` to that path. The directory name selects the Bonsai direct client and its
+sampling profile. The selection applies at the next model start. Keep the original Hugging Face
+snapshot in cache while you use this checkpoint.
+
 ## OAuth consent pages
 
 Publishing the Google OAuth app (so refresh tokens don't expire after 7 days as in "Testing") needs a

@@ -1,14 +1,18 @@
 //! All model calls go through [`LlmClient`] (invariant 7, ADR-0010): an OpenAI-compatible
 //! `POST /chat/completions` to mlx-server-runtime, admitted through priority lanes, recorded in
 //! `llm_calls`. No `tools` / `response_format`: prompts ask for one JSON object and the output is
-//! parsed tolerantly, with one retry. Each task's tier in the model's [`profile`] decides whether
-//! it thinks and whether its answer's language is checked ([`LlmClient::run`]).
+//! parsed tolerantly. A model client defines how each task tier prompts, reasons and retries.
+//! The sampling profile controls the initial temperature and top-p.
 
 pub mod clean;
 pub mod language;
-pub mod profile;
+pub(crate) mod model_client;
+pub(crate) mod profile;
 
-pub use profile::{Profile, Profiles, Task, Tier};
+pub use model_client::Task;
+
+use model_client::{ClientRegistry, Mode};
+use profile::{Profiles, Sampling};
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -307,20 +311,19 @@ fn parse_action(item: &Value, links: &[String]) -> Option<SuggestedAction> {
     })
 }
 
-/// A task's messages. With `think` the no-think `tag` is simply not appended. A task that answers in
-/// the owner's language gets that language restated after the mail, the last thing the model reads
-/// (a thinking model otherwise tends to answer in the language it reasoned in).
+/// A task that answers in the owner's language gets it restated after the mail, since a thinking
+/// model tends to answer in the language it reasoned in.
 fn task_messages(
     task: Task,
-    tag: &str,
+    system_suffix: &str,
     prompt: &str,
     language: &str,
     email_block: &str,
-    think: bool,
 ) -> Vec<Value> {
     let mut system = format!("{}\n{}", SYSTEM_PREFIX.trim_end(), prompt.trim_end());
-    if !think && !tag.is_empty() {
-        system.push_str(&format!("\n{tag}"));
+    if !system_suffix.is_empty() {
+        system.push('\n');
+        system.push_str(system_suffix);
     }
     let mut user = format!("Output language: {language}\n\n{email_block}");
     if task.in_owner_language() {
@@ -340,6 +343,7 @@ pub struct LlmClient {
     api_key: String,
     pub model: String,
     profiles: Profiles,
+    clients: ClientRegistry,
     /// Models already reported as running on the built-in defaults.
     warned: Mutex<std::collections::BTreeSet<String>>,
     max_input_tokens: usize,
@@ -348,6 +352,14 @@ pub struct LlmClient {
     pool: Option<PgPool>,
     recorder: Option<Arc<Mutex<Vec<CallRecord>>>>,
     control: Option<Arc<crate::model::ModelControl>>,
+}
+
+/// Keep backend identity, sampling and residency consistent through all attempts at a task.
+struct ModelRequest {
+    model: String,
+    lane: Lane,
+    sampling: Sampling,
+    _running: Option<crate::model::RequestGuard>,
 }
 
 /// One model request as seen by [`LlmClient::record_calls`] (used by `gm eval`, which has no DB).
@@ -388,7 +400,7 @@ struct Usage {
 }
 
 impl LlmClient {
-    /// Loads the inference profiles (`GM_LLM_PROFILE`); an invalid file is an error.
+    /// Loads sampling profiles (`GM_LLM_PROFILE`). An invalid file is an error.
     pub fn new(cfg: &Config, pool: Option<PgPool>) -> anyhow::Result<Self> {
         let profiles = Profiles::load(&cfg.llm_profile_path)?;
         Ok(Self {
@@ -400,6 +412,7 @@ impl LlmClient {
             api_key: cfg.llm_api_key.clone(),
             model: cfg.llm_model.clone(),
             profiles,
+            clients: ClientRegistry::load()?,
             warned: Mutex::new(Default::default()),
             max_input_tokens: cfg.llm_max_input_tokens,
             summary_max_tokens: cfg.llm_summary_max_tokens,
@@ -410,21 +423,28 @@ impl LlmClient {
         })
     }
 
-    /// The profile of the model requests go to now. Logged once per model: info from the file,
-    /// a warning on the built-in defaults.
-    pub fn profile(&self) -> Profile {
-        let profile = self.profiles.for_model(&self.request_model());
-        if self.warned.lock().unwrap().insert(profile.model.clone()) {
-            match &profile.source {
-                profile::Source::File(_) => {
-                    tracing::info!(profile = %profile.summary(), "LLM profile")
-                }
-                profile::Source::Defaults(why) => {
-                    tracing::warn!(reason = %why, profile = %profile.summary(), "LLM profile: built-in defaults")
-                }
+    async fn begin(&self, lane: Lane) -> anyhow::Result<ModelRequest> {
+        let running = match &self.control {
+            Some(control) => Some(control.begin(lane).await?),
+            None => None,
+        };
+        let model = self.request_model();
+        let key = self.clients.profile_key(&model);
+        if self.warned.lock().unwrap().insert(model.clone()) {
+            let (detail, warning) = self
+                .profiles
+                .describe(key, &self.clients.client_name(&model));
+            match warning {
+                Some(reason) => tracing::warn!(reason, profile = detail, "LLM sampling profile"),
+                None => tracing::info!(profile = detail, "LLM sampling profile"),
             }
         }
-        profile
+        Ok(ModelRequest {
+            sampling: self.profiles.sampling(key),
+            model,
+            lane,
+            _running: running,
+        })
     }
 
     /// The model id requests carry: the served one when gm controls the model, else `GM_LLM_MODEL`.
@@ -455,23 +475,36 @@ impl LlmClient {
         max_tokens: u32,
         temperature: f32,
     ) -> anyhow::Result<String> {
-        // An owner request starts the model if it is down; every call counts as in flight.
-        let _running = match &self.control {
-            Some(c) => Some(c.begin(lane).await?),
-            None => None,
-        };
-        let model = self.request_model();
+        let request = self.begin(lane).await?;
+        self.complete(&request, task, messages, max_tokens, temperature)
+            .await
+    }
+
+    async fn complete(
+        &self,
+        request: &ModelRequest,
+        task: &str,
+        messages: &[Value],
+        max_tokens: u32,
+        temperature: f32,
+    ) -> anyhow::Result<String> {
+        let model = &request.model;
+        let lane = request.lane;
         let _permit = self.admission.acquire(lane).await;
         let started = Instant::now();
+        let mut body = json!({
+            "model": model, "messages": messages, "max_tokens": max_tokens,
+            "temperature": temperature, "stream": false
+        });
+        if let Some(top_p) = request.sampling.top_p {
+            body["top_p"] = json!(top_p);
+        }
         let result = async {
             let resp = self
                 .http
                 .post(format!("{}/chat/completions", self.base_url))
                 .bearer_auth(&self.api_key)
-                .json(&json!({
-                    "model": model, "messages": messages, "max_tokens": max_tokens,
-                    "temperature": temperature, "stream": false
-                }))
+                .json(&body)
                 .send()
                 .await
                 .map_err(|e| LlmUnavailable(format!("request failed: {}", e.without_url())))?;
@@ -525,7 +558,7 @@ impl LlmClient {
             )
             .bind(task)
             .bind(lane.as_str())
-            .bind(&model)
+            .bind(model)
             .bind(pt)
             .bind(ct)
             .bind(latency_ms)
@@ -565,9 +598,7 @@ impl LlmClient {
         format!("<email>\n{}\n</email>", clean::sanitize_delimiters(&email))
     }
 
-    /// The messages `task`'s first call sends: thinking as its tier says. Shared stable prefix first
-    /// (system prompt + task prompt + thinking switch), per-user settings and the mail last, so the
-    /// prefix KV cache is reused across mails and tasks.
+    /// Preview the first request using the current model's inference plan.
     pub fn messages_for(
         &self,
         task: Task,
@@ -575,15 +606,13 @@ impl LlmClient {
         language: &str,
         email_block: &str,
     ) -> Vec<Value> {
-        let profile = self.profile();
-        let think = profile.params(task).thinking;
+        let inference = self.clients.inference_for(&self.request_model(), task);
         task_messages(
             task,
-            &profile.no_think_tag,
+            inference.system_suffix(),
             prompt,
             language,
             email_block,
-            think,
         )
     }
 
@@ -612,12 +641,8 @@ impl LlmClient {
         block
     }
 
-    /// Run one model task as its tier says. Thinking: one call with the reasoning budget added to
-    /// `answer_cap` (temperature 0.6); an unusable answer, or one that fails the language check, is
-    /// replaced by the answer without thinking. Without thinking: one JSON call with a format retry; with the
-    /// language check on, an answer in the wrong language is asked once more at temperature 0. The
-    /// last answer is used whatever its language. `checked` gives the text in `language` to check;
-    /// `None` for tasks whose output is not in the owner's language (router, triage, reply).
+    /// Run a task with the active model's inference plan. `checked` extracts the answer text
+    /// for clients that retry when the answer is in a different language.
     #[allow(clippy::too_many_arguments)]
     pub async fn run<T>(
         &self,
@@ -626,77 +651,105 @@ impl LlmClient {
         prompt: &str,
         language: &str,
         block: &str,
-        answer_cap: u32,
         parse: impl Fn(&str) -> Option<T>,
         checked: Option<&(dyn Fn(&T) -> String + Sync)>,
     ) -> anyhow::Result<JsonReply<T>> {
-        let profile = self.profile();
-        let params = profile.params(task);
+        let request = self.begin(lane).await?;
+        let inference = self.clients.inference_for(&request.model, task);
         let name = task.name();
-        let wrong_language = |v: &T| {
-            params.language_check
-                && checked.is_some_and(|f| language::in_language(language, &f(v)) == Some(false))
-        };
-        let plain = task_messages(task, &profile.no_think_tag, prompt, language, block, false);
-        if params.thinking {
-            let first = self
-                .chat(
-                    name,
-                    lane,
-                    &task_messages(task, &profile.no_think_tag, prompt, language, block, true),
-                    answer_cap + params.thinking_budget,
-                    0.6,
-                )
-                .await?;
-            match parse(&first) {
-                Some(v) if !wrong_language(&v) => {
-                    return Ok(JsonReply {
-                        parsed: Some(v),
-                        raw: first,
-                    });
-                }
-                Some(_) => tracing::warn!(
-                    task = name,
-                    "answer with thinking in the wrong language; asking without"
-                ),
-                None => {
-                    tracing::warn!(task = name, "answer with thinking unusable; asking without")
-                }
-            }
+        let messages = task_messages(task, inference.system_suffix(), prompt, language, block);
+        let answer_cap = inference.answer.resolve(self.summary_max_tokens);
+        let Mode::Thinking {
+            reasoning_tokens,
+            decode_answer,
+            fallback_tag,
+            language_check,
+        } = inference.mode
+        else {
             return self
-                .chat_json(&format!("{name}-nothink"), lane, plain, answer_cap, parse)
+                .chat_json(&request, name, messages, answer_cap, parse)
                 .await;
-        }
-        let reply = self
-            .chat_json(name, lane, plain.clone(), answer_cap, &parse)
+        };
+
+        let max_tokens = answer_cap
+            .checked_add(reasoning_tokens)
+            .ok_or_else(|| anyhow::anyhow!("completion token budget overflow for {name}"))?;
+        let first = self
+            .complete(
+                &request,
+                name,
+                &messages,
+                max_tokens,
+                request.sampling.thinking_temperature(),
+            )
             .await?;
-        if !reply.parsed.as_ref().is_some_and(&wrong_language) {
-            return Ok(reply);
+        let first = decode_answer(first);
+        let parsed = parse(&first);
+        let wrong_language = language_check
+            && parsed.as_ref().is_some_and(|value| {
+                checked.is_some_and(|check| {
+                    language::in_language(language, &check(value)) == Some(false)
+                })
+            });
+        if parsed.is_some() && !wrong_language {
+            return Ok(JsonReply { parsed, raw: first });
         }
-        tracing::warn!(task = name, "answer in the wrong language; asking again");
-        let again = self
-            .chat(&format!("{name}-language"), lane, &plain, answer_cap, 0.0)
-            .await?;
-        Ok(match parse(&again) {
-            Some(v) => JsonReply {
-                parsed: Some(v),
-                raw: again,
-            },
-            None => reply,
-        })
+        tracing::warn!(task = name, wrong_language, "retrying model answer");
+        match fallback_tag {
+            Some(fallback_tag) => {
+                let messages = task_messages(task, fallback_tag, prompt, language, block);
+                self.chat_json(
+                    &request,
+                    &format!("{name}-nothink"),
+                    messages,
+                    answer_cap,
+                    parse,
+                )
+                .await
+            }
+            None => {
+                let raw = self
+                    .complete(
+                        &request,
+                        &format!("{name}-retry"),
+                        &messages,
+                        max_tokens,
+                        0.0,
+                    )
+                    .await?;
+                let raw = decode_answer(raw);
+                let retried = parse(&raw);
+                Ok(if retried.is_none() && parsed.is_some() {
+                    JsonReply { parsed, raw: first }
+                } else {
+                    JsonReply {
+                        parsed: retried,
+                        raw,
+                    }
+                })
+            }
+        }
     }
 
     /// Ask for one JSON object; if `parse` rejects the reply, ask once more with a format reminder
     /// at temperature 0. Transport errors (including [`LlmUnavailable`]) are returned as is.
     async fn chat_json<T>(
         &self,
+        request: &ModelRequest,
         task: &str,
-        lane: Lane,
         mut messages: Vec<Value>,
         max_tokens: u32,
         parse: impl Fn(&str) -> Option<T>,
     ) -> anyhow::Result<JsonReply<T>> {
-        let first = self.chat(task, lane, &messages, max_tokens, 0.2).await?;
+        let first = self
+            .complete(
+                request,
+                task,
+                &messages,
+                max_tokens,
+                request.sampling.direct_temperature(),
+            )
+            .await?;
         if let Some(v) = parse(&first) {
             return Ok(JsonReply {
                 parsed: Some(v),
@@ -706,7 +759,13 @@ impl LlmClient {
         messages.push(json!({"role": "assistant", "content": first}));
         messages.push(json!({"role": "user", "content": "Reply again with ONLY the JSON object described above."}));
         let second = self
-            .chat(&format!("{task}-retry"), lane, &messages, max_tokens, 0.0)
+            .complete(
+                request,
+                &format!("{task}-retry"),
+                &messages,
+                max_tokens,
+                0.0,
+            )
             .await?;
         Ok(JsonReply {
             parsed: parse(&second),
@@ -738,7 +797,6 @@ impl LlmClient {
                 SUMMARY_TASK,
                 language,
                 &block,
-                self.summary_max_tokens,
                 |t| parse_summary(t, links),
                 Some(&checked),
             )

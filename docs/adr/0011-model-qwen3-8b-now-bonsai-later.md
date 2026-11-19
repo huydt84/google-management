@@ -1,33 +1,40 @@
-# 0011. Qwen3-8B 4-bit now; Bonsai-27B 1-bit when the runtime supports it
+# 0011. Qwen3 default and Bonsai-27B evaluation
 
 - Status: Accepted
 - Date: 2026-11-16
 
 ## Context
 
-The Mac is an M4 Pro with 24 GB of unified memory, shared with the owner's daily apps. The owner wanted
-`prism-ml/Bonsai-27B-mlx-1bit` (Qwen3.5 architecture, hybrid attention with 3 linear-attention layers
-per full-attention layer, 64 layers, 1-bit g128 weights, ~5.1 GB pack, ~6 GB peak). mlx-server-runtime
-today runs on upstream MLX 0.31.2 (no 1-bit kernels), and its native backend supports Qwen2, Qwen3,
-Gemma3 and Lfm2Moe, not the Qwen3.5 hybrid architecture.
+The Mac is an M4 Pro with 24 GB of unified memory, shared with the owner's daily apps.
+`prism-ml/Bonsai-27B-mlx-1bit` is a 1-bit Qwen model with hybrid attention. mlx-air 0.3
+can serve it on the native backend. Its chat template starts a reasoning block for every
+response, and the chat endpoint does not expose a switch to disable that reasoning.
 
 ## Decision
 
-- **Now:** `mlx-community/Qwen3-8B-4bit` (~5 GB weights), memory budget ≤ 8 GB including KV cache. It
-  is natively supported (continuous batching, prefix cache) and handles Japanese, Vietnamese and English.
-- **Later:** switch to Bonsai-27B by changing `GM_LLM_MODEL` (and the runtime's `[worker].model`) once
-  mlx-server-runtime has (1) the Prism MLX fork or upstream 1-bit kernels and (2) native Qwen3.5
-  hybrid-attention support. That work belongs in the mlx-server-runtime repository.
-- Before any switch, run `gm eval` on the curated eval set and compare it with the current model.
+- Default to `mlx-community/Qwen3-8B-4bit`. It supports direct answers for short tasks and
+  handles Japanese, Vietnamese and English. Keep one resident model within the configured
+  memory budget.
+- Bonsai can be evaluated in direct-answer mode by preparing the
+  [local checkpoint](../../deploy/README.md#prepare-bonsai-for-direct-answers) and selecting its
+  absolute path in Settings or with `GM_LLM_MODEL`. The
+  [model clients](../../crates/gm/src/llm/model_client.rs) handle each model's reasoning
+  and response format. [Sampling](../../llm.yaml) is configured by model ID.
+- Before changing the default, run `gm eval` against both models on the same curated
+  set. Check triage accuracy, JSON parsing and summary latency against the
+  [product requirements](../prd.md#8-non-functional-requirements).
+  Use the same `GM_LLM_MODEL` value as the model ID supplied to `mlx-air serve --model`
+  for each run.
 
 ## Consequences
 
-- gm code must not depend on model specifics beyond the prompt contract (the no-think tag,
-  thinking and its budget are configured per model in `llm.yaml`, [ADR-0018](0018-llm-inference-profile.md)).
-- Quality of 8B summaries and triage is the baseline the eval set measures.
+- Qwen3 remains the comparison baseline.
+- The stock Bonsai model ID uses the original thinking template. The direct checkpoint
+  reuses the same cached weights and supplies an empty reasoning block in its template.
+  The application eval checks the final answers.
 
 ## Alternatives considered
 
-- **Bonsai now via the Python mlx-lm path:** bypasses mlx-server-runtime's batching and cache, and
-  still needs the fork.
-- **Larger 4-bit models (14B+):** better quality, but 9–10 GB+ resident memory.
+- **Bonsai on the Python mlx-lm backend:** the native backend can load Bonsai and keeps
+  the runtime's native batching.
+- **Larger 4-bit models:** more weight memory on the shared Mac.

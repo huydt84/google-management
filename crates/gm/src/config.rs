@@ -34,7 +34,7 @@ impl PubSubConfig {
 }
 
 /// `GM_LLM_MODEL` when unset; `llm.yaml` in the repo must have a section for it.
-pub const DEFAULT_LLM_MODEL: &str = "mlx-community/Qwen3-8B-4bit";
+pub const DEFAULT_LLM_MODEL: &str = crate::llm::model_client::QWEN3_MODEL;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -76,8 +76,7 @@ pub struct Config {
     pub llm_max_inflight: usize,
     pub llm_max_input_tokens: usize,
     pub llm_summary_max_tokens: u32,
-    /// The inference profile file (`llm.yaml`): per model, tier parameters and the no-think tag
-    /// ([`crate::llm::profile`]).
+    /// Sampling overrides per model (`llm.yaml`).
     pub llm_profile_path: PathBuf,
     /// While the model is unavailable, queued summaries try again after this many seconds.
     pub llm_unavailable_retry_s: u64,

@@ -13,7 +13,6 @@ use crate::rules::{Action, Priority, Verdict};
 
 pub const TRIAGE_TASK: &str = include_str!("../prompts/triage.md");
 /// Output cap: one action and a reason of at most 12 words.
-pub const MAX_OUTPUT_TOKENS: u32 = 80;
 /// Only the beginning of the body is needed to decide.
 pub const MAX_INPUT_TOKENS: usize = 1500;
 /// Rule name recorded for decisions made by the model.
@@ -70,7 +69,6 @@ pub async fn classify(
             TRIAGE_TASK,
             language,
             &llm.email_block(m, MAX_INPUT_TOKENS),
-            MAX_OUTPUT_TOKENS,
             parse_triage,
             None,
         )

@@ -14,7 +14,7 @@ and Calendar, decides which mail matters, pings the phone about the few that do,
 into a morning digest, and lets the owner act on mail ("translate", "reply that I agree") with
 explicit approval for anything that leaves the account.
 
-All model work runs locally on `mlx-server-runtime` (Qwen3-8B 4-bit), so mail never leaves the Mac.
+All model work runs locally on `mlx-server-runtime`, so mail never leaves the Mac.
 
 ## 2. Problem
 
@@ -138,7 +138,7 @@ carried over to Phase 1.
 ### Backlog
 
 Expense ledger (Sheets), Drive notifications, free-form agent and automations with undo,
-Bonsai-27B 1-bit model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md)).
+evaluation of Bonsai-27B 1-bit as the default model ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md)).
 
 ## 7. Functional requirements
 
@@ -262,7 +262,7 @@ actions ([ADR-0015](adr/0015-notification-policy-and-digest.md)).
 | Rakuten changes its mail format | Card amounts or security mail misclassified | Examples in CI; unmatched mail falls through to triage (notified), not ignored; `gm rules` after edits. |
 | OAuth app left in "Testing" | Refresh token dies after 7 days | Setup requires "In production"; `needs_reconnect` on the dashboard. |
 | Mac asleep during model hours | Late summaries and digest | Deferred jobs run on wake; urgent rules don't need the model. |
-| 8B model gives weak summaries for Japanese | Less useful pings | Translate button (Phase 3); eval set; Bonsai-27B later. |
+| 8B model gives weak summaries for Japanese | Less useful pings | Translate button (Phase 3); evaluate Bonsai-27B on the same mail. |
 | RAM pressure | Slow machine | One model, model hours only, max 2 in flight. |
 | Long downtime beyond Gmail history | Some mail never processed | 2-day recovery; gap logged. |
 | Bot token leak | Bot impersonation | Keychain; never logged; rotate via BotFather. |
@@ -271,7 +271,7 @@ actions ([ADR-0015](adr/0015-notification-policy-and-digest.md)).
 ## 12. Open questions
 
 1. Is Telegram the long-term channel? (A `Notifier` interface keeps a switch cheap.)
-2. When Bonsai-27B is supported, is its quality gain worth its memory? (Decide with `gm eval`.)
+2. Does Bonsai-27B meet the app's quality and latency requirements as the default? (Compare with `gm eval`.)
 
 ## 13. Glossary
 

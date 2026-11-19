@@ -31,7 +31,7 @@ Start here to understand Google Management at a high level, then go deeper as ne
 | 4 | implemented | Primary-calendar notifications; today's live agenda in the digest |
 | 5 | planned | Telegram voice: voice notes transcribed, answers read aloud |
 
-Backlog: expense ledger, Drive, free-form agent and automations, Bonsai-27B.
+Backlog: expense ledger, Drive, free-form agent and automations. The Bonsai default is pending [evaluation](adr/0011-model-qwen3-8b-now-bonsai-later.md).
 
 ## Keeping documents current
 

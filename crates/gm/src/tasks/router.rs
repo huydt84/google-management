@@ -11,7 +11,6 @@ use crate::user_settings::normalize_language;
 
 pub const ROUTER_TASK: &str = include_str!("../../prompts/router.md");
 /// Output cap: one intent and a language name.
-pub const MAX_OUTPUT_TOKENS: u32 = 60;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Routed {
@@ -126,7 +125,6 @@ pub async fn route(llm: &LlmClient, text: &str) -> anyhow::Result<Routed> {
             ROUTER_TASK,
             "English",
             &block(text),
-            MAX_OUTPUT_TOKENS,
             parse_routed,
             None,
         )

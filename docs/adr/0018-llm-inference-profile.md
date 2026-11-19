@@ -1,49 +1,51 @@
-# 0018. LLM inference profile: task tiers, parameters per model in llm.yaml
+# 0018. LLM model clients and sampling profiles
 
 - Status: Accepted
 - Date: 2026-11-18
 
 ## Context
 
-Model tasks differ in how much reasoning they need: routing an instruction or triaging a mail is a
-short classification, while analyzing a mail for risks or writing a reply benefits from thinking.
-How a model is told to think differs per model (Qwen3 has a `/no_think` tag; other models have no
-switch), and the model can be changed in Settings. The local runtime (mlx-server-runtime) accepts
-only `temperature`, `top_p` and `max_tokens`: there is no reasoning-effort parameter, so the only
-levers are leaving the no-think tag out and giving the reasoning more output tokens. A thinking
-Qwen3-8B also tends to answer in English when asked for Vietnamese or Japanese.
+Routing and triage need a short classification. Analyzing a mail or drafting a reply benefits
+from more reasoning. Qwen3 switches to a direct answer with `/no_think`. Bonsai's chat template
+supplies the opening `<think>` tag as part of the prompt, and the runtime returns generated text
+starting inside the reasoning block. mlx-air 0.3 does not expose the template's thinking switch
+through its chat endpoint.
 
 ## Decision
 
-- Every model task belongs to one of three tiers, fixed in code (`Task::tier`,
-  [`llm/profile.rs`](../../crates/gm/src/llm/profile.rs)): **easy** (router, triage, digest line),
-  **medium** (summary, digest jobs, translate), **hard** (analyze, reply).
-- The parameters per tier live in a YAML file (`GM_LLM_PROFILE`, default [`llm.yaml`](../../llm.yaml)),
-  one section per model id, so changing the model means adding a section, not changing code:
-  `no_think_tag`, and per tier `thinking`, `thinking_budget` (output tokens added to the task's
-  answer cap) and `language_check` (an answer in another language than the owner's is asked again).
-- Each call uses the section of the model it is sent to. A missing file or section gives built-in
-  defaults (Qwen3: hard thinks with 1,024 tokens; no tier checks language) with a warning; an invalid file
-  stops `gm serve`. `gm status` shows the active profile in one line.
-- Code calls `LlmClient::run(task, …)` with the answer cap only; it never chooses thinking,
-  temperature or retries itself. A failed thinking answer falls back to the answer without thinking;
-  a failed language check without thinking asks the same prompt again at temperature 0.
+- Each task belongs to the easy, medium or hard category in
+  [`llm/model_client.rs`](../../crates/gm/src/llm/model_client.rs). Qwen3 and Bonsai implement those
+  three methods on the same `ModelClient` trait. Each method receives the exact task, so a model
+  can share prompt format and retry policy across a category and tune answer and reasoning
+  tokens per task.
+  Each implementation declares its supported
+  model IDs with a `#[distributed_slice(CLIENTS)]` registration in the client's module. Startup
+  indexes those registrations by ID and rejects duplicate IDs.
+- [`LlmClient`](../../crates/gm/src/llm/mod.rs) selects the client for the served model after
+  any residency wake and keeps that model for the entire task. It shares HTTP transport,
+  admission, metrics and task parsers across the model clients. Qwen3 registers the default
+  client for unrecognized IDs.
+- [`llm.yaml`](../../llm.yaml) supplies sampling overrides by model ID
+  ([profile specification](../spec/interfaces.md#inference-profile)). Legacy tier and tag keys
+  are accepted and ignored so old profile files can still load. `gm status` shows the model
+  client and sampling values.
+- Qwen3 uses direct answers for easy and medium tasks and falls back to a direct answer if a
+  hard task's reasoning pass fails. The [Bonsai client](../../crates/gm/src/llm/model_client/bonsai.rs)
+  defines its own answer cap for each task. The direct checkpoint uses those caps as-is.
+  The stock checkpoint adds a reasoning allowance and parses the answer after `</think>`.
+  The executor sends one combined `max_tokens` limit for reasoning requests.
 
 ## Consequences
 
-- Answer caps in code are the answer alone; a thinking task's `max_tokens` is the cap plus the
-  tier's budget (analyze 1,024 + 1,024, reply 512 + 1,024 by default).
-- Answers in the owner's language end their prompt by restating that language after the mail,
-  which keeps a thinking answer in that language most of the time. A tier can also set
-  `language_check` to redo a wrong-language answer, at the cost of a second call; the Qwen3 profile
-  leaves it off and accepts an occasional answer in another language.
-- Moving a task to another tier is a code change (with tests); tuning a tier is a file edit and a
-  restart.
+- Tuning sampling is a file edit and a restart. Changing a model's effort or response contract
+  is a code change in its client. Selecting a supported model remains a configuration or
+  Settings change.
+- Adding another model client leaves the HTTP protocol, task parsers, and task-to-category
+  mapping in one place.
 
 ## Alternatives considered
 
-- **Parameters per task in the file:** most flexible, but eight entries per model to keep in sync;
-  tiers keep the file small and the grouping reviewable.
-- **Tier map in the file:** lets the owner move tasks without a build, but a task's parsing and
-  fallbacks assume its tier's behavior, so the map stays in code.
-- **Environment variables:** one flat namespace can't hold per-model sections.
+- Encode reasoning controls in YAML. This can express prompt tags and token budgets, while
+  response formats and retries still require model-specific code.
+- Give each client its own HTTP layer. That would duplicate queueing, residency, failure
+  handling and metrics.

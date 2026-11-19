@@ -10,9 +10,6 @@ use crate::llm::{Lane, Task, parse_json_object, strip_think};
 use crate::tasks::{Intent, Recipe, RecipeContext, RecipeResult};
 
 pub const ANALYZE_TASK: &str = include_str!("../../prompts/analyze.md");
-/// The answer's cap; a thinking call adds the tier's reasoning budget (`llm.yaml`).
-pub const MAX_OUTPUT_TOKENS: u32 = 1024;
-
 const SECTIONS: &[&str] = &["key_points", "deadlines", "amounts", "risks", "next_steps"];
 
 /// Told to the model before the mail when [`ParsedMessage::is_forward`] holds (`prompts/analyze.md`
@@ -107,7 +104,6 @@ impl Recipe for Analyze {
                 ANALYZE_TASK,
                 &cx.settings.summary_language,
                 &block,
-                MAX_OUTPUT_TOKENS,
                 parse_analysis,
                 Some(&analysis_text),
             )

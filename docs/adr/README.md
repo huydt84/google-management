@@ -19,14 +19,14 @@ record.
 | [0008](0008-per-user-settings.md) | Settings stored per user and edited in the app; deployment stays single-user | Accepted |
 | [0009](0009-rust-single-binary.md) | Rust single binary replaces the Python implementation | Accepted |
 | [0010](0010-llm-client-lanes-residency.md) | Direct LLM client with priority lanes and model hours; no gateway | Accepted |
-| [0011](0011-model-qwen3-8b-now-bonsai-later.md) | Qwen3-8B 4-bit now; Bonsai-27B 1-bit when the runtime supports it | Accepted |
+| [0011](0011-model-qwen3-8b-now-bonsai-later.md) | Qwen3 default and Bonsai-27B evaluation | Accepted |
 | [0012](0012-rules-engine-v2.md) | Rules engine v2: YAML, first match wins, extractors, tested examples | Accepted |
 | [0013](0013-ops-launchd-keychain-tailscale.md) | launchd services, Keychain secrets, Tailscale for remote access | Accepted |
 | [0014](0014-web-ui-askama-htmx-fluent.md) | Web UI: askama, htmx, Fluent (vi / en / ja) | Accepted |
 | [0015](0015-notification-policy-and-digest.md) | Notification policy, night behavior and the 09:05 digest | Accepted |
 | [0016](0016-operations-baseline.md) | Operations baseline: CI, tests, observability, backups | Accepted |
 | [0017](0017-eval-data-handling.md) | Evaluation data: redacted fixtures in git, raw set local only | Accepted |
-| [0018](0018-llm-inference-profile.md) | LLM inference profile: task tiers, parameters per model in llm.yaml | Accepted |
+| [0018](0018-llm-inference-profile.md) | LLM model clients and sampling profiles | Accepted |
 | [0019](0019-voice-through-mlx-air.md) | Telegram voice: speech models served by mlx-air, called through llm/ | Accepted |
 
 Template for new records:

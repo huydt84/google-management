@@ -13,7 +13,6 @@ pub const TRANSLATE_TASK: &str = include_str!("../../prompts/translate.md");
 pub const CHUNK_TOKENS: usize = 1200;
 /// At most this many chunks; the rest is cut and the owner is told.
 pub const MAX_CHUNKS: usize = 6;
-pub const MAX_OUTPUT_TOKENS: u32 = 2048;
 
 /// Split `Subject` + body into chunks of about [`CHUNK_TOKENS`] at paragraph boundaries. Returns
 /// the chunks and whether text beyond [`MAX_CHUNKS`] was dropped.
@@ -84,7 +83,6 @@ impl Recipe for Translate {
                     TRANSLATE_TASK,
                     &language,
                     &block,
-                    MAX_OUTPUT_TOKENS,
                     |t| text_of(t, "translation"),
                     Some(&translation),
                 )

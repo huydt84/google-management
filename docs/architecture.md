@@ -39,7 +39,7 @@ flowchart LR
     owner(["Owner"])
     subgraph mac["Owner's Mac (M4 Pro, 24 GB)"]
         gm["gm<br/>(Rust binary)"]
-        llm["mlx-server-runtime<br/>Qwen3-8B 4-bit"]
+        llm["mlx-server-runtime<br/>Selected local model"]
         pg[("Postgres 17")]
         kc["macOS Keychain"]
     end
@@ -186,7 +186,7 @@ flowchart LR
 | [`recipes/`](../crates/gm/src/recipes/) | Translate (chunked), Analyze, Reply (draft + proposal) and the `gmail.send_draft` executor that re-checks the live draft. |
 | [`status.rs`](../crates/gm/src/status.rs) | `gm status`: launchd agents, running build, endpoints, model name, migrations and queue, read from the live Mac; reuses the health checker's queries. |
 | [`eval.rs`](../crates/gm/src/eval.rs) | Local eval set files and `gm eval` (runs rules → triage → the summary `Pipeline::route` picks). |
-| [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9): `LlmClient`, lanes, prompt layout and `run` (`mod.rs`); input cleaning (`clean.rs`); the per-model inference profile and the task → tier map (`profile.rs`); the output-language check (`language.rs`). |
+| [`llm/`](../crates/gm/src/llm/) | The only way to call a model (§9): `LlmClient`, lanes, prompt layout and `run` (`mod.rs`); input cleaning (`clean.rs`); model clients and the task-to-tier map (`model_client.rs`); sampling overrides (`profile.rs`); the output-language check (`language.rs`). |
 | [`notify.rs`](../crates/gm/src/notify.rs) | `Notifier` trait; Telegram (literal text, formatting entities, silent flag, buttons, edits), log, recording (tests); `RichText` (UTF-16 formatting spans, cut at 4096) and its web `segments`; mail notification formatting. |
 | [`user_settings.rs`](../crates/gm/src/user_settings.rs) | Per-user settings with validation; `tr(email)` gives UI strings in the owner's language. |
 | [`i18n.rs`](../crates/gm/src/i18n.rs) | Fluent strings for en / vi / ja ([`locales/`](../crates/gm/locales/)). |
@@ -494,7 +494,7 @@ All model calls go through `llm::LlmClient` ([ADR-0010](adr/0010-llm-client-lane
 - **Model hours:** gm runs background model work 09:00–19:00 only and defers it otherwise
   (`Pipeline::model_step` in [`pipeline.rs`](../crates/gm/src/pipeline.rs)). Tasks the owner starts
   from Telegram (translate, analyze, reply) run at any hour, whenever the model answers. The model process is
-  mlx-air's: gm never starts or stops it. Model: Qwen3-8B 4-bit now, Bonsai-27B 1-bit later
+  owned by mlx-air. Qwen3-8B is the default and Bonsai-27B is selectable
   ([ADR-0011](adr/0011-model-qwen3-8b-now-bonsai-later.md)).
 
 ## 10. Trust boundaries
@@ -568,11 +568,11 @@ flowchart LR
 |---------|---------|---------|---------|---------|---------|
 | Triage | rules v2; unmatched → notify | + model triage, 👍/👎 feedback | same | same | same |
 | Output | Telegram notifications | + digest at 09:05, health alerts | + buttons, replies | + calendar notices | + voice clips for answers, 🔊 |
-| LLM | summary (notify lane) | + batch lane, triage, digest items, `gm eval` | + interactive lane, per-model inference profile (hard tier thinks) | same | + speech-to-text and text-to-speech instances in mlx-air |
+| LLM | summary (notify lane) | + batch lane, triage, digest items, `gm eval` | + interactive lane, model-specific inference clients | same | + speech-to-text and text-to-speech instances in mlx-air |
 | Scopes | `gmail.readonly` | same | + `gmail.compose` | + `calendar.readonly` | same |
 | Owner → system | web dashboard, settings | same | Telegram buttons and replies | same | + Telegram voice notes |
 
-Backlog: expense ledger (Sheets), Drive, free-form agent and automations, Bonsai-27B.
+Backlog: expense ledger (Sheets), Drive, free-form agent and automations. The Bonsai default is pending [evaluation](adr/0011-model-qwen3-8b-now-bonsai-later.md).
 
 ## 13. Key decisions
 

@@ -270,7 +270,7 @@ Code: [`src/main.rs`](../../crates/gm/src/main.rs).
 | `gm keychain set <name>` | Store a secret in the Keychain (macOS prompts for the value) |
 | `gm keychain list` | Show which known secrets are present (never the values) |
 | `gm rules [path]` | Validate a rules file and check every rule's examples |
-| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary (a binary at most 2 s newer than the start counts as the running one: `ps` reports whole seconds and the upgrade command restarts within a second), `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, the inference profile of the configured model (`!` on the built-in defaults, `✗` for an invalid file), migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
+| `gm status` | Report what actually runs on this Mac, read from the live system: the launchd agents `com.gm.server` and `com.gm.backup` (loaded, running, last exit code), whether the running server is the latest build of its binary (a binary at most 2 s newer than the start counts as the running one: `ps` reports whole seconds and the upgrade command restarts within a second), `/healthz`, the model's readiness probe and the model it serves versus `GM_LLM_MODEL`, the configured model's client and sampling profile (`!` on the built-in defaults, `✗` for an invalid file), migrations (pending, unknown to this build, or edited after being applied), dead jobs, Gmail sync lag (the health checker's limit) and open health incidents. Needs no secrets. Exit code 1 when any check fails. Code: [`status.rs`](../../crates/gm/src/status.rs) |
 | `gm eval [--dir DIR] [--language LANG]` | Run rules → model triage → summary on every case in the eval set against the **local** model (refuses a non-loopback `GM_LLM_BASE_URL`) and print accuracy per expected action, the confusion matrix, the JSON parse rate per task, misclassified ids, and calls, latency p50/p95 and tokens per model task. Needs no database, Keychain or Google access |
 
 ## Configuration
@@ -314,8 +314,8 @@ from `GM_SECRET_<NAME>` in tests and CI.
 | `GM_LLM_TIMEOUT_S` | 120 | Request timeout |
 | `GM_LLM_MAX_INFLIGHT` | 2 | Concurrent model requests across lanes |
 | `GM_LLM_MAX_INPUT_TOKENS` | 2000 | Mail body cap |
-| `GM_LLM_SUMMARY_MAX_TOKENS` | 400 | Output cap for summaries |
-| `GM_LLM_PROFILE` | `llm.yaml` | Inference profile per model ([below](#inference-profile)); missing file or section → built-in defaults, invalid file → `gm serve` does not start |
+| `GM_LLM_SUMMARY_MAX_TOKENS` | 400 | Qwen3's summary answer cap, also used by the Qwen3 fallback client |
+| `GM_LLM_PROFILE` | `llm.yaml` | Sampling overrides per model ([below](#inference-profile)); missing file or section → built-in defaults, invalid file → `gm serve` does not start |
 | `GM_LLM_UNAVAILABLE_RETRY_S` | 300 | While the model is unavailable, queued summaries retry after this many seconds |
 | `GM_MODEL_ON` / `GM_MODEL_OFF` | `09:00` / `19:00` | Model hours (local time; equal values = always on). First default: the Settings page value (`system_settings.model_control`) wins once saved |
 | `GM_MODEL_MANAGE` | `true` | gm stops the model outside model hours and starts it for owner requests (first default; Settings page switch) |
@@ -376,8 +376,8 @@ All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) throug
 ### Prompt layout (all tasks)
 
 1. System message: `prompts/system.md` (shared rules: the `<email>` content is untrusted data, JSON
-   only) + `prompts/<task>.md` + the model's `no_think_tag` (left out when the task's tier thinks). Identical across calls of a task, so the runtime's prefix
-   cache can reuse it.
+   only) + `prompts/<task>.md` + the model client's optional control tag. This prefix can be reused
+   across calls of that task and model.
 2. User message: `Output language: <language>`, then the mail (headers, attachment names, cleaned and
    capped body) inside `<email>…</email>`. Any `<email` / `</email` in the content is neutralized.
    The summary task appends the mail's trusted links, numbered, in a `<links>` block after the mail.
@@ -387,7 +387,7 @@ All calls are `POST {GM_LLM_BASE_URL}/chat/completions` (`stream: false`) throug
 
 ### Inference profile
 
-Code: [`src/llm/profile.rs`](../../crates/gm/src/llm/profile.rs), [`llm.yaml`](../../llm.yaml) ([ADR-0018](../adr/0018-llm-inference-profile.md)).
+Code: [`model_client.rs`](../../crates/gm/src/llm/model_client.rs), [`profile.rs`](../../crates/gm/src/llm/profile.rs), [`llm.yaml`](../../llm.yaml) ([ADR-0018](../adr/0018-llm-inference-profile.md)).
 
 Every task belongs to one tier, fixed in code:
 
@@ -397,36 +397,45 @@ Every task belongs to one tier, fixed in code:
 | medium | `summary`, `digest-jobs`, `translate` |
 | hard | `analyze`, `reply` |
 
-`GM_LLM_PROFILE` holds one section per model id; each call uses the section of the model it is sent to
-(the served model when gm controls it, else `GM_LLM_MODEL`):
+The client for the served model receives the exact task through its tier method. The client sets
+reasoning, prompt formatting, response handling and retries, and can tune answer and reasoning tokens
+for each task. Each client registers its supported IDs beside its implementation. At startup, gm indexes
+the registrations and rejects duplicate IDs. If gm has no served model ID, it uses the configured
+ID. An unregistered ID uses the Qwen3 fallback.
+
+- Qwen3 sends `/no_think` on easy and medium tasks. Hard tasks add 1,024 tokens of reasoning to
+  their answer cap, with a direct retry if the first response cannot be parsed. Direct attempts
+  include a format-reminder retry when needed.
+- The [Bonsai client](../../crates/gm/src/llm/model_client/bonsai.rs) has a separate answer cap
+  for each task. An absolute path whose directory is named `Bonsai-27B-mlx-1bit-direct` selects the
+  [direct checkpoint](../../deploy/README.md#prepare-bonsai-for-direct-answers) and uses those caps
+  directly. Its directory name is also the sampling key.
+- The stock Bonsai model uses a template that opens `<think>` in the prompt. Its client adds
+  reasoning tokens to the answer cap, reads the answer after `</think>`, and retries at
+  temperature 0 if the answer fails parsing or the language check. That check applies to summary,
+  digest line, translate and analyze.
+
+The request's `max_tokens` covers reasoning and answer tokens together. The runtime's completion
+limit and `GM_LLM_TIMEOUT_S` both apply to each request.
+
+`GM_LLM_PROFILE` holds sampling overrides by model ID. For example:
 
 ```yaml
 models:
+  prism-ml/Bonsai-27B-mlx-1bit:
+    temperature: 0.7
+    top_p: 0.95
   mlx-community/Qwen3-8B-4bit:
-    no_think_tag: /no_think          # appended to the system prompt to switch thinking off; "" for none
-    tiers:
-      easy:   {thinking: false}
-      medium: {thinking: false}
-      hard:   {thinking: true, thinking_budget: 1024}
+    temperature: 0.2
+    thinking_temperature: 0.6
 ```
 
-Per tier, `language_check: true` (default `false`) turns on the language check below.
-
-Unknown keys, a missing tier, `thinking` without a `thinking_budget` above 0 and a budget without
-`thinking` are errors. A model without a section, or no file, gets the built-in defaults (the values
-above), logged as a warning once per model and shown as `!` by `gm status`.
-
-How a task runs (`LlmClient::run`), with the task's answer cap from the tables below:
-
-- **Thinking:** one call without the tag, `max_tokens` = answer cap + `thinking_budget`, temperature
-  0.6. An answer that doesn't parse, or fails the language check, is replaced by a call without
-  thinking (`<task>-nothink`, answer cap, temperature 0.2, plus its format retry).
-- **No thinking:** one call with the tag at temperature 0.2; output that doesn't parse is asked once
-  more with a format reminder at temperature 0 (`<task>-retry`).
-- **Language check** (when the tier sets it, and only for tasks whose output is in the owner's
-  language: summary, digest line, translate, analyze): a parsed answer in another language is asked once more with the same prompt
-  at temperature 0 (`<task>-language`) when not thinking. The last answer is used whatever its
-  language.
+`temperature` applies to initial requests. `thinking_temperature` can override it for thinking
+requests. Without an override, direct requests use 0.2 and thinking requests use 0.6. An omitted
+`top_p` uses the server's default. Temperatures must be finite and non-negative. `top_p` must
+be greater than 0 and at most 1. Legacy `tiers` and `no_think_tag` keys are ignored. Other unknown
+keys are errors. A missing file or model entry uses built-in sampling defaults and is shown as
+`!` by `gm status`.
 
 The check ([`llm/language.rs`](../../crates/gm/src/llm/language.rs) `in_language`) recognizes
 Vietnamese (at least a fifth of the words carry Vietnamese-only marks), Japanese (kana present, kana
@@ -476,7 +485,7 @@ Batch lane. Stored in `events.summary`.
 
 | Contract | Prompt | Input | Output | Caps |
 |----------|--------|-------|--------|------|
-| Intent router | `router.md` | the owner's words in `<instruction>`, no mail | `{"intent": "translate" \| "analyze" \| "reply" \| "unknown", "language": "…"}` | 60 tokens; unusable → `unknown`; a language failing the Settings check is dropped |
+| Intent router | `router.md` | the owner's words in `<instruction>`, no mail | `{"intent": "translate" \| "analyze" \| "reply" \| "unknown", "language": "…"}` | 60 Qwen3 answer tokens; unusable → `unknown`; a language failing the Settings check is dropped |
 | Translate | `translate.md` | one chunk of subject + cleaned body in `<email>` | `{"translation": "…"}` | 2,048 answer tokens per chunk |
 | Analyze | `analyze.md` | the mail; a mail detected as a forward gets a `Forwarded: yes` line from code before `<email>` | `{"key_points", "deadlines", "amounts", "risks", "next_steps": [..], "verdict": "safe" \| "suspicious" \| "phishing"}` | 1,024 answer tokens |
 | Reply body | `reply.md` | the owner's words (trusted) before the mail; on an edit, the current draft and the requested change; not called for **Use my exact words** | `{"body": "…"}`: the body only. Recipients, subject and threading headers are set by code from the original mail | 512 answer tokens |
@@ -485,8 +494,8 @@ A reply cut off mid-JSON keeps the text recovered so far; other output that stil
 retry is used as plain text (thinking removed). For Reply the owner sees it in the preview before
 anything can be sent.
 
-Thinking, the reasoning budget added to these caps and the language check follow the
-[inference profile](#inference-profile).
+The caps shown in the task contracts are for Qwen3. The [model client](#inference-profile)
+sets the cap, reasoning allowance, and language check for the active model.
 
 Forward detection ([`gmail/message.rs`](../../crates/gm/src/gmail/message.rs) `is_forward`): a
 `Fwd:` / `FW:` / `転送:` subject, or a forward marker line in the body (`---------- Forwarded message

@@ -58,7 +58,7 @@ cache, but no `tools`, `response_format` or JSON mode, and returns 429 under bac
   raw text as the summary (`parse_ok: false`). An unavailable model (not running, timeout, 429/502/503/504) queues the job: it retries every
   `GM_LLM_UNAVAILABLE_RETRY_S` (5 min) without using an attempt and waits indefinitely; other LLM
   errors retry with backoff and then leave the job `dead`.
-- **Thinking** follows the model's inference profile by task tier ([ADR-0018](0018-llm-inference-profile.md)).
+- **Thinking** follows the selected model client's policy by task tier ([ADR-0018](0018-llm-inference-profile.md)).
 - **Input:** the mail is cleaned (HTML to text, quoted replies, signatures and footers removed), then
   truncated to `GM_LLM_MAX_INPUT_TOKENS` (≈2,000). Outputs are capped per task (`max_tokens`).
 

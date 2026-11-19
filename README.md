@@ -1,7 +1,7 @@
 # Google Management
 
 A personal assistant that runs on your Mac. It watches your Gmail, decides which mail matters using
-a tested rules file, summarizes it with a local LLM (mlx-server-runtime, Qwen3-8B 4-bit), and pings
+a tested rules file, summarizes it with a local LLM served by mlx-server-runtime, and pings
 you on Telegram. Exactly one Google account (`GM_ALLOWED_EMAIL`) can sign in. Mail never leaves the
 machine.
 

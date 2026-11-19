@@ -17,8 +17,6 @@ use crate::tasks::{
 };
 
 pub const REPLY_TASK: &str = include_str!("../../prompts/reply.md");
-/// The body's cap; a thinking call adds the tier's reasoning budget (`llm.yaml`).
-pub const MAX_OUTPUT_TOKENS: u32 = 512;
 /// The executor's action name.
 pub const SEND_DRAFT: &str = "gmail.send_draft";
 
@@ -175,7 +173,6 @@ async fn write_body(
             REPLY_TASK,
             "the language of the email, unless the instruction asks for another",
             &block,
-            MAX_OUTPUT_TOKENS,
             |t| text_of(t, "body"),
             None,
         )
